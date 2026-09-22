@@ -1,0 +1,20 @@
+{
+  "name": "good-stuff-ds-game-maker",
+  "private": true,
+  "version": "0.0.1",
+  "description": "A modernized Nintendo DS style video game maker, built as an Electron + React desktop app.",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=18.19.0"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm --filter @goodstuff/desktop dev",
+    "build": "pnpm -r --filter=./packages/* build && pnpm --filter @goodstuff/desktop build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

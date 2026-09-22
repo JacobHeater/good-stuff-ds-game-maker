@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Tailwind v4 only auto-scans files under the Vite root by default; the
+   editor UI components live in the @goodstuff/ui workspace package. */
+@source "../../../../../packages/ui/src";
+
+@theme {
+  /* Godot-editor-inspired dark theme tokens, reused across all editor panels. */
+  --color-editor-bg: #202124;
+  --color-editor-panel: #26282b;
+  --color-editor-panel-alt: #2d2f33;
+  --color-editor-border: #3a3d41;
+  --color-editor-accent: #4fa8ff;
+  --color-editor-text: #e6e6e6;
+  --color-editor-text-muted: #9a9da2;
+}
+
+body {
+  @apply bg-editor-bg text-editor-text antialiased;
+}

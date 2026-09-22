@@ -1,0 +1,31 @@
+{
+  "name": "@goodstuff/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Electron shell that hosts the Good Stuff DS Game Maker designer experience.",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "lint": "echo \"(no lint configured yet for @goodstuff/desktop)\""
+  },
+  "dependencies": {
+    "@goodstuff/core": "workspace:*",
+    "@goodstuff/ui": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@goodstuff/build-config": "workspace:*",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

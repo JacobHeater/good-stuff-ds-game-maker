@@ -1,0 +1,9 @@
+appId: com.goodstuff.dsgamemaker
+productName: Good Stuff DS Game Maker
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**/*
+asarUnpack:
+  - resources/**

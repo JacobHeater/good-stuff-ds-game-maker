@@ -1,0 +1,16 @@
+{
+  "name": "@goodstuff/core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Domain models and shared logic for the DS game maker (no UI, no Electron dependencies).",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"(no lint configured yet for @goodstuff/core)\""
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

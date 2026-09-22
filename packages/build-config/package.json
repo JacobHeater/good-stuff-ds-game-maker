@@ -1,0 +1,23 @@
+{
+  "name": "@goodstuff/build-config",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared electron-vite / TypeScript build configuration for the DS game maker apps.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"(no lint configured yet for @goodstuff/build-config)\""
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "vite": "^5.4.11"
+  },
+  "devDependencies": {
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.6.3"
+  }
+}
