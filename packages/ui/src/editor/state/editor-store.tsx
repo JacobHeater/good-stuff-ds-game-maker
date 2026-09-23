@@ -1,6 +1,7 @@
-import type { FpsTarget, ScreenId, SceneNode, SceneNodeKind, Vector3 } from "@goodstuff/core";
+import type { FpsTarget, ProjectSnapshot, ScreenId, SceneNode, SceneNodeKind, Vector3 } from "@goodstuff/core";
 import {
   createBlankSceneTree,
+  createProjectSnapshot,
   createSampleSceneTree,
   createSceneNode,
   duplicateSceneNode,
@@ -9,6 +10,7 @@ import {
   removeSceneNode,
   uniqueNodeName,
   updateSceneNode,
+  withUpdatedScene,
   DS_HARDWARE_PROFILE
 } from "@goodstuff/core";
 import { createContext, useCallback, useContext, useMemo, useReducer, type ReactNode } from "react";
@@ -26,6 +28,10 @@ export interface EditorState {
   screenFilter: ScreenFilter;
   fpsTarget: FpsTarget;
   outputLog: string[];
+  /** The last loaded/saved project snapshot; null until the first successful save. */
+  project: ProjectSnapshot | null;
+  /** Where `project` is saved on disk; null until the first successful save. */
+  projectFilePath: string | null;
 }
 
 type Action =
@@ -41,6 +47,9 @@ type Action =
   | { type: "ADD_NODE"; kind: SceneNodeKind }
   | { type: "DELETE_NODE"; id: string }
   | { type: "DUPLICATE_NODE"; id: string }
+  | { type: "PROJECT_SAVED"; filePath: string; project: ProjectSnapshot }
+  | { type: "PROJECT_OPENED"; filePath: string; project: ProjectSnapshot }
+  | { type: "PROJECT_CLOSED" }
   | { type: "LOG"; message: string };
 
 function createInitialState(): EditorState {
@@ -52,7 +61,9 @@ function createInitialState(): EditorState {
     activeBottomTab: "Output",
     screenFilter: "both",
     fpsTarget: DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget,
-    outputLog: ["Good Stuff DS Game Maker ready.", `Loaded sample scene "${sceneRoot.name}".`]
+    outputLog: ["Good Stuff DS Game Maker ready.", `Loaded sample scene "${sceneRoot.name}".`],
+    project: null,
+    projectFilePath: null
   };
 }
 
@@ -140,6 +151,33 @@ function reducer(state: EditorState, action: Action): EditorState {
         outputLog: [...state.outputLog, `Duplicated node "${node.name}".`]
       };
     }
+    case "PROJECT_SAVED":
+      return {
+        ...state,
+        project: action.project,
+        projectFilePath: action.filePath,
+        outputLog: [...state.outputLog, `Saved project to "${action.filePath}".`]
+      };
+    case "PROJECT_OPENED":
+      return {
+        ...state,
+        sceneRoot: action.project.scene,
+        selectedNodeId: action.project.scene.id,
+        project: action.project,
+        projectFilePath: action.filePath,
+        outputLog: [...state.outputLog, `Opened project "${action.project.name}" from "${action.filePath}".`]
+      };
+    case "PROJECT_CLOSED": {
+      const sceneRoot = createBlankSceneTree();
+      return {
+        ...state,
+        sceneRoot,
+        selectedNodeId: sceneRoot.id,
+        project: null,
+        projectFilePath: null,
+        outputLog: [...state.outputLog, "Closed project."]
+      };
+    }
     case "LOG":
       return { ...state, outputLog: [...state.outputLog, action.message] };
     default:
@@ -161,7 +199,18 @@ interface EditorStoreValue {
   addNode: (kind: SceneNodeKind) => void;
   deleteNode: (id: string) => void;
   duplicateNode: (id: string) => void;
+  saveProject: () => Promise<void>;
+  saveProjectAs: () => Promise<void>;
+  openProject: () => Promise<void>;
+  closeProject: () => void;
   log: (message: string) => void;
+}
+
+/** Builds the snapshot to persist: refreshes an existing project's scene, or mints a brand-new one. */
+function buildSnapshotToSave(state: EditorState): ProjectSnapshot {
+  return state.project
+    ? withUpdatedScene(state.project, state.sceneRoot)
+    : createProjectSnapshot({ name: "Untitled Project", mode: "2D", scene: state.sceneRoot });
 }
 
 const EditorStoreContext = createContext<EditorStoreValue | null>(null);
@@ -186,6 +235,38 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   const duplicateNode = useCallback((id: string) => dispatch({ type: "DUPLICATE_NODE", id }), []);
   const log = useCallback((message: string) => dispatch({ type: "LOG", message }), []);
 
+  const saveProject = useCallback(async () => {
+    const snapshot = buildSnapshotToSave(state);
+    const result = await window.goodstuff.project.save(state.projectFilePath, snapshot);
+    if (result.outcome === "ok" && result.filePath) {
+      dispatch({ type: "PROJECT_SAVED", filePath: result.filePath, project: snapshot });
+    } else if (result.outcome === "error") {
+      dispatch({ type: "LOG", message: `Save failed: ${result.message ?? "unknown error"}` });
+    }
+  }, [state]);
+
+  const saveProjectAs = useCallback(async () => {
+    const snapshot = buildSnapshotToSave(state);
+    const result = await window.goodstuff.project.saveAs(snapshot);
+    if (result.outcome === "ok" && result.filePath) {
+      dispatch({ type: "PROJECT_SAVED", filePath: result.filePath, project: snapshot });
+    } else if (result.outcome === "error") {
+      dispatch({ type: "LOG", message: `Save failed: ${result.message ?? "unknown error"}` });
+    }
+  }, [state]);
+
+  const openProject = useCallback(async () => {
+    const result = await window.goodstuff.project.open();
+    if (result.outcome === "ok" && result.filePath && result.snapshot) {
+      dispatch({ type: "PROJECT_OPENED", filePath: result.filePath, project: result.snapshot });
+    } else if (result.outcome === "error") {
+      const detail = result.issues?.length ? `: ${result.issues.join("; ")}` : "";
+      dispatch({ type: "LOG", message: `Open failed: ${result.message ?? "unknown error"}${detail}` });
+    }
+  }, []);
+
+  const closeProject = useCallback(() => dispatch({ type: "PROJECT_CLOSED" }), []);
+
   const value = useMemo<EditorStoreValue>(
     () => ({
       state,
@@ -201,6 +282,10 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       addNode,
       deleteNode,
       duplicateNode,
+      saveProject,
+      saveProjectAs,
+      openProject,
+      closeProject,
       log
     }),
     [
@@ -217,6 +302,10 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       addNode,
       deleteNode,
       duplicateNode,
+      saveProject,
+      saveProjectAs,
+      openProject,
+      closeProject,
       log
     ]
   );

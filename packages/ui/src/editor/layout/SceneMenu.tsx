@@ -40,14 +40,15 @@ function MenuSectionLabel({ label }: { label: string }): JSX.Element {
 }
 
 /**
- * The "Scene" menu: Godot-style scene/node document actions, adapted to the
- * fact that this editor has one live scene tree with no project backend yet
- * (Save/Close are logged stubs until file I/O exists).
+ * The "Scene" menu: Godot-style scene/node document actions. New/Open/
+ * Save/Save As/Close all go through the real project persistence layer
+ * (Electron main-process file I/O via the `window.goodstuff.project` bridge).
  */
 export function SceneMenu(): JSX.Element {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { state, newScene, addNode, deleteNode, duplicateNode, log } = useEditorStore();
+  const { state, newScene, addNode, deleteNode, duplicateNode, saveProject, saveProjectAs, openProject, closeProject } =
+    useEditorStore();
   const hasSelection = state.selectedNodeId !== state.sceneRoot.id;
 
   useEffect(() => {
@@ -83,6 +84,7 @@ export function SceneMenu(): JSX.Element {
       {open && (
         <div className="absolute left-0 top-full z-20 mt-1 max-h-[75vh] w-56 overflow-y-auto rounded border border-editor-border bg-editor-panel py-1 shadow-lg">
           <MenuItem label="New Scene" onSelect={runAndClose(newScene)} />
+          <MenuItem label="Open Project..." onSelect={runAndClose(() => openProject())} />
 
           <MenuSeparator />
           <MenuSectionLabel label="Add 2D Node" />
@@ -108,14 +110,11 @@ export function SceneMenu(): JSX.Element {
           />
 
           <MenuSeparator />
-          <MenuItem label="Save Scene" onSelect={runAndClose(() => log("Save Scene (no project backend wired up yet)."))} />
-          <MenuItem
-            label="Save Scene As..."
-            onSelect={runAndClose(() => log("Save Scene As... (no project backend wired up yet)."))}
-          />
+          <MenuItem label="Save Scene" onSelect={runAndClose(() => saveProject())} />
+          <MenuItem label="Save Scene As..." onSelect={runAndClose(() => saveProjectAs())} />
 
           <MenuSeparator />
-          <MenuItem label="Close Scene" onSelect={runAndClose(() => log("Close Scene (no project backend wired up yet)."))} />
+          <MenuItem label="Close Scene" onSelect={runAndClose(closeProject)} />
         </div>
       )}
     </div>
