@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: done
 component: run-games-locally
-related: [STORY.play-button-stub.md, compiler, debugger/TASK.real-debug-session-support.md]
+related: [STORY.play-button-stub.md, STORY.play-runs-rom-in-emulator.md, SPIKE.emulator-selection-and-launch.md, compiler/EPIC.compile-and-export-nds-rom.md, debugger/TASK.real-debug-session-support.md]
 ---
 
 # Spike: How "Play" should actually run a game
@@ -47,3 +47,20 @@ Scenario: Spike produces a written recommendation
   `debugger/TASK.real-debug-session-support.md`, since "what can the
   Debugger tab inspect" depends entirely on whether the runtime is an
   in-process interpreted preview or an external emulator process.
+
+## Decision
+Made by the product owner rather than derived: **the first milestone is the
+real path — a compiled `.nds` run in a DS emulator.** The reason is that
+the point of building the compiler now is to validate what the editor
+produces against actual DS behavior, which an in-editor simulation can't
+do. So:
+- **Smallest milestone for "Play does something real":** Play compiles the
+  open project to a ROM and opens it in an emulator
+  (`STORY.play-runs-rom-in-emulator.md`), which needs the compiler's 3D
+  slice (`compiler/EPIC.compile-and-export-nds-rom.md`) and an emulator
+  choice (`SPIKE.emulator-selection-and-launch.md`).
+- **In-editor interpreted preview:** not started and not decided. It stays a
+  possible later addition for fast iteration; nothing here rules it in or out.
+- **Consequence for the Debugger tab:** it will be looking at an external
+  emulator process, not an in-process runtime, which is the shape
+  `debugger/TASK.real-debug-session-support.md` should plan for.

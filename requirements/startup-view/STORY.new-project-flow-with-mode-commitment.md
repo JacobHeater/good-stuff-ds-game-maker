@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: done
 component: startup-view
 related: [EPIC.startup-view.md, STORY.startup-landing-screen.md, persistence/EPIC.project-persistence.md, scene-designer/TASK.lock-workspace-to-project-mode.md]
 ---
@@ -86,3 +86,25 @@ Scenario: A newly created project starts with a mode-appropriate blank scene
   kind of thing this rule prohibits for real projects — it should
   remain only as internal scaffold/demo data, not a model for what a
   real created project looks like.
+
+**Implemented** as `NewProjectPanel`
+(`packages/ui/src/startup/NewProjectPanel.tsx`) and the store's
+`createProject(name, mode)`:
+- The form asks for a name and a mode. The mode is two radio-style
+  cards with **nothing preselected**; pressing "Create Project…" with
+  either missing shows inline errors ("Give the project a name." /
+  "Choose 2D or 3D. This can't be changed later.") and never reaches the
+  save dialog. The permanence is stated on the form.
+- With both provided, it builds a `ProjectSnapshot` (blank scene rooted
+  in the mode: `Node2D` or `Node3D`) and opens the native **Save As**
+  dialog for the location — that is what "name/location" means here.
+  Cancelling the dialog leaves the form open; a write error is shown on
+  the form. On success the project is written to disk and opened,
+  already locked to its mode (`scene-designer/TASK.lock-workspace-to-project-mode.md`).
+- `mode` is the required field of `ProjectSnapshot`; there is no code
+  path that writes it after creation.
+
+Verified end-to-end against the real Electron app with real files
+(only the native dialogs were stubbed): mode required, name required,
+3D and 2D creation each produce the right file on disk and the right
+locked editor, cancel keeps the form.

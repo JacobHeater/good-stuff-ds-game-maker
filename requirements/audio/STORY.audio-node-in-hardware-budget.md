@@ -16,7 +16,8 @@ playback exists anywhere in the app yet.
 
 ## Description
 `AudioStreamPlayer` nodes can be added to a scene (via the Scene menu's
-"Add 2D Node" list — it's modeled as a 2D-space node), appear in the
+Add Node list, which offers it in both 2D and 3D projects — it's
+declared alongside the 2D kinds but isn't drawn by either pipeline), appear in the
 Scene Tree and Inspector like any other node, and are counted in the
 Hardware tab's audio channel budget (`computeSceneBudget.audioPlayersUsed`
 vs. `audioChannelsLimit`).

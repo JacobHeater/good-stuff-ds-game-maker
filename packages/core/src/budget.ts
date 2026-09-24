@@ -1,4 +1,5 @@
 import { DS_HARDWARE_PROFILE } from "./hardware";
+import { getPrimitiveTriangleCount } from "./primitive-geometry";
 import { flattenSceneTree, OAM_CONSUMING_KINDS, type SceneNode } from "./scene-node";
 import type { ScreenId } from "./index";
 
@@ -31,7 +32,11 @@ export function computeSceneBudget(root: SceneNode): SceneBudgetReport {
     spritesLimit: DS_HARDWARE_PROFILE.graphics2D.oamSpritesPerScreen
   }));
 
-  const trianglesUsed = nodes.reduce((sum, node) => sum + (node.mesh?.triangleCount ?? 0), 0);
+  // Recomputed from the primitive's geometry, not read from the node's stored count (which may predate a re-tessellation).
+  const trianglesUsed = nodes.reduce(
+    (sum, node) => sum + (node.mesh ? getPrimitiveTriangleCount(node.mesh.primitive) : 0),
+    0
+  );
 
   return {
     perScreen,

@@ -12,6 +12,7 @@
     "lint": "echo \"(no lint configured yet for @goodstuff/desktop)\""
   },
   "dependencies": {
+    "@goodstuff/compiler": "workspace:*",
     "@goodstuff/core": "workspace:*",
     "@goodstuff/persistence": "workspace:*",
     "@goodstuff/ui": "workspace:*",

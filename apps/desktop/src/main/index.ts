@@ -1,7 +1,11 @@
 import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
 
+import { registerExportRomIpcHandler } from "./export-rom-ipc";
+import { registerPlayIpcHandler, stopPlaySession } from "./play-ipc";
 import { registerProjectIpcHandlers } from "./project-ipc";
+import { createRecentProjectsStore, registerRecentProjectsIpcHandlers } from "./recent-projects-ipc";
+import { attachUnsavedChangesGuard } from "./unsaved-changes-guard";
 
 const isDev = !app.isPackaged;
 
@@ -21,6 +25,8 @@ function createMainWindow(): BrowserWindow {
     }
   });
 
+  attachUnsavedChangesGuard(mainWindow);
+
   mainWindow.once("ready-to-show", () => mainWindow.show());
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -38,7 +44,11 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  registerProjectIpcHandlers();
+  const recentProjects = createRecentProjectsStore();
+  registerProjectIpcHandlers(recentProjects);
+  registerRecentProjectsIpcHandlers(recentProjects);
+  registerExportRomIpcHandler();
+  registerPlayIpcHandler();
   createMainWindow();
 
   app.on("activate", () => {
@@ -47,6 +57,9 @@ app.whenReady().then(() => {
     }
   });
 });
+
+// A game started with Play closes with the editor.
+app.on("before-quit", () => void stopPlaySession());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

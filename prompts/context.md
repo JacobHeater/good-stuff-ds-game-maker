@@ -19,7 +19,15 @@ the editor the way Godot surfaces target-platform limits.
   build configuration.
 - `packages/persistence` (`@goodstuff/persistence`) — SOLID project
   persistence layer (serialization, validation, file I/O). No UI/Electron
-  deps; not yet consumed by `apps/desktop` (see below).
+  deps; consumed by `apps/desktop`'s main process (see below).
+- `packages/compiler` (`@goodstuff/compiler`) — compiles a saved 3D project into
+  a Nintendo DS ROM: pure translation to DS-format scene data, diagnostics, a
+  build driver that runs the devkitPro toolchain, a CLI, and the hand-written C
+  runtime under `runtime/`. Depends only on core. See the `compiler` entry below.
+- `tools/ds-toolchain/` — Windows scripts to install and use devkitPro and melonDS.
+- `tests/prototypes/` — the kept, hand-rolled verification scripts (editor E2E,
+  recent-projects store, a UI-authored-scene generator). Not in the workspace.
+- Root: `pnpm test` (fast tests), `pnpm test:rom` (emulator tests), `vitest*.config.ts`.
 
 ## Stack decisions
 - **Electron + Vite, not Next.js.** Next.js was considered (to "simplify
@@ -41,14 +49,55 @@ WorkspaceToolbar (workspace tabs + screen filter + FPS target + Play),
 SceneTreePanel + FileSystemPanel (left dock), a center viewport + BottomPanel
 (Output/Debugger/Hardware tabs), and InspectorPanel (right dock).
 
-- **Workspace tabs**: `2D`, `3D`, `Script`, `Game`. Only 2D and 3D render
-  real content so far (`Script`/`Game` are placeholder tabs, not yet built).
-- **Scene menu** (`packages/ui/src/editor/layout/SceneMenu.tsx`) is a real
-  dropdown: New Scene, Add 2D Node / Add 3D Node (full kind lists with
-  icons), Duplicate/Delete Node (disabled on the scene root), and Save
-  Scene / Save Scene As / Close Scene (currently stubbed to the Output log —
-  there's no project file backend yet). The other menu bar items (Project,
-  Debug, Editor, Help) are still inert placeholders.
+- **Startup view** (`packages/ui/src/startup/`): with no project open
+  (`state.project === null`, including after Close Project) `EditorShell`
+  renders `StartupView` instead of the editor: exactly "New Project" and
+  "Open Existing Project". New Project (`NewProjectPanel`) requires a
+  name and an explicit 2D/3D choice (nothing preselected), then opens the
+  native Save As dialog for the location. Open Existing Project
+  (`OpenProjectPanel`) lists the recent projects — name, mode badge, path,
+  last opened, a remove ✕ per row, "Clear list", missing files shown
+  flagged and disabled — plus "Browse…" for the native open dialog (which
+  is only opened by Browse, never by merely showing the panel). Rows open a
+  project by path with no dialog, always in its stored mode.
+- **Workspace tabs**: a project shows only its own viewport tab (`2D` for
+  a 2D project, `3D` for a 3D project, never both) plus `Script` and
+  `Game`. Script/Game show a "not built yet" placeholder (they used to
+  fall through to the 2D viewport, which would leak into 3D projects).
+- **Scene menu vs. Project menu** — a deliberate split, written down in
+  `requirements/project-menu/EPIC.project-menu.md`. A menu is named for
+  what its actions operate on, and an action lives in exactly one menu.
+  The **Scene menu** (`layout/SceneMenu.tsx`) edits the *contents* of the
+  open scene: a single "Add {mode} Node" list (2D kinds for a 2D project,
+  3D kinds plus `AudioStreamPlayer` for a 3D project — audio isn't drawn
+  by either pipeline, so it's offered in both), Duplicate Node and Delete
+  Node (disabled on the scene root). The **Project menu**
+  (`layout/ProjectMenu.tsx`) owns the project *file's* lifecycle: Open
+  Project..., Save Project, Save Project As..., Export ROM..., Close Project (all real,
+  via the persistence layer — see "Save/Save As/Open/Close" below). They
+  used to all sit in the Scene menu under names like "Save Scene" /
+  "Close Scene" because it was the only real menu; that conflated scene
+  and project management and was fixed. **"New Scene" was removed
+  outright** (with one scene per project it only meant "discard
+  everything", destructive with no undo; it returns if multi-scene is
+  ever designed) and so were the store's `NEW_SCENE`/`newScene`. Both
+  menus share `layout/menu-primitives.tsx`. The other menu bar items
+  (Debug, Editor, Help) are still inert placeholders.
+- **Unsaved-changes guard** (`project-menu/STORY.unsaved-changes-guard.md`,
+  done). "Unsaved" = `state.sceneRoot !== state.project.scene` (reference
+  comparison; `hasUnsavedChanges` in `editor-store.tsx`) — no per-action
+  flag, at the cost of a false positive for a hand-reverted edit. One
+  `guardUnsavedChanges` in the store wraps `closeProject`,
+  `openProject(filePath?)` and the window close; it shows
+  `UnsavedChangesDialog` (Save / Don't Save / Cancel; Escape = Cancel).
+  The prompt comes *before* the native open dialog. `saveProject` /
+  `saveProjectAs` resolve `true` only if a file was written; a Save that
+  is canceled or fails abandons the guarded action. The status bar shows
+  "● Unsaved changes" and the window title gets a "● " prefix. Window
+  close: the renderer pushes its dirty flag to main
+  (`app.setUnsavedChanges`); `main/unsaved-changes-guard.ts` holds the
+  `close` event while set and asks the renderer, which calls
+  `app.confirmClose` once the user decides.
 - **2D viewport** (`DualScreenViewport.tsx`): renders the DS's two physical
   screens side by side at a fixed pixel scale, draggable sprite markers.
 - **3D viewport** (`Viewport3D.tsx`): the newer addition. Renders whichever
@@ -62,6 +111,12 @@ SceneTreePanel + FileSystemPanel (left dock), a center viewport + BottomPanel
   `image-rendering: pixelated`), so it reads as authentically blocky no
   matter how large the working rectangle is on screen. Free `OrbitControls`
   and click-to-select work directly on this one canvas.
+  - Meshes are built from the **shared primitive geometry** in
+    `@goodstuff/core` (`primitive-geometry.ts`); the scene is drawn as a
+    **hierarchy** (`SceneNodeView` recurses; a parent's transform and visibility
+    apply to its subtree); a directional light **shines along its node's local
+    -Z**, as in Godot and in the compiler. The viewport is still an orbit camera
+    with fixed ambient light: `Camera3D` is a gizmo and there's no view through it.
   - History here: v1 rendered the *whole* canvas tiny at a fixed native
     size — rejected as unusable ("how can I build a game there?"). v2 split
     it into a large smooth edit canvas + a separate small pixelated preview
@@ -76,11 +131,19 @@ SceneTreePanel + FileSystemPanel (left dock), a center viewport + BottomPanel
   (`SceneNodeKind2D` / `SceneNodeKind3D`). 3D nodes carry a `transform3D`
   (position/rotation-degrees/scale as `Vector3`) and, for `MeshInstance3D`,
   a `mesh: { primitive, triangleCount }`.
+- `primitive-geometry.ts`: the **one definition** of each built-in primitive
+  (cube 12 triangles, plane 2, cylinder 48, sphere 168), as a non-indexed
+  triangle list with per-vertex normals. The viewport draws it, the budget counts
+  from it (never from a node's stored `triangleCount`, which may predate a
+  re-tessellation), the compiler emits it. Nothing else carries a per-primitive count.
 - Tree helpers: `flattenSceneTree`, `findSceneNode`, `updateSceneNode`,
   `removeSceneNode`, `duplicateSceneNode` (fresh ids throughout),
-  `insertNodeAfterSibling`, `uniqueNodeName`, `createBlankSceneTree` (New
-  Scene), `createSampleSceneTree` (starter content incl. a `World3D`
-  subtree: camera, sun light, ground plane, cube).
+  `insertNodeAfterSibling`, `uniqueNodeName`, `createSampleSceneTree`
+  (demo data mixing 2D and 3D; **nothing in the app uses it any more**).
+- `project-mode.ts`: `ProjectMode` (`"2D" | "3D"`), `PROJECT_MODES`,
+  `getNodeKindsForMode`, `isNodeKindAllowedInMode`, and
+  `createBlankSceneTree(mode)` (root is `Node2D` or `Node3D`). It moved
+  here from `scene-node.ts`, which no longer has a blank-tree factory.
 - `DS_HARDWARE_PROFILE` (`hardware.ts`): real DS specs — CPU, RAM/VRAM,
   256×192 dual screens, 2D OAM sprite budget (128/screen), 3D budget
   (~2048 triangles/frame, exclusive to one screen at a time), audio
@@ -152,24 +215,65 @@ this one type, so they can't silently diverge.
 
 `editor-store.tsx` gained `project`/`projectFilePath` state and
 `saveProject`/`saveProjectAs`/`openProject`/`closeProject` actions.
-`SceneMenu` wires these in and gained a new **"Open Project..."**
-item (there was previously no UI path to Open at all).
+`ProjectMenu` wires these in (originally they were wired into
+`SceneMenu`, since moved — see the menu split above; that's also where
+"Open Project..." first appeared, as there was previously no UI path to
+Open at all).
 `FileSystemPanel` now calls `listDirectory` against the open project's
 folder instead of a hardcoded list, with no-project/loading/error
 states.
 
-**Temporary stand-in**: since project-mode commitment
-(`scene-designer/TASK.lock-workspace-to-project-mode.md`) and the real
-New Project flow aren't built yet, a never-saved project defaults to
-`mode: "2D"` on first save. Replace this once
-`startup-view/STORY.new-project-flow-with-mode-commitment.md` supplies
-a real chosen mode.
+There is no "default mode" any more. The old temporary 2D default is
+gone: every project is created through the New Project flow with an
+explicit mode, and `saveProject`/`saveProjectAs` only refresh the open
+project's scene (they do nothing with no project open). `createProject`
+and `openProject` return a `ProjectActionResult` so the startup view —
+which has no Output log — can show failures inline.
 
-**Verification limits**: typecheck/build are clean, the app launches
-without error, and the underlying save→load/error-handling logic was
-proven by the smoke test mentioned above. The native OS save/open
-dialogs themselves were **not** click-tested by the agent — that
-needs a human running the app.
+**Recent projects** (`packages/persistence/src/recents/`, built): ports
+`RecentProjectsReader` (`list`) / `RecentProjectsWriter` (`record`,
+`remove`, `clear`) plus a tiny `PathExistenceChecker`;
+`JsonFileRecentProjectsStore` (built on the existing file reader/writer
+ports, so it also runs over `InMemoryProjectFileStore`) and
+`InMemoryRecentProjects`, both using the shared rules in
+`recent-projects-list.ts`; hand-authored `RECENT_PROJECTS_JSON_SCHEMA`.
+Composed in `apps/desktop/src/main/recent-projects-ipc.ts` at
+`userData/recent-projects.json`; `project-ipc.ts` receives only the
+*writer* and records on every successful open and save-as. The renderer's
+`window.goodstuff.recents` has `list`/`remove`/`clear` (the last two return
+the updated list) and no `record`. The design decisions are in
+`requirements/project-list/SPIKE.recent-projects-storage.md`.
+
+**How this was verified.** Beyond typecheck/build and the persistence
+smoke test, the whole startup + mode-lock + save/open flow was driven
+against the real built Electron app: launch `electron.exe apps/desktop
+--remote-debugging-port=… --inspect=…`, drive the renderer with
+`puppeteer-core` over CDP, and stub only `dialog.showSaveDialog` /
+`showOpenDialog` from the main-process inspector (via
+`Runtime.evaluate` with `includeCommandLineAPI: true` to get
+`require("electron")`). Real IPC, real persistence layer, real files.
+28 checks pass now (landing/empty Open panel, mode-locked creation, the
+two menus' contents, save/save as/close/reopen, recording and
+re-recording, open-from-list, invalid file, missing/remove/clear, the
+unsaved-changes guard on Close/Open, and a real `BrowserWindow.close()`).
+The recent-projects store also has a separate 16-check smoke run against
+the in-memory, JSON-over-memory and JSON-over-disk implementations
+(bundled with the repo's own `esbuild` via `--alias` to the two packages'
+`src/index.ts`, since there's no TS runner). **Both scripts are kept in
+the repo, on the owner's instruction, in `tests/prototypes/`** (with a
+README giving the exact commands; re-verified from there — 28/28 and
+16/16). They're prototypes, not a suite: no test framework exists in the
+repo, so none of it runs in CI. Turning them into one is specified in
+`requirements/testing/` (`EPIC.automated-testing.md`,
+`TASK.e2e-tests-for-editor-flows.md`, `TASK.persistence-contract-tests.md`,
+`TASK.compiler-and-rom-regression-tests.md`). Don't delete the prototypes
+until those tasks record where each check went.
+Gotchas if you redo it: pass `--user-data-dir=<temp>` to Electron so the
+recents file is isolated; `innerText` applies CSS `uppercase` (section
+labels come back as "ADD 3D NODE"); the toolbar `<select>` adds "Top
+Screen" to `innerText`; the Output log persists across projects within a
+session; and a click that closes the window (Don't Save on a window
+close) races the page target vanishing, so catch that one.
 
 ## Known environment gotchas (already fixed — don't re-break these)
 - **`apps/desktop` main/preload must stay CommonJS.** An earlier attempt
@@ -219,23 +323,18 @@ documentation. If shipped functionality has no matching component
 folder, create one (`file-browser` was created this way, for the
 previously-homeless `FileSystemPanel`).
 
-**Major forward decision — projects permanently commit to 2D or 3D at
-creation.** This is a deliberate constraint, not a gap: a new project
-must choose "2D" or "3D" mode up front (`startup-view/STORY.new-project-flow-with-mode-commitment.md`),
-that choice is stored as part of the project and can **never** be
-changed afterward — converting means starting a new project from
-scratch. Once built, `scene-designer` will only expose the matching
-viewport tab (`scene-designer/TASK.lock-workspace-to-project-mode.md`: a 2D project
-never shows a "3D" tab and vice versa) and the Scene menu will only
-offer that mode's node kinds. **None of this is implemented yet** —
-today's app still freely switches between 2D/3D tabs and offers both
-node-kind lists unconditionally (that's `createSampleSceneTree()`
-mixing both for demo purposes). Don't build a feature that assumes a
-project can hold both 2D and 3D content, and don't let the free
-tab-switching in `STORY.workspace-tabs-and-screen-filter.md` mislead
-you into thinking that's the target behavior — it's documented there
-as "what's built today," explicitly flagged as scheduled to be
-replaced.
+**Projects permanently commit to 2D or 3D at creation — now implemented.**
+This is a deliberate constraint, not a gap: a new project must choose
+"2D" or "3D" up front (`startup-view/STORY.new-project-flow-with-mode-commitment.md`),
+the choice is stored in the project, and **nothing in the app can ever
+change it** — converting means starting a new project. The editor is
+locked accordingly (`scene-designer/TASK.lock-workspace-to-project-mode.md`):
+a 2D project never shows a "3D" tab and vice versa, the Add Node list
+is the mode's own, a 3D project never offers "Both Screens", and the
+reducer itself refuses `SET_WORKSPACE` / `SET_SCREEN_FILTER` /
+`ADD_NODE` requests that would break the lock (it isn't only hidden UI).
+Don't build a feature that assumes a project can hold both 2D and 3D
+content, and don't add any control that changes `project.mode`.
 
 **Current coverage** (see each folder for the authoritative, detailed
 version — this is a summary, not a substitute):
@@ -243,8 +342,12 @@ version — this is a summary, not a substitute):
   Stories (2D viewport, 3D viewport — **read
   `STORY.3d-editing-viewport-native-resolution.md` before touching 3D
   viewport resolution/sizing again**, its three-iteration history is
-  recorded there — Scene menu node CRUD, workspace tabs), and forward
-  Tasks/Spike (undo/redo, asset import, and mode-locking). Real
+  recorded there — Scene menu node CRUD (now node-editing only; project
+  actions moved to `project-menu`), workspace tabs), the now-done
+  mode-lock Task, and forward Task/Spike (undo/redo, asset import). The
+  workspace-tabs and scene-menu stories were rewritten to match the
+  mode-locked, persistence-backed behavior (they used to document free
+  2D/3D switching and stubbed Save/Close). Real
   project persistence used to be scoped here but was refactored out
   into its own `persistence` component (see below) once it became
   clear it's a shared foundation, not a scene-editing feature.
@@ -255,43 +358,152 @@ version — this is a summary, not a substitute):
   is `done`; `TASK.generate-json-schema-from-interfaces.md` is
   `in-progress` (validator wired and working, schema still
   hand-authored rather than generated); `TASK.persist-scene-to-project-file.md`
-  is still `proposed` — pure Electron IPC/UI wiring left, no design
-  work remaining underneath it. This is the single most-depended-on
-  component in the whole tree — `startup-view`, `project-list`, real
-  `file-browser` behavior, `scene-designer`'s mode-lock and
-  mesh-import Spike, and `audio`'s asset Task all wait on the Epic.
+  is `done` (Save/Save As/Open/Close wired end-to-end; native dialogs not
+  click-tested by the agent). The Epic stays `in-progress` only because
+  of the schema-generation task. It unblocks `startup-view`,
+  `project-list`, `scene-designer`'s mode-lock and mesh-import Spike,
+  and `audio`'s asset Task.
 - `node-list`, `properties-panel` — one retroactive Story each (Scene
   Tree panel, Inspector panel), both fully built and Done.
 - `debugger` — three retroactive Stories (Output tab, Debugger
   placeholder, Hardware budget report — moved here from
   `scene-designer` since it's the same `BottomPanel` dock) plus a
   forward Task blocked on a real runtime existing.
-- `run-games-locally` — retroactive Story for the Play-button stub,
-  plus a Spike on how "running a game" should actually work
-  (in-editor interpreted preview vs. compiled ROM + emulator —
-  unresolved, tightly coupled to `scripting`'s language Spike).
+- `run-games-locally` — the Play-button stub Story, the runtime Spike
+  (`done`: the owner decided the first milestone is a compiled ROM run in
+  an emulator; in-editor interpreted preview is undecided and deferred),
+  the emulator-selection Spike (`done`: melonDS, found via env var / winget / Program Files)
+  and `STORY.play-runs-rom-in-emulator.md` (`done`; the stub Story is now superseded).
 - `scripting` — nothing built; an Epic plus a Spike on language/
   execution approach (also unresolved, same coupling as above).
 - `audio` — retroactive Story for the modeled-but-silent
   `AudioStreamPlayer` node/budget counting, plus a forward Task for
   real playback (blocked on asset-import and runtime decisions).
-- `compiler` — nothing built; an Epic plus a Spike on toolchain choice
-  (devkitPro/libnds vs. custom vs. explicitly deferring this entire
-  epic — deferring is a legitimate spike outcome).
-- `startup-view` — nothing built; an Epic plus three forward Stories
-  (landing screen, New Project flow — this is where the 2D/3D mode
-  commitment rule above is fully specified — Open Existing Project
-  flow), all blocked on `persistence/TASK.persist-scene-to-project-file.md`
-  landing first (no saved project format yet to launch into or list).
-- `project-list` — nothing built; an Epic only, same blocking
-  dependency, now also noting that listed projects should show their
-  committed mode.
+- `compiler` — **built for 3D; the first milestone is done and verified.**
+  (Owner's instruction: validate the editor by compiling scenes to a real
+  `.nds` and running it in an emulator.) A saved 3D project compiles to a real
+  ROM that runs in melonDS at 60/60 FPS and draws what the project says.
+  Design: shell out to devkitPro (devkitARM + libnds), **detected not
+  bundled**, with a **data-driven runtime** — `@goodstuff/compiler`
+  (`packages/compiler`, depends only on core) translates the project to a
+  constant `scene_data.c` (baked world matrices, DS fixed-point, shared vertex
+  tables, camera, lights), and a hand-written checked-in C runtime
+  (`packages/compiler/runtime`, no scene logic) draws it. Pipeline: diagnose ->
+  translate (`translate-scene-3d.ts`) -> write C (`scene-data-writer.ts`) ->
+  `RomBuilder` (`build/`, ports `ToolchainLocator`/`BuildRunner`/`BuildFileSystem`,
+  tested with fakes) runs `make` inside MSYS2 -> `.nds`. Use it from a terminal:
+  `pnpm --filter @goodstuff/compiler cli:build` then
+  `node packages/compiler/dist/cli.mjs compile <project.gsds | fixture:cube|primitives|nested> <out.nds>`
+  (about 4 s; exit 3 = toolchain missing). **The app now calls it:** Project >
+  "Export ROM..." (`STORY.export-rom-from-project-menu.md`, done) compiles the
+  project as the editor has it (unsaved edits included, the file never written),
+  checks it first (an error project reports to the Output log without asking for a
+  location), writes the `.nds`, and logs diagnostics and the outcome. Code:
+  `apps/desktop/src/main/export-rom-ipc.ts` (one export at a time; runtime dir is
+  `packages/compiler/runtime` from the repo, `resources/compiler-runtime` when
+  packaged via `extraResources` — **packaged path untried**), `describeCompileResult`
+  in `packages/compiler/src/compile-report.ts`, `exportRom`/`exporting` in the
+  editor store, `ExportRomResult` and `project.exportRom` in core's IPC contract.
+  Verified by `tests/prototypes/e2e/export-rom.mjs` (8 checks, needs the toolchain).
+  **Play is built too** (`run-games-locally/STORY.play-runs-rom-in-emulator.md`, done):
+  the toolbar button builds to `%TEMP%\gsds-play\play-*.nds` and opens melonDS
+  (`main/play-ipc.ts`, `PlaySession` in `packages/compiler/src/run/`, ports
+  `EmulatorLocator`/`EmulatorLauncher`, `NodeEmulatorLocator` finds it via
+  `GSDS_MELONDS_PATH` > winget folder > Program Files). A new run replaces the old one only
+  after its build succeeds; the game closes when the editor quits. Both handlers share
+  `main/rom-builder-factory.ts`. Verified by `tests/prototypes/e2e/play.mjs` (6 checks;
+  kills melonDS.exe before/after). No emulator-path setting UI yet — env var only.
+  **Gotcha:** a new Camera3D and mesh both start at the origin, so an untouched
+  export shows flat grey (camera inside the cube) — not a compiler bug. Done: Spike, the IR/translation Task, the runtime Task, the build
+  driver Task, `STORY.compile-3d-scene-to-nds-rom.md`,
+  `STORY.compile-diagnostics-for-unsupported-content.md`, Export ROM. `proposed`: 2D
+  (`STORY.compile-2d-scene-to-nds-rom.md`, blocked on image assets).
+  **Conventions pinned by building and looking** (full list in the Spike):
+  matrices are 16 x f32 (20.12) column-major; rotation is three.js Euler `XYZ`
+  (`Rx·Ry·Rz`), node transform `T·R·S`; vertices v16 (4.12, ~±8) with unit-sized
+  primitives; lights are parallel only, 4 max, direction = the way the light
+  *travels* (local -Z) and set while only the view matrix is loaded; culling off;
+  the 3D backdrop is deliberately dark blue (so a screenshot can find the screen).
+  **How it's verified** (all real, against melonDS): `pnpm test` — 114 fast tests
+  (shared geometry, matrix math checked against three.js itself, fixed point,
+  translation, diagnostics, build driver with fakes); `pnpm test:rom` — 9
+  emulator tests that build each fixture, run it, capture the top screen and
+  compare its silhouette with an independent three.js render (IoU >= 0.85),
+  including a project **authored through the real editor UI**
+  (`node tests/prototypes/e2e/ui-to-rom.mjs`, then
+  `GSDS_ROM_PROJECT=<saved path> pnpm test:rom`; scores 0.91), the bottom
+  screen, and a full-budget scene (2028 triangles). Deliberately breaking the
+  rotation order fails six tests. **Not verified:** lighting (checked by eye;
+  silhouettes ignore shading), 30 FPS pacing (melonDS's title shows emulator
+  speed, not presentation rate), and normals under non-uniform scale (wrong on
+  the DS; not addressed).
+  **What compiling turned up in the editor** (all ticketed): three defects,
+  now **fixed** — the hardware budget's triangle counts didn't match what the
+  viewport drew (sphere 480 vs 720, cylinder 40 vs 64; now one shared geometry in
+  `packages/core/src/primitive-geometry.ts`, sphere 168 / cylinder 48, used by the
+  viewport, budget and compiler), the viewport ignored a parent's transform and
+  visibility (it drew a flat list; now `SceneNodeView` recurses), and a
+  directional light's rotation did nothing in the editor (now it shines along its
+  local -Z, as in Godot and the compiler). Still **open**: the UI can't create or
+  change a mesh's primitive — every mesh added is a cube
+  (`scene-designer/STORY.choose-mesh-primitive.md`); the FPS target isn't saved in
+  the project (`scene-designer/TASK.save-fps-target-in-project.md`, so the compiler
+  takes it as an option, default 60); and cameras/lights/meshes have no
+  fov/active-camera/colors and the editor never shows the view through a
+  `Camera3D` (`scene-designer/STORY.camera-light-and-material-properties.md`).
+- `testing` — `EPIC.automated-testing.md` (`in-progress`). A runner now exists:
+  **vitest 2** at the repo root (vitest 5 needs a newer Vite than the repo's 5).
+  `pnpm test` runs `*.test.ts`; `pnpm test:rom` (`vitest.rom.config.ts`) runs
+  `*.rom.test.ts`, which need the toolchain, melonDS and a desktop and open emulator
+  windows. `TASK.compiler-and-rom-regression-tests.md` is `in-progress` (built, with
+  gaps listed in it); `TASK.persistence-contract-tests.md` and
+  `TASK.e2e-tests-for-editor-flows.md` are `proposed`. The prototype scripts they
+  grow from are kept in `tests/prototypes/` (README has the commands).
+- `tools/ds-toolchain/` — scripts to set up and use the DS toolchain and melonDS on
+  Windows without admin (`setup-windows.ps1`, `make-rom.sh`,
+  `capture-melonds.ps1`, `build-fixture-and-capture.ps1`; README explains why MSYS2
+  and what capturing an emulator needs). The toolchain and melonDS are **installed on
+  this machine** (devkitARM 16.1.0 under `C:\msys64\opt\devkitpro`; melonDS 1.1 via
+  winget). Gotchas: `DEVKITPRO` is an MSYS-side path (`/opt/devkitpro`), not a
+  Windows variable; `devkit-env.sh` doesn't put the compilers on `PATH`; inside MSYS2
+  `/tmp` is not Git Bash's `/tmp` (use `/c/...` paths); devkitPro's own Windows
+  installer can't be scripted; capture must be DPI-aware and the emulator window
+  topmost.
+- `startup-view` — built and verified end-to-end; Epic and all three
+  stories `done` (landing screen, New Project with the mode-commitment
+  rule, Open Existing Project listing recent projects).
+- `project-list` — Epic `in-progress`; Spike, store Task and startup-list
+  Story are `done`; only the Project menu's Open Recent remains. The
+  recent-projects Spike (`SPIKE.recent-projects-storage.md`) decided: a JSON file (`recent-projects.json`, `formatVersion: 1`,
+  schema-validated) in Electron's `userData` directory, read/written only
+  by the main process; entries `{path, name, mode, lastOpenedAt}` with
+  name/mode copied at record time; recorded by the main process on every
+  successful Open and Save As (plain Save doesn't record; the renderer
+  has no "record" operation); most-recent-first, deduped by resolved path
+  (case-insensitive on Windows), capped at 10; existence checked at list
+  time and missing entries shown flagged, never auto-pruned; a
+  missing/corrupt file is an empty list, never an error. Code goes in
+  `@goodstuff/persistence/recents/` as its own segregated
+  `RecentProjectsReader` / `RecentProjectsWriter` ports. Rejected:
+  renderer `localStorage` (dev vs. packaged origins differ), the OS
+  recent-documents list (Electron can add/clear but not read it back),
+  scanning a folder, storing it in project files. Tickets:
+  `TASK.recent-projects-store.md` and
+  `STORY.recent-projects-list-on-startup-view.md` (both `done`), and
+  `project-menu/STORY.open-recent-in-project-menu.md` (`proposed`).
+- `project-menu` — `EPIC.project-menu.md` (`in-progress`) holds the
+  menu-ownership rule and decision table;
+  `STORY.project-lifecycle-actions.md` and
+  `STORY.unsaved-changes-guard.md` are `done` (Export ROM... is a compiler Story, also done);
+  `STORY.open-recent-in-project-menu.md` is `proposed` (everything it
+  needs now exists — only the menu section is left).
 
 ## Not built yet (known gaps — see `requirements/` tickets, above, for detail)
-- Project file I/O now works (see "Save/Save As/Open/Close" above).
-  Still missing: automated JSON Schema generation (schema is
-  hand-authored), project-mode commitment/locking, undo/redo, an asset
-  pipeline, real scripting/runtime/compiler, and a project
-  picker/launch screen. All tracked as real tickets rather than a
-  prose list — this section intentionally stays short so it doesn't
-  drift out of sync with them.
+- Project file I/O, the startup view, and project-mode locking all work.
+  Recent projects and the unsaved-changes guard work too. Still
+  missing: automated JSON Schema generation (both schemas are
+  hand-authored), the Project menu's Open Recent, undo/redo, an asset
+  pipeline, scripting, 2D compilation (Export ROM and Play are built, for 3D), and CI for any of the tests (`pnpm test` and
+  `pnpm test:rom` run locally; the editor E2E prototypes are in `tests/prototypes/`). All tracked
+  as real tickets rather than a prose list — this section intentionally
+  stays short so it doesn't drift out of sync with them.

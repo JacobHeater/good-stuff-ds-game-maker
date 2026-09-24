@@ -34,10 +34,10 @@ Scenario: Redo reapplies an undone edit
   Then the edit is reapplied
   And the scene tree matches its state right before the undo
 
-Scenario: Undo history does not cross scene boundaries unexpectedly
-  Given "New Scene" was just used to reset the tree
-  When the user triggers Undo
-  Then the previous scene's content is restored (New Scene is itself undoable)
+Scenario: Undo history does not cross project boundaries
+  Given edits were made in a project and it was then closed or another was opened
+  When the user triggers Undo in the newly opened project
+  Then nothing is undone, and the previous project's edits are never applied to it
 
 Scenario: A new edit after undoing clears the stale redo stack
   Given the user has undone one or more edits
@@ -52,3 +52,11 @@ Scenario: A new edit after undoing clears the stale redo stack
   usually not what users expect from Ctrl+Z. This is worth resolving
   before implementation, not left as an accidental side effect of
   whatever the reducer already does per-dispatch.
+- **Interaction with unsaved-changes tracking.** "Unsaved" is currently
+  `state.sceneRoot !== state.project.scene` (reference comparison; see
+  `project-menu/STORY.unsaved-changes-guard.md`). Undoing back to the
+  saved tree only reads as clean if undo restores the *same tree object*
+  that was saved — so keep history as tree references (the reducer's
+  trees are immutable), not deep copies, and it works for free; a deep
+  copy would leave the project looking unsaved after undoing everything.
+  Add a scenario for it when this is picked up.

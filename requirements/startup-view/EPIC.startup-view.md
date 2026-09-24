@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: done
 component: startup-view
 related: [project-list/EPIC.project-list.md, persistence/EPIC.project-persistence.md, scene-designer/TASK.lock-workspace-to-project-mode.md]
 ---
@@ -7,27 +7,25 @@ related: [project-list/EPIC.project-list.md, persistence/EPIC.project-persistenc
 # Epic: Startup view
 
 ## Context
-Nothing in this component exists yet. Today, launching the app skips
-straight into `EditorShell` with an in-memory sample scene
-(`createSampleSceneTree()`) — there is no launch screen, no concept of
-"no project is open," and critically, no concept of a project having a
-committed 2D-or-3D identity at all. The current `WorkspaceToolbar`
-lets you freely flip between the "2D" and "3D" tabs at any time,
-because every scene today can technically hold both 2D and 3D nodes
-side by side in one tree (see `createSampleSceneTree()`, which
-populates both). That flexibility is convenient for a scaffold but
-wrong for the real product: a real DS game is 2D or 3D as a
-fundamental, upfront decision, and the editor should force that same
-commitment.
+This Epic was written when launching the app skipped straight into
+`EditorShell` with an in-memory sample scene (`createSampleSceneTree()`):
+there was no launch screen, no concept of "no project is open," and
+critically, no concept of a project having a committed 2D-or-3D identity
+at all. `WorkspaceToolbar` let you freely flip between the "2D" and "3D"
+tabs at any time, because a scene could hold both 2D and 3D nodes side by
+side in one tree. That flexibility was convenient for a scaffold but
+wrong for the real product: a real DS game is 2D or 3D as a fundamental,
+upfront decision, and the editor should force that same commitment. All
+of that has since been built; this section is kept as the reason the
+Epic exists.
 
 ## Narrative
 
 Godot opens to a Project Manager, not directly into an editor: a
 neutral landing screen where you choose to open an existing project,
 create a new one, or (eventually) manage settings that apply outside
-any single project. This project has no equivalent yet — it behaves
-as if exactly one project is always open, because in-memory sample
-data stands in for a real project.
+any single project. This project now has that equivalent: with no
+project open it shows the landing screen, not an editor.
 
 This Epic covers the screen itself and its two entry points:
 
@@ -42,9 +40,9 @@ This Epic covers the screen itself and its two entry points:
    the very first step rather than let a project accumulate both 2D
    and 3D content and only discover the conflict later.
 2. **Open Existing Project** — opens a previously created project,
-   honoring whatever mode it was created with. The actual list of
-   existing projects to choose from is `project-list`'s concern; this
-   Epic only owns the entry point into that flow.
+   honoring whatever mode it was created with. The list of existing
+   projects to choose from is `project-list`'s concern; this Epic owns
+   the entry point into that flow and what happens once one is chosen.
 
 The consequence of the mode commitment lands in the Scene Designer,
 not here: once a project is open, `scene-designer` must only expose
@@ -60,10 +58,9 @@ whatever `persistence/EPIC.project-persistence.md`
 defines for the on-disk project format) — it is not something the
 editor UI decides per-session.
 
-Both flows are blocked on real project persistence
-(`persistence/EPIC.project-persistence.md`) existing,
-since there's no saved project format to write a new project into or
-read an existing one from yet. `project-list` is blocked the same way.
+Both flows depend on real project persistence
+(`persistence/EPIC.project-persistence.md`), which now exists, and the
+Open flow on `project-list`'s recent-projects list, which is built too.
 
 Stories for this Epic:
 - `STORY.startup-landing-screen.md` — the neutral landing screen
@@ -84,3 +81,25 @@ saved as part of the project and can never be changed from within the
 editor afterward; and opening an existing project loads it directly
 into the Scene Designer already configured for its committed mode,
 with no opportunity presented anywhere to switch it to the other mode.
+
+## Progress
+The narrative criteria above are met: the app boots to the landing
+screen, New Project requires an explicit, permanent 2D/3D choice, and
+Open Existing Project lists recent projects (plus Browse) and restores a
+project locked to its stored mode. All three stories are `done`, so the
+Epic is too.
+
+This was verified end-to-end by driving the real built Electron app over
+the Chrome DevTools Protocol with real files on disk (only the native OS
+file dialogs were stubbed, and Electron's user-data directory was pointed
+at a temp folder so the recents file was the app's own): 28 checks
+covering the landing screen and the empty Open panel, name/mode
+validation, 2D and 3D creation, the mode-locked tabs / node kinds /
+screen filter, the Scene and Project menus' contents, save / save as /
+close / reopen, recording and re-recording of recent projects, opening
+from the list without a dialog, refusal of an invalid file, a missing
+file shown flagged, remove and clear, and the unsaved-changes guard on
+Close, Open and a real window close. Those scripts were throwaways;
+there's no test framework in the repo yet, so none of it runs in CI.
+Still untested by any automated means: the real native OS dialogs, which
+need a person at the keyboard.

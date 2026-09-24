@@ -11,8 +11,9 @@ Godot's bottom panel has an "Output" tab that streams editor/engine
 log messages. The equivalent here is the `Output` tab of `BottomPanel`
 (`packages/ui/src/editor/panels/BottomPanel.tsx`), fed by the shared
 editor store's `outputLog` array and `log(message)` action — used
-today by the Scene menu's stubbed Save/Close actions, the Play button
-stub, and New Scene/Add/Delete/Duplicate Node confirmations.
+today by the Project menu's Save/Open/Close/Export ROM actions (Export
+reports each compiler diagnostic and the outcome here), the Play button
+stub, and the Scene menu's Add/Delete/Duplicate Node confirmations.
 
 ## Description
 Show every logged message, in order, in a scrollable monospace list.

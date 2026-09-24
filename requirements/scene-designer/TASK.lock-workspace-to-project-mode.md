@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: done
 component: scene-designer
 related: [EPIC.scene-designer.md, STORY.workspace-tabs-and-screen-filter.md, STORY.scene-menu-node-crud.md, startup-view/STORY.new-project-flow-with-mode-commitment.md, startup-view/STORY.open-existing-project-flow.md]
 ---
@@ -55,6 +55,16 @@ Scenario: The Scene menu only offers node kinds matching the project's mode
 Scenario: Script and Game tabs remain available regardless of mode
   Given a project of either mode is open
   Then the "Script" and "Game" workspace tabs are still both available
+
+Scenario: A 3D project never offers Both Screens
+  Given the open project's committed mode is "3D"
+  Then the screen filter only offers "Top Screen" and "Bottom Screen"
+  And opening or creating a 3D project moves a "Both Screens" filter to "Top Screen"
+
+Scenario: Non-viewport tabs never show the other mode's viewport
+  Given a 3D project is open
+  When the user selects the "Script" or "Game" tab
+  Then a placeholder is shown, not the 2D viewport
 ```
 
 ## Notes
@@ -68,4 +78,32 @@ Scenario: Script and Game tabs remain available regardless of mode
   the first place — depends on
   `startup-view/STORY.new-project-flow-with-mode-commitment.md` and
   `persistence/EPIC.project-persistence.md` defining where that field
-  lives in the persisted project format.
+  lives in the persisted project format. Both have landed.
+
+**Implemented.** The mode is read from `state.project.mode` in
+`editor-store.tsx`; nothing in the store ever writes it. Enforcement is
+in the reducer as well as the UI, so it isn't just hidden controls:
+`SET_WORKSPACE` ignores a viewport tab that isn't the project's own,
+`SET_SCREEN_FILTER` refuses "both" for 3D, and `ADD_NODE` ignores a
+kind the mode doesn't allow. The helpers live in `@goodstuff/core`
+(`project-mode.ts`: `getNodeKindsForMode`, `isNodeKindAllowedInMode`,
+`createBlankSceneTree(mode)`, `PROJECT_MODES`) and
+`workspacesForMode` in `editor-store.tsx`.
+
+Judgment calls worth knowing about:
+- **`AudioStreamPlayer` is offered in both modes.** It's declared with
+  the 2D kinds but isn't drawn by either pipeline; strictly following
+  "only that mode's kinds" would have made audio impossible to add in
+  any 3D project. `getNodeKindsForMode("3D")` is the 3D kinds plus it.
+- Script/Game tabs used to render the 2D viewport (they fell through
+  `state.activeWorkspace === "3D" ? ... : <DualScreenViewport />`). That
+  would have leaked the 2D viewport into 3D projects, so they now show
+  a "workspace isn't built yet" placeholder.
+- The Scene menu shows a single "Add {mode} Node" section.
+- `New Scene` used to create a blank tree rooted in the project's mode;
+  it has since been removed from the menu
+  (`STORY.scene-menu-node-crud.md`, `project-menu/EPIC.project-menu.md`).
+  New Project still creates that blank root via `createBlankSceneTree`.
+
+Verified end-to-end against the real app (see
+`startup-view/EPIC.startup-view.md`).

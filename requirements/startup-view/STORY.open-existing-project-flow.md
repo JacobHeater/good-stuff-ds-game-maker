@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: done
 component: startup-view
 related: [EPIC.startup-view.md, STORY.startup-landing-screen.md, project-list/EPIC.project-list.md, scene-designer/TASK.lock-workspace-to-project-mode.md]
 ---
@@ -40,14 +40,26 @@ Scenario: No mode-switching option is offered while opening a project
   Given a project's stored mode is "2D"
   Then nothing in the Open Existing Project flow offers to open it as
     "3D" instead
+
+Scenario: A project file with no mode is refused
+  Given a project file that is missing its mode
+  When the user tries to open it
+  Then the open is refused with a clear error shown on the startup view
+  And no project is loaded and no mode is defaulted
 ```
 
 ## Notes
-- Blocked on `project-list` having a real list to show, which is
-  itself blocked on `persistence/EPIC.project-persistence.md`.
-- If a project's persisted data is somehow missing a mode (e.g. a
-  corrupted or hand-edited project file), decide the failure behavior
-  when this is implemented — treat as invalid and refuse to open,
-  don't silently default to a mode. Not written as a Gherkin scenario
-  here since it depends on error-handling decisions the persistence
-  Task hasn't made yet.
+**Implemented.** "Open Existing Project" shows the recent-projects list
+(`project-list/STORY.recent-projects-list-on-startup-view.md`, backed by
+`project-list/TASK.recent-projects-store.md`; the storage decision is
+`project-list/SPIKE.recent-projects-storage.md`), with a "Browse..."
+action for a project that isn't listed. Choosing a row or browsing loads
+the file through the persistence layer and opens it locked to its stored
+mode; no step asks for or offers a mode. A file that fails schema
+validation, including one with no `mode` (which the schema requires), is
+refused with the error shown in the list panel and nothing loaded or
+recorded. The Output log isn't visible on the startup view, so
+`openProject` returns the failure to the caller instead.
+
+The same open action is also reachable from the Project menu's "Open
+Project..." (`project-menu/STORY.project-lifecycle-actions.md`).

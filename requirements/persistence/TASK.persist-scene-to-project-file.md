@@ -7,8 +7,10 @@ related: [EPIC.project-persistence.md, TASK.define-project-snapshot-interfaces.m
 # Task: Wire Save/Save As/Open to real project files
 
 ## Context
-Every "save" action in the app today (Save Scene, Save Scene As,
-Close Scene) only appends a message to the Output log — nothing is
+Every "save" action in the app at the time this was written (then
+called Save Scene, Save Scene As, Close Scene; now Save Project, Save
+Project As, Close Project in the Project menu — see
+`project-menu/EPIC.project-menu.md`) only appended a message to the Output log — nothing is
 written to disk, and nothing can be reopened after the app restarts.
 `FileSystemPanel` also only shows a hardcoded fake file list, since
 there's no real project on disk to read.
@@ -35,10 +37,10 @@ process, with no remaining design work underneath it.
 ## Description
 Implement, through the Electron main process (not the renderer
 directly, per the existing main/preload/renderer separation):
-- **Save Scene** — serializes the current `ProjectSnapshot` to JSON and
+- **Save Project** — serializes the current `ProjectSnapshot` to JSON and
   writes it to the project's established file location.
-- **Save Scene As...** — prompts for a file location, then behaves as
-  Save Scene to that new location for subsequent saves.
+- **Save Project As...** — prompts for a file location, then behaves as
+  Save Project to that new location for subsequent saves.
 - **Open** — reads a project file from disk, validates it against the
   JSON Schema from `TASK.generate-json-schema-from-interfaces.md`, and
   loads it into the editor (mode, metadata, and scene tree all
@@ -50,7 +52,7 @@ directly, per the existing main/preload/renderer separation):
 ```gherkin
 Scenario: Saving writes a real, schema-valid project file
   Given a project with a scene tree and a committed mode
-  When the user chooses "Save Scene" (with a project location established)
+  When the user chooses "Save Project" (with a project location established)
   Then a JSON file conforming to the ProjectSnapshot schema is written to disk
   And the Output log confirms the save with the file path
 
@@ -60,10 +62,10 @@ Scenario: Reopening a saved project restores it exactly
   Then the scene tree matches what was saved (same nodes, kinds, transforms, names)
   And the project's mode matches what was saved
 
-Scenario: Save Scene As prompts for a new location
-  When the user chooses "Save Scene As..."
+Scenario: Save Project As prompts for a new location
+  When the user chooses "Save Project As..."
   Then the user is asked to choose a file location
-  And subsequent "Save Scene" actions save to that new location
+  And subsequent "Save Project" actions save to that new location
 
 Scenario: Opening an invalid project file fails clearly
   Given a project file that fails JSON Schema validation
@@ -103,18 +105,28 @@ Scenario: FileSystem dock reflects the real project
   own global declaration can't drift apart.
 - `packages/ui/src/editor/state/editor-store.tsx` gained `project`/`projectFilePath`
   state and `saveProject`/`saveProjectAs`/`openProject`/`closeProject`
-  actions. `SceneMenu` wires these to their menu items and gained a new
-  **"Open Project..."** entry (there was previously no way to trigger
-  Open at all). `FileSystemPanel` now calls `listDirectory` against the
+  actions. They were first wired into `SceneMenu` (which is also where
+  "Open Project..." first appeared, since there was previously no way to
+  trigger Open at all); they've since moved to `ProjectMenu`
+  (`project-menu/STORY.project-lifecycle-actions.md`). `FileSystemPanel` now calls `listDirectory` against the
   open project's folder instead of showing a hardcoded list, with
   explicit no-project/loading/error states.
-- Project mode: since `scene-designer/TASK.lock-workspace-to-project-mode.md`
-  and the real New Project flow aren't built yet, a brand-new
-  (never-saved) project currently defaults to `mode: "2D"` when first
-  saved. This is a deliberate, temporary stand-in — once
-  `startup-view/STORY.new-project-flow-with-mode-commitment.md` is
-  wired up, project creation should supply a real chosen mode instead
-  of this default.
+- Project mode: this originally defaulted a never-saved project to
+  `mode: "2D"` as a temporary stand-in. **That default is gone.** Every
+  project is now created through the New Project flow with an explicit
+  mode (`startup-view/STORY.new-project-flow-with-mode-commitment.md`),
+  so Save never invents one; `saveProject` just refreshes the open
+  project's scene and keeps its mode.
+- Later additions on the same IPC surface: `project.open(filePath?)` opens
+  a known file without a dialog (used by the recent-projects list), and
+  the main process records every successful open and save-as into the
+  recent-projects store (`project-list/TASK.recent-projects-store.md`);
+  `saveProject`/`saveProjectAs` in the store now resolve `true` only when
+  the file was written, which the unsaved-changes guard relies on
+  (`project-menu/STORY.unsaved-changes-guard.md`).
+- Save/Save As/Close now require an open project; with none open (the
+  startup view) they do nothing. "Close Project" returns to the startup
+  view.
 - **Verification limits**: the underlying save→load round-trip,
   missing-file, and schema-rejection behavior were proven by a manual
   smoke test against both real disk and an in-memory substitute (see

@@ -36,6 +36,10 @@ Scenario: FileSystem dock lists placeholder project resources
 ```
 
 ## Notes
+- **Superseded.** The dock no longer shows a hardcoded list; this story
+  records what the scaffold did originally and its acceptance criteria
+  above no longer describe current behavior. See
+  `STORY.filesystem-dock-lists-project-folder.md`.
 - Real functionality (actually listing a project's files, opening them,
   drag-and-drop into the scene, etc.) is out of scope for this ticket
   and belongs in a future Story/Task once project file I/O exists (see

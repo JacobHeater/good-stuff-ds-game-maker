@@ -101,7 +101,7 @@ As/Open/Close are wired end-to-end through `apps/desktop`'s main
 process (`project-ipc.ts`) and preload bridge
 (`window.goodstuff.project.*`, typed against a shared
 `GoodStuffWindowApi` contract in `@goodstuff/core`), consumed by the
-editor store and `SceneMenu`/`FileSystemPanel` in `packages/ui`. See
+editor store, `ProjectMenu` and `FileSystemPanel` in `packages/ui`. See
 that ticket for what was and wasn't manually verified (native OS
 dialog interaction wasn't click-tested by the agent).
 

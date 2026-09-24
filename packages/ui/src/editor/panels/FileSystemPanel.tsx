@@ -54,8 +54,12 @@ export function FileSystemPanel(): JSX.Element {
             <div className="px-2 py-1 text-xs text-editor-text-muted">No other files here yet.</div>
           ) : (
             listing.files.map((file) => (
-              <div key={file} className="truncate px-2 py-0.5 text-xs text-editor-text-muted hover:bg-editor-panel-alt">
-                {file}
+              <div
+                key={file}
+                title={file}
+                className="truncate px-2 py-0.5 text-xs text-editor-text-muted hover:bg-editor-panel-alt"
+              >
+                {file.split(/[\\/]/).pop()}
               </div>
             ))
           ))}

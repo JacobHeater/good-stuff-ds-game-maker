@@ -1,11 +1,5 @@
+import type { ProjectMode } from "./project-mode";
 import type { SceneNode } from "./scene-node";
-
-/**
- * A project's rendering pipeline, chosen once at creation and permanent
- * for the life of the project — see
- * requirements/startup-view/STORY.new-project-flow-with-mode-commitment.md.
- */
-export type ProjectMode = "2D" | "3D";
 
 /**
  * Bump this whenever `ProjectSnapshot`'s shape changes in a way that

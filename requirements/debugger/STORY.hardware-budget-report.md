@@ -54,8 +54,13 @@ Scenario: Static hardware facts are always shown
 ## Notes
 - Triangle counts are approximate — they come from
   `MESH_PRIMITIVE_TRIANGLE_COUNT`, a hardcoded per-primitive estimate,
-  not real geometry analysis. This is accurate today because only
-  built-in primitives exist; it will need to be revisited once custom
+  not real geometry analysis. **This was not accurate, and is now fixed**:
+  the sphere and cylinder counts were lower than what the 3D viewport drew
+  (480 vs 720, 40 vs 64). The budget now counts from the same geometry the
+  viewport draws and the compiler emits (`packages/core/src/primitive-geometry.ts`),
+  with a sphere of 168 triangles and a cylinder of 48; see
+  `BUG.mesh-triangle-budget-disagrees-with-rendered-geometry.md`. It will
+  also need to be revisited once custom
   mesh import lands (`scene-designer/SPIKE.custom-mesh-and-sprite-import.md`),
   since a real imported mesh's actual triangle count should replace
   the estimate.

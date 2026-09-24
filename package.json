@@ -12,9 +12,12 @@
     "dev": "pnpm --filter @goodstuff/desktop dev",
     "build": "pnpm -r --filter=./packages/* build && pnpm --filter @goodstuff/desktop build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "test": "vitest run",
+    "test:rom": "vitest run --config vitest.rom.config.ts"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
   }
 }

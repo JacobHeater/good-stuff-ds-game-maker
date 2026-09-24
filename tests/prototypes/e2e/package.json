@@ -1,0 +1,12 @@
+{
+  "name": "goodstuff-e2e-prototype",
+  "private": true,
+  "description": "Prototype end-to-end script for the built Electron app. Not part of the pnpm workspace. See requirements/testing/TASK.e2e-tests-for-editor-flows.md.",
+  "type": "module",
+  "scripts": {
+    "e2e": "node e2e.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}

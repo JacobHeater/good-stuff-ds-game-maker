@@ -1,3 +1,4 @@
+import { getPrimitiveTriangleCount } from "./primitive-geometry";
 import type { ScreenId } from "./index";
 
 /**
@@ -70,19 +71,17 @@ export interface Vector3 {
   z: number;
 }
 
-/** Basic primitive shapes offered until custom mesh import exists, each with an approximate triangle cost. */
+/** Basic primitive shapes offered until custom mesh import exists. Their geometry lives in `primitive-geometry.ts`. */
 export type MeshPrimitive = "cube" | "sphere" | "plane" | "cylinder";
-
-export const MESH_PRIMITIVE_TRIANGLE_COUNT: Record<MeshPrimitive, number> = {
-  cube: 12,
-  plane: 2,
-  cylinder: 40,
-  sphere: 480
-};
 
 export interface MeshInstance3DData {
   primitive: MeshPrimitive;
-  /** Approximate triangle count this instance contributes to the DS's per-frame 3D budget. */
+  /**
+   * Triangles this instance contributes to the DS's per-frame 3D budget, as of when the node was
+   * created. A record of the count only: the budget and the compiler always recompute it from the
+   * primitive's geometry (`getPrimitiveTriangleCount`), so a project saved before the primitives
+   * were re-tessellated still reports the right cost.
+   */
   triangleCount: number;
 }
 
@@ -146,7 +145,7 @@ export function createSceneNode(partial: {
 
   if (partial.kind === "MeshInstance3D") {
     const primitive = partial.mesh ?? "cube";
-    node.mesh = { primitive, triangleCount: MESH_PRIMITIVE_TRIANGLE_COUNT[primitive] };
+    node.mesh = { primitive, triangleCount: getPrimitiveTriangleCount(primitive) };
   }
 
   return node;
@@ -211,11 +210,6 @@ export function createSampleSceneTree(): SceneNode {
       })
     ]
   });
-}
-
-/** An empty starter scene tree, used by "New Scene". */
-export function createBlankSceneTree(): SceneNode {
-  return createSceneNode({ name: "Main", kind: "Node2D" });
 }
 
 /** Flattens a scene tree into a list, useful for lookups and budget math. */

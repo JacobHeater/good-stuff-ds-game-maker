@@ -27,6 +27,10 @@ Scenario: Play button logs a stub message and runs nothing
 ```
 
 ## Notes
-- Real behavior is blocked on `SPIKE.game-runtime-approach.md` deciding
-  what "running a game" even means in this app before it can be scoped
-  as a Story/Task.
+- **Superseded:** `STORY.play-runs-rom-in-emulator.md` shipped, so Play now builds and runs the
+  project and no longer logs this message. The scenario above is history, not current behavior.
+- Real behavior was blocked on `SPIKE.game-runtime-approach.md`, which has
+  now decided the first milestone is a compiled ROM run in an emulator; the
+  replacement is `STORY.play-runs-rom-in-emulator.md`. This stub's behavior
+  is still what the app does until that story ships, after which this ticket
+  becomes historical and gets a superseded note.

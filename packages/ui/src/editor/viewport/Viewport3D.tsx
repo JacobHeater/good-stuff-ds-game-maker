@@ -1,8 +1,16 @@
-import { DS_HARDWARE_PROFILE, flattenSceneTree, is3DNodeKind, type ScreenId, type SceneNode, type Vector3 } from "@goodstuff/core";
+import {
+  DS_HARDWARE_PROFILE,
+  getPrimitiveGeometry,
+  is3DNodeKind,
+  type MeshPrimitive,
+  type ScreenId,
+  type SceneNode,
+  type Vector3
+} from "@goodstuff/core";
 import { OrbitControls } from "@react-three/drei";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DoubleSide } from "three";
+import { BufferGeometry, DirectionalLight, DoubleSide, Float32BufferAttribute, FrontSide } from "three";
 
 import { useEditorStore } from "../state/editor-store";
 
@@ -59,84 +67,137 @@ function useContainedSize(aspect: number): [React.RefObject<HTMLDivElement>, { w
   return [ref, size];
 }
 
-function MeshInstanceNode({ node, selected, onSelect }: { node: SceneNode; selected: boolean; onSelect: () => void }): JSX.Element | null {
-  if (!node.transform3D || !node.mesh || !node.visible) return null;
-  const { position, scale } = node.transform3D;
-  const rotation = toEuler(node.transform3D.rotation);
-  const color = selected ? MESH_COLOR_SELECTED : MESH_COLOR;
-
-  const handleClick = (event: ThreeEvent<MouseEvent>): void => {
-    event.stopPropagation();
-    onSelect();
-  };
+/**
+ * A mesh drawn from the shared primitive definition in `@goodstuff/core` — the same geometry the
+ * hardware budget counts and the compiler emits, so what's drawn, counted and built can't disagree.
+ */
+function PrimitiveMesh({
+  primitive,
+  selected,
+  onSelect
+}: {
+  primitive: MeshPrimitive;
+  selected: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const geometry = useMemo(() => {
+    const shared = getPrimitiveGeometry(primitive);
+    const buffer = new BufferGeometry();
+    buffer.setAttribute("position", new Float32BufferAttribute(shared.positions as number[], 3));
+    buffer.setAttribute("normal", new Float32BufferAttribute(shared.normals as number[], 3));
+    return buffer;
+  }, [primitive]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   return (
-    <group position={toTuple(position)} rotation={rotation} scale={toTuple(scale)}>
-      {node.mesh.primitive === "cube" && (
-        <mesh onPointerDown={handleClick}>
-          <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color={color} />
-        </mesh>
-      )}
-      {node.mesh.primitive === "sphere" && (
-        <mesh onPointerDown={handleClick}>
-          <sphereGeometry args={[0.5, 24, 16]} />
-          <meshStandardMaterial color={color} />
-        </mesh>
-      )}
-      {node.mesh.primitive === "cylinder" && (
-        <mesh onPointerDown={handleClick}>
-          <cylinderGeometry args={[0.5, 0.5, 1, 16]} />
-          <meshStandardMaterial color={color} />
-        </mesh>
-      )}
-      {node.mesh.primitive === "plane" && (
-        <mesh onPointerDown={handleClick} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[1, 1]} />
-          <meshStandardMaterial color={color} side={DoubleSide} />
-        </mesh>
-      )}
-    </group>
+    <mesh
+      geometry={geometry}
+      onPointerDown={(event: ThreeEvent<MouseEvent>) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <meshStandardMaterial
+        color={selected ? MESH_COLOR_SELECTED : MESH_COLOR}
+        side={primitive === "plane" ? DoubleSide : FrontSide}
+      />
+    </mesh>
   );
 }
 
-function CameraGizmo({ node, selected, onSelect }: { node: SceneNode; selected: boolean; onSelect: () => void }): JSX.Element | null {
-  if (!node.transform3D || !node.visible) return null;
-  const rotation = toEuler(node.transform3D.rotation);
-
+function CameraGizmo({ selected, onSelect }: { selected: boolean; onSelect: () => void }): JSX.Element {
   return (
-    <group position={toTuple(node.transform3D.position)} rotation={rotation}>
+    <mesh
+      rotation={[Math.PI / 2, 0, 0]}
+      onPointerDown={(event: ThreeEvent<MouseEvent>) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <coneGeometry args={[0.2, 0.4, 8]} />
+      <meshStandardMaterial color={selected ? EDITOR_ACCENT : "#c9cdd3"} wireframe={!selected} />
+    </mesh>
+  );
+}
+
+/**
+ * A directional light that shines along its node's local -Z axis, as in Godot (and as the compiler
+ * does), so rotating the node aims the light. three.js aims a directional light from its position toward
+ * a `target` object, so the target sits one unit along the node's -Z, inside the same transformed group.
+ * (requirements/scene-designer/BUG.directional-light-ignores-rotation.md)
+ */
+function DirectionalLightObject(): JSX.Element {
+  const light = useMemo(() => new DirectionalLight(undefined, 0.8), []);
+  return (
+    <>
+      <primitive object={light} />
+      <primitive object={light.target} position={[0, 0, -1]} />
+    </>
+  );
+}
+
+function LightGizmo({ node, selected, onSelect }: { node: SceneNode; selected: boolean; onSelect: () => void }): JSX.Element {
+  return (
+    <>
       <mesh
-        rotation={[Math.PI / 2, 0, 0]}
         onPointerDown={(event: ThreeEvent<MouseEvent>) => {
           event.stopPropagation();
           onSelect();
         }}
       >
-        <coneGeometry args={[0.2, 0.4, 8]} />
-        <meshStandardMaterial color={selected ? EDITOR_ACCENT : "#c9cdd3"} wireframe={!selected} />
-      </mesh>
-    </group>
-  );
-}
-
-function LightGizmo({ node, selected, onSelect }: { node: SceneNode; selected: boolean; onSelect: () => void }): JSX.Element | null {
-  if (!node.transform3D || !node.visible) return null;
-  const position = toTuple(node.transform3D.position);
-
-  const handleSelect = (event: ThreeEvent<MouseEvent>): void => {
-    event.stopPropagation();
-    onSelect();
-  };
-
-  return (
-    <group position={position}>
-      <mesh onPointerDown={handleSelect}>
         <icosahedronGeometry args={[0.12, 0]} />
         <meshStandardMaterial color={selected ? EDITOR_ACCENT : "#f5d76e"} emissive="#f5d76e" emissiveIntensity={0.6} />
       </mesh>
-      {node.kind === "DirectionalLight3D" && <directionalLight intensity={0.8} />}
+      {node.kind === "DirectionalLight3D" && <DirectionalLightObject />}
       {node.kind === "OmniLight3D" && <pointLight intensity={1} distance={12} />}
+    </>
+  );
+}
+
+/**
+ * Draws a node and, recursively, everything under it, as a hierarchy: a node's transform is relative
+ * to its parent's, and a hidden node hides its whole subtree
+ * (requirements/scene-designer/BUG.3d-viewport-ignores-parent-transforms.md). A node assigned to the
+ * other screen isn't drawn itself, but its transform still applies to descendants that are.
+ */
+function SceneNodeView({
+  node,
+  activeScreen,
+  selectedId,
+  onSelect
+}: {
+  node: SceneNode;
+  activeScreen: ScreenId;
+  selectedId: string;
+  onSelect: (id: string) => void;
+}): JSX.Element | null {
+  if (!node.visible) return null;
+
+  const children = node.children.map((child) => (
+    <SceneNodeView key={child.id} node={child} activeScreen={activeScreen} selectedId={selectedId} onSelect={onSelect} />
+  ));
+  if (!node.transform3D || !is3DNodeKind(node.kind)) return <>{children}</>;
+
+  const selected = selectedId === node.id;
+  const select = (): void => onSelect(node.id);
+  const drawn = node.screen === activeScreen;
+  // Only meshes and grouping nodes are sized by their scale; a camera or light gizmo stays gizmo-sized.
+  const scaled = node.kind === "MeshInstance3D" || node.kind === "Node3D";
+
+  return (
+    <group
+      position={toTuple(node.transform3D.position)}
+      rotation={toEuler(node.transform3D.rotation)}
+      scale={scaled ? toTuple(node.transform3D.scale) : [1, 1, 1]}
+    >
+      {drawn && node.kind === "MeshInstance3D" && node.mesh && (
+        <PrimitiveMesh primitive={node.mesh.primitive} selected={selected} onSelect={select} />
+      )}
+      {drawn && node.kind === "Camera3D" && <CameraGizmo selected={selected} onSelect={select} />}
+      {drawn && (node.kind === "DirectionalLight3D" || node.kind === "OmniLight3D") && (
+        <LightGizmo node={node} selected={selected} onSelect={select} />
+      )}
+      {children}
     </group>
   );
 }
@@ -159,14 +220,6 @@ export function Viewport3D(): JSX.Element {
   const [containerRef, displaySize] = useContainedSize(DS_ASPECT);
   const dpr = DS_WIDTH / displaySize.width;
 
-  const nodes3D = useMemo(
-    () =>
-      flattenSceneTree(state.sceneRoot).filter(
-        (node) => is3DNodeKind(node.kind) && node.screen === activeScreen && node.kind !== "Node3D"
-      ),
-    [state.sceneRoot, activeScreen]
-  );
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1 bg-editor-bg p-4">
       <span className="text-center text-[10px] uppercase tracking-wide text-editor-text-muted">
@@ -188,20 +241,12 @@ export function Viewport3D(): JSX.Element {
             <ambientLight intensity={0.35} />
             <gridHelper args={[20, 20, EDITOR_ACCENT, EDITOR_BORDER]} />
             <axesHelper args={[2]} />
-            {nodes3D.map((node) => {
-              const selected = state.selectedNodeId === node.id;
-              const onSelect = (): void => selectNode(node.id);
-              if (node.kind === "MeshInstance3D") {
-                return <MeshInstanceNode key={node.id} node={node} selected={selected} onSelect={onSelect} />;
-              }
-              if (node.kind === "Camera3D") {
-                return <CameraGizmo key={node.id} node={node} selected={selected} onSelect={onSelect} />;
-              }
-              if (node.kind === "DirectionalLight3D" || node.kind === "OmniLight3D") {
-                return <LightGizmo key={node.id} node={node} selected={selected} onSelect={onSelect} />;
-              }
-              return null;
-            })}
+            <SceneNodeView
+              node={state.sceneRoot}
+              activeScreen={activeScreen}
+              selectedId={state.selectedNodeId}
+              onSelect={selectNode}
+            />
             <OrbitControls makeDefault />
           </Canvas>
         </div>
