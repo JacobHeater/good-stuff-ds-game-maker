@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 
 import type { DsScene3D } from "../ds-scene";
-import { writeSceneDataC } from "../scene-data-writer";
+import { writeSceneDataC, writeScriptCodeC } from "../scene-data-writer";
 import type { BuildFileSystem, BuildRunner, ToolchainLocator } from "./ports";
 
 /**
@@ -75,6 +75,7 @@ export class RomBuilder {
       buildDir = await fs.makeTempDir("gsds-build-");
       await fs.copyDir(runtimeDir, buildDir);
       await fs.writeText(join(buildDir, "source", "scene_data.c"), writeSceneDataC(scene));
+      await fs.writeText(join(buildDir, "source", "script_code.c"), writeScriptCodeC(scene));
 
       const result = await runner.run(
         { executable: lookup.toolchain.bashPath, args: ["-l", "-c", makeScript(toMsysPath(buildDir))] },

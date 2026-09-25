@@ -1,0 +1,76 @@
+# Simple 8-way movement on the ground plane (X and Z) with gravity and a jump, for testing games.
+#
+# Set-up in the editor:
+#   1. A MeshInstance3D for the player, with a CollisionShape3D under it (the player's body).
+#   2. The ground, walls and platforms: CollisionShape3D nodes with Solid turned on (a box is easiest). Put the player above the ground to start.
+#   3. A Camera3D that looks down at the ground (for example above and behind it, tilted down).
+#   4. Attach this script to the player mesh.
+#
+#   D-pad  walk in 8 directions: Up = away from the camera (-Z), Down = toward it (+Z), Left = -X, Right = +X.
+#          Diagonals are no faster than straight lines.
+#   B      hold to run.
+#   A      jump (only from the ground: no double jump).
+# Gravity pulls the player down; solid shapes stop it: it lands on floors, is stopped by walls, and bumps its head on ceilings.
+# The player turns to face where it is walking. If your model faces the wrong way, change face_offset (degrees).
+# Change the numbers below to change how it feels. Units are scene units and seconds.
+
+var speed = 3.0          # walking speed
+var run_speed = 6.0      # speed while B is held
+var gravity = -20.0      # downward pull (negative = down)
+var jump_speed = 9.0     # upward speed at the start of a jump: a jump is about jump_speed * jump_speed / (2 * -gravity) high (just under 2 units here)
+var velocity_y = 0.0     # how fast the player is moving up (negative: falling)
+var turn = true          # turn the player to face its walking direction (false: never rotate)
+var face_offset = 0.0    # added to the facing angle, in degrees (0 = the model's front points along -Z)
+
+func _process(delta):
+    # Which way is the D-pad pointing? dx: -1 left, +1 right. dz: -1 up (away from camera), +1 down.
+    var dx = 0.0
+    var dz = 0.0
+    if Input.is_button_down("left"):
+        dx -= 1.0
+    if Input.is_button_down("right"):
+        dx += 1.0
+    if Input.is_button_down("up"):
+        dz -= 1.0
+    if Input.is_button_down("down"):
+        dz += 1.0
+
+    var s = speed
+    if Input.is_button_down("b"):
+        s = run_speed
+
+    # A diagonal has length 1.41, so scale it back to 1 (0.7071 = 1 / sqrt(2)).
+    if dx != 0.0 and dz != 0.0:
+        dx *= 0.7071
+        dz *= 0.7071
+
+    # Jump (is_on_floor() says what the last move ran into).
+    if is_on_floor() and Input.is_button_pressed("a"):
+        velocity_y = jump_speed
+
+    # Gravity, then move on all three axes at once: solid shapes stop the move.
+    velocity_y += gravity * delta
+    move_and_collide(dx * s * delta, velocity_y * delta, dz * s * delta)
+
+    # Landing or hitting a ceiling stops the fall or the rise.
+    if is_on_floor() or is_on_ceiling():
+        velocity_y = 0.0
+
+    # Face the walking direction (only while walking): 0 = toward -Z, 90 = toward +X, 180 = toward +Z, -90 = toward -X.
+    if turn and (dx != 0.0 or dz != 0.0):
+        var angle = 0.0
+        if dx > 0.0 and dz < 0.0:
+            angle = 45.0
+        elif dx > 0.0 and dz == 0.0:
+            angle = 90.0
+        elif dx > 0.0 and dz > 0.0:
+            angle = 135.0
+        elif dx == 0.0 and dz > 0.0:
+            angle = 180.0
+        elif dx < 0.0 and dz > 0.0:
+            angle = -135.0
+        elif dx < 0.0 and dz == 0.0:
+            angle = -90.0
+        elif dx < 0.0 and dz < 0.0:
+            angle = -45.0
+        rotation.y = angle + face_offset

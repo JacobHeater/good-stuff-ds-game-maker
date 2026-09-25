@@ -18,6 +18,7 @@ import { DS_HEIGHT, DS_WIDTH, type Silhouette } from "./reference-render";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CAPTURE_SCRIPT = resolve(HERE, "..", "..", "..", "..", "tools", "ds-toolchain", "capture-melonds.ps1");
+const INPUT_SCRIPT = resolve(HERE, "..", "..", "..", "..", "tools", "ds-toolchain", "melonds-input.ps1");
 
 /**
  * The backdrop color as melonDS shows it, measured from a capture: the runtime clears to RGB15 (3, 5, 10) and
@@ -46,8 +47,54 @@ export function captureRom(romPath: string, pngPath: string, waitSeconds = 5): E
     { encoding: "utf-8", timeout: 60_000 }
   );
   if (run.status !== 0) throw new Error(`Capturing the emulator failed:\n${run.stdout}\n${run.stderr}`);
-  const title = /^title: (.*)$/m.exec(run.stdout)?.[1]?.trim() ?? "";
+  return analyzeCapture(pngPath, /^title: (.*)$/m.exec(run.stdout)?.[1]?.trim() ?? "");
+}
 
+/** What to press while the emulator runs (see tools/ds-toolchain/melonds-input.ps1 for the keys and how it works). */
+export interface EmulatorInput {
+  /** Buttons pressed once, one after another, before anything else (`a`, `left`, ...). */
+  tap?: string[];
+  /** Buttons held down while the picture is taken. */
+  hold?: string[];
+  /** A mouse press, in absolute screen pixels (a touch, when it is on the bottom screen), held while the picture is taken. */
+  click?: { x: number; y: number };
+  /** How long the held input is kept before the picture, in seconds. */
+  holdSeconds?: number;
+  /** Seconds to let the game start before sending anything. */
+  bootSeconds?: number;
+}
+
+export interface InputCapture extends EmulatorCapture {
+  /** The emulator window's position and size on the desktop, in screen pixels. */
+  window: { left: number; top: number; width: number; height: number };
+}
+
+/** Runs a ROM in melonDS, sends it real button presses and/or a touch, and reads back the top screen. */
+export function captureRomWithInput(romPath: string, pngPath: string, input: EmulatorInput = {}): InputCapture {
+  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", INPUT_SCRIPT, "-Rom", romPath, "-Out", pngPath];
+  if (input.bootSeconds !== undefined) args.push("-BootSeconds", String(input.bootSeconds));
+  if (input.holdSeconds !== undefined) args.push("-HoldSeconds", String(input.holdSeconds));
+  if (input.tap?.length) args.push("-Tap", input.tap.join(","));
+  if (input.hold?.length) args.push("-Hold", input.hold.join(","));
+  if (input.click) args.push("-Click", `${Math.round(input.click.x)},${Math.round(input.click.y)}`);
+  const run = spawnSync("powershell", args, { encoding: "utf-8", timeout: 90_000 });
+  if (run.status !== 0) throw new Error(`Sending input to the emulator failed:\n${run.stdout}\n${run.stderr}`);
+  const rect = /^window: (-?\d+) (-?\d+) (\d+) (\d+)$/m.exec(run.stdout);
+  if (!rect) throw new Error(`The input tool didn't report the window's position:\n${run.stdout}`);
+  const capture = analyzeCapture(pngPath, "");
+  return { ...capture, window: { left: Number(rect[1]), top: Number(rect[2]), width: Number(rect[3]), height: Number(rect[4]) } };
+}
+
+/**
+ * Where a point on the bottom screen is on the desktop, given a capture that found the top screen: the bottom screen sits directly below the top
+ * one and is the same size. `fx` and `fy` are fractions of the screen (0..1, from its top left).
+ */
+export function bottomScreenPoint(capture: InputCapture, fx: number, fy: number): { x: number; y: number } {
+  const { screen, window } = capture;
+  return { x: window.left + screen.left + fx * screen.width, y: window.top + screen.top + screen.height + fy * screen.height };
+}
+
+function analyzeCapture(pngPath: string, title: string): EmulatorCapture {
   const png = PNG.sync.read(readFileSync(pngPath));
   const at = (x: number, y: number): [number, number, number] => {
     const i = (y * png.width + x) * 4;

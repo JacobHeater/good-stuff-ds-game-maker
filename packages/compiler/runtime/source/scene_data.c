@@ -19,16 +19,59 @@ static const uint32_t primitive_0_normals[] = {
   535822336, 535822336, 535822336, 535822336, 535822336, 535822336, 536870912, 536870912, 536870912, 536870912, 536870912, 536870912
 };
 
+static const GsTexture textures[] = {
+  { 0, 0, 0, 0, 0 }
+};
+
+static const GsSound sounds[] = {
+  { 0, 0, 0 }
+};
+
+static const GsAudioPlayer audioPlayers[] = {
+  { 0, 0, 0, 0, 0 }
+};
+
+static const GsCollider colliders[] = {
+  { 0, 0, { 0, 0, 0 } }
+};
+
+static const GsAnimKey animKeys[] = {
+  { 0, { 0, 0, 0 } }
+};
+
+static const GsAnimTrack animTracks[] = {
+  { 0, 0, 0, 0 }
+};
+
+static const GsAnimation animations[] = {
+  { 0, 0, 0, 0 }
+};
+
+static const GsAnimationPlayer animationPlayers[] = {
+  { 0, 0, -1, 0 }
+};
+
 static const GsPrimitive primitives[] = {
-  { 12, primitive_0_positions, primitive_0_normals }
+  { 12, primitive_0_positions, primitive_0_normals, 0 }
+};
+
+static const GsNode nodes[] = {
+  /* Main */
+  { -1, 0, 1, -1, -1, -1, { 0, 0, 0 }, { 0, 0, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096 } } },
+  /* Cube */
+  { 0, 0, 1, -1, -1, -1, { 0, 0, 0 }, { 0, 122880, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3547, 0, -2048, 0, 0, 4096, 0, 0, 2048, 0, 3547, 0, 0, 0, 0, 4096 } } },
+  /* Camera */
+  { 0, 0, 1, -1, -1, -1, { 10240, 8192, 14336 }, { -121835, 130278, 68652 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3333, 0, -2381, 0, -1004, 3714, -1405, 0, 2159, 1727, 3022, 0, 10240, 8192, 14336, 4096 } } },
+  /* Sun */
+  { 0, 0, 1, -1, -1, -1, { -8192, 16384, 12288 }, { -217621, -89299, -107905 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3408, 0, 2272, 0, 1688, 2742, -2531, 0, -1521, 3042, 2282, 0, -8192, 16384, 12288, 4096 } } }
 };
 
 static const GsMesh meshes[] = {
-  { 0, 25368, { { 3547, 0, -2048, 0, 0, 4096, 0, 0, 2048, 0, 3547, 0, 0, 0, 0, 4096 } } }
+  { 0, 25368, 0, 1 }
 };
 
 static const GsLight lights[] = {
-  { 32767, { 190, -380, -285 } }
+  { 32767, { 190, -380, -285 }, 3 }
 };
 
 const GsScene gs_scene = {
@@ -36,6 +79,9 @@ const GsScene gs_scene = {
   60, /* fps */
   50.0f, 0.1f, 100.0f, /* fov, near, far */
   { { 3333, -1004, 2159, 0, 0, 3714, 1727, 0, -2381, -1405, 3022, 0, 0, 0, -19429, 4096 } }, /* view */
-  1, 1, 1, /* primitive, mesh, light counts */
-  primitives, meshes, lights
+  2, 4, /* camera node, node count */
+  1, 1, 1, 0, /* primitive, mesh, light, texture counts */
+  0, 0, 0, /* sound, audio player, collider counts */
+  0, 0, 0, 0, /* animation player, animation, track, key counts */
+  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, animationPlayers, animations, animTracks, animKeys
 };

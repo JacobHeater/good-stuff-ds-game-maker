@@ -1,3 +1,5 @@
+import type { ImportedMesh } from "./imported-mesh";
+import type { ImportedTexture } from "./imported-texture";
 import type { ProjectSnapshot } from "./project-snapshot";
 import type { RecentProjectListing } from "./recent-projects";
 
@@ -43,6 +45,44 @@ export interface ExportRomResult {
   lines: string[];
 }
 
+/**
+ * The outcome of "Import Model (.obj)...". On "ok", `mesh` is the parsed model (with a fresh id) and
+ * `warnings` says what was ignored. On "error", `errors` says why the file was refused. On "canceled"
+ * both are empty.
+ */
+export interface ImportMeshResult {
+  outcome: ProjectDialogOutcome;
+  mesh?: ImportedMesh;
+  fileName?: string;
+  warnings: string[];
+  errors: string[];
+}
+
+/**
+ * The outcome of importing a PNG as a texture. On "ok", `texture` is the picture already converted to the DS's
+ * format (with a fresh id) and `warnings` says what was changed. On "error", `errors` says why it was refused.
+ * On "canceled" both are empty.
+ */
+export interface ImportTextureResult {
+  outcome: ProjectDialogOutcome;
+  texture?: ImportedTexture;
+  fileName?: string;
+  warnings: string[];
+  errors: string[];
+}
+
+/**
+ * The outcome of asking for a sound file. On "ok", `bytes` is the file's content, undecoded: decoding audio needs the editor
+ * window's decoder (WAV, MP3 and OGG), so the main process only picks and reads. On "error", `errors` says why the file
+ * couldn't be read. On "canceled" both are empty.
+ */
+export interface PickSoundResult {
+  outcome: ProjectDialogOutcome;
+  fileName?: string;
+  bytes?: Uint8Array;
+  errors: string[];
+}
+
 /** The outcome of "Play". `lines` is for the Output log, in order. */
 export interface PlayProjectResult {
   outcome: "ok" | "error";
@@ -80,6 +120,15 @@ export interface GoodStuffWindowApi {
      * the build or launch failed), not when the game ends.
      */
     play(snapshot: ProjectSnapshot): Promise<PlayProjectResult>;
+  };
+  /** Bringing files into a project. Reading and parsing happen in the main process; the renderer gets the result. */
+  assets: {
+    /** Asks the user for an .obj file and parses it. Never changes any project: the caller decides what to do with the model. */
+    importMesh(): Promise<ImportMeshResult>;
+    /** Asks the user for a .png file and converts it to a DS texture. Never changes any project. */
+    importTexture(): Promise<ImportTextureResult>;
+    /** Asks the user for a .wav, .mp3 or .ogg file and returns its bytes, for the renderer to decode. Never changes any project. */
+    pickSound(): Promise<PickSoundResult>;
   };
   /**
    * Recently opened projects. Recording is done by the main process itself on

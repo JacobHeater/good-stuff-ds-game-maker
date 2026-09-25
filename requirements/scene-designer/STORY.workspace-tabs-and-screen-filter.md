@@ -22,9 +22,12 @@ The workspace toolbar offers three tabs: the project's own viewport
 (`2D` for a 2D project, `3D` for a 3D project — never both) plus
 `Script` and `Game`. The `2D` tab shows `DualScreenViewport`; the `3D`
 tab shows `Viewport3D` (see
-`STORY.3d-editing-viewport-native-resolution.md`). `Script` and `Game`
-are visible tabs with only a "not built yet" placeholder behind them.
+`STORY.3d-editing-viewport-native-resolution.md`). `Script` is the script editor (`scripting/TASK.script-editor-and-attachment.md`);
+`Game` is a visible tab with only a "not built yet" placeholder behind it.
 Opening or creating a project selects its viewport tab.
+
+In a 3D project the toolbar also holds the Select / Move / Rotate / Scale tools
+(`STORY.transform-tools-on-toolbar.md`).
 
 The toolbar also holds the screen filter and the FPS target selector
 (30/60, from `DS_HARDWARE_PROFILE.frameRate.supportedFpsTargets`). The
@@ -73,3 +76,7 @@ Scenario: Script and Game tabs show a placeholder
   behavior belong to the `run-games-locally` component. This story only
   covers the tab scaffolding and screen-filter/FPS-target behavior that
   lives directly in `WorkspaceToolbar`.
+
+## Update: 3D projects have a 2D screen
+In a 3D project the screen filter (Top / Bottom) chooses which screen the workspace shows: the 3D screen shows the 3D editor and the other one, the project's 2D screen, shows the
+dual-screen 2D view of that single screen; the toolbar also has a "2D screen" select that swaps them. See `STORY.choose-2d-screen-in-3d-project.md`.

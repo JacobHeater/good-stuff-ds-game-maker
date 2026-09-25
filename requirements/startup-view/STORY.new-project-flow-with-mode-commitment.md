@@ -108,3 +108,7 @@ Verified end-to-end against the real Electron app with real files
 (only the native dialogs were stubbed): mode required, name required,
 3D and 2D creation each produce the right file on disk and the right
 locked editor, cancel keeps the form.
+
+## Update: the 2D screen of a 3D project
+Choosing 3D now also asks which screen is 2D ("2D on top" or "2D on bottom", bottom by default); the 3D engine drives the other. Unlike the mode this can be changed later from the
+toolbar. See `scene-designer/STORY.choose-2d-screen-in-3d-project.md`.

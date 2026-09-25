@@ -104,3 +104,7 @@ Scenario: Node kinds render distinctly
   is a known, currently-accepted simplification, not a requirement of
   this story, but is worth its own Task if directional lighting needs
   to be steerable later.
+
+## Update: which screen is 3D
+"Only one screen's 3D content is shown at a time" still holds, but which screen the 3D engine drives is now the project's choice (kept in the scene root's screen; see
+`STORY.choose-2d-screen-in-3d-project.md`). The 3D editor is shown when the screen filter is on that screen; the other screen shows the 2D editor.

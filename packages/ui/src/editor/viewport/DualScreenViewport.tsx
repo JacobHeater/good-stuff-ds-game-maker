@@ -12,7 +12,7 @@ const SCREEN_H = DS_HARDWARE_PROFILE.screens.height * SCALE;
 const VISUAL_KINDS = new Set(["Sprite2D", "AnimatedSprite2D", "Camera2D", "Label", "Area2D"]);
 
 function NodeMarker({ node }: { node: SceneNode }): JSX.Element {
-  const { state, selectNode, moveNode } = useEditorStore();
+  const { state, selectNode, moveNode, endEditGesture } = useEditorStore();
   const isSelected = state.selectedNodeId === node.id;
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(
     null
@@ -45,10 +45,14 @@ function NodeMarker({ node }: { node: SceneNode }): JSX.Element {
     [moveNode, node.id]
   );
 
-  const onPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    dragRef.current = null;
-    (event.target as HTMLElement).releasePointerCapture(event.pointerId);
-  }, []);
+  const onPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      dragRef.current = null;
+      (event.target as HTMLElement).releasePointerCapture(event.pointerId);
+      endEditGesture(); // the marker was released: the next drag is a new undo step
+    },
+    [endEditGesture]
+  );
 
   if (!node.visible) return <></>;
 
@@ -74,11 +78,11 @@ function NodeMarker({ node }: { node: SceneNode }): JSX.Element {
   );
 }
 
-function ScreenCanvas({ screen, nodes }: { screen: ScreenId; nodes: SceneNode[] }): JSX.Element {
+function ScreenCanvas({ screen, nodes, note }: { screen: ScreenId; nodes: SceneNode[]; note?: string }): JSX.Element {
   const { selectNode, state } = useEditorStore();
   return (
     <div className="flex flex-col items-center gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-editor-text-muted">{screen} screen</span>
+      <span className="text-[10px] uppercase tracking-wide text-editor-text-muted">{screen} screen{note ? ` · ${note}` : ""}</span>
       <div
         onPointerDown={() => selectNode(state.sceneRoot.id)}
         style={{ width: SCREEN_W, height: SCREEN_H }}
@@ -87,6 +91,11 @@ function ScreenCanvas({ screen, nodes }: { screen: ScreenId; nodes: SceneNode[] 
         {nodes.map((node) => (
           <NodeMarker key={node.id} node={node} />
         ))}
+        {nodes.length === 0 && note && (
+          <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-[11px] text-editor-text-muted" data-testid="empty-2d-screen">
+            Nothing on this 2D screen yet. Scene &gt; Add 2D Node adds a Label, Sprite2D and more.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -105,11 +114,13 @@ export function DualScreenViewport(): JSX.Element {
 
   const showTop = state.screenFilter === "both" || state.screenFilter === "top";
   const showBottom = state.screenFilter === "both" || state.screenFilter === "bottom";
+  // In a 3D project only its 2D screen comes here.
+  const note = state.project?.mode === "3D" ? "2D engine" : undefined;
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center gap-6 overflow-auto bg-editor-bg p-4">
-      {showTop && <ScreenCanvas screen="top" nodes={topNodes} />}
-      {showBottom && <ScreenCanvas screen="bottom" nodes={bottomNodes} />}
+      {showTop && <ScreenCanvas screen="top" nodes={topNodes} note={note} />}
+      {showBottom && <ScreenCanvas screen="bottom" nodes={bottomNodes} note={note} />}
     </div>
   );
 }

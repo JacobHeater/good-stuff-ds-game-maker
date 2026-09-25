@@ -1,0 +1,36 @@
+# A simple platformer-style player for testing games.
+#
+# Set-up in the editor:
+#   1. A MeshInstance3D for the player, with a CollisionShape3D under it (the player's body).
+#   2. The ground, walls and platforms: CollisionShape3D nodes with Solid turned on (a box is easiest). Put the player above the ground to start.
+#   3. Attach this script to the player mesh.
+#
+#   Left / Right  walk along X
+#   A             jump (only from the ground: no double jump)
+# Gravity pulls the player down; solid shapes stop it: it lands on floors, is stopped by walls, and bumps its head on ceilings.
+# Change the numbers below to change how it feels. Units are scene units and seconds.
+
+var speed = 3.0          # walking speed
+var gravity = -20.0      # downward pull (negative = down)
+var jump_speed = 9.0     # upward speed at the start of a jump: a jump is about jump_speed * jump_speed / (2 * -gravity) high (just under 2 units here)
+var velocity_y = 0.0     # how fast the player is moving up (negative: falling)
+
+func _process(delta):
+    # Walk.
+    var walk = 0.0
+    if Input.is_button_down("left"):
+        walk -= speed * delta
+    if Input.is_button_down("right"):
+        walk += speed * delta
+
+    # Jump (is_on_floor() says what the last move ran into).
+    if is_on_floor() and Input.is_button_pressed("a"):
+        velocity_y = jump_speed
+
+    # Gravity, then move: solid shapes stop the move.
+    velocity_y += gravity * delta
+    move_and_collide(walk, velocity_y * delta, 0.0)
+
+    # Landing or hitting a ceiling stops the fall or the rise.
+    if is_on_floor() or is_on_ceiling():
+        velocity_y = 0.0

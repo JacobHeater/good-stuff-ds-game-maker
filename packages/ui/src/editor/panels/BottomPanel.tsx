@@ -1,8 +1,9 @@
 import { computeSceneBudget, DS_HARDWARE_PROFILE } from "@goodstuff/core";
 
 import { useEditorStore, type BottomTabId } from "../state/editor-store";
+import { AnimationPanel } from "./AnimationPanel";
 
-const TABS: BottomTabId[] = ["Output", "Debugger", "Hardware"];
+const TABS: BottomTabId[] = ["Output", "Debugger", "Hardware", "Animation"];
 
 function BudgetBar({ used, limit }: { used: number; limit: number }): JSX.Element {
   const percent = Math.min(100, (used / limit) * 100);
@@ -19,7 +20,7 @@ function BudgetBar({ used, limit }: { used: number; limit: number }): JSX.Elemen
 
 function HardwareBudgetTab(): JSX.Element {
   const { state } = useEditorStore();
-  const budget = computeSceneBudget(state.sceneRoot);
+  const budget = computeSceneBudget(state.sceneRoot, state.project?.meshes, state.project?.textures, state.project?.sounds);
 
   return (
     <div className="grid grid-cols-2 gap-4 p-3 text-xs">
@@ -47,6 +48,13 @@ function HardwareBudgetTab(): JSX.Element {
           </span>
         </div>
         <BudgetBar used={budget.audioPlayersUsed} limit={budget.audioChannelsLimit} />
+        <div className="flex items-center justify-between">
+          <span className="text-editor-text-muted">Sound memory</span>
+          <span>
+            {budget.soundBytesUsed} / {budget.soundBytesLimit} bytes
+          </span>
+        </div>
+        <BudgetBar used={budget.soundBytesUsed} limit={budget.soundBytesLimit} />
 
         <div className="mt-2 font-semibold text-editor-text-muted">3D triangle budget (per frame)</div>
         <div className="flex items-center justify-between">
@@ -56,6 +64,15 @@ function HardwareBudgetTab(): JSX.Element {
           </span>
         </div>
         <BudgetBar used={budget.trianglesUsed} limit={budget.trianglesLimit} />
+
+        <div className="mt-2 font-semibold text-editor-text-muted">Texture memory</div>
+        <div className="flex items-center justify-between">
+          <span className="text-editor-text-muted">Textures in scene</span>
+          <span>
+            {budget.textureBytesUsed} / {budget.textureBytesLimit} bytes
+          </span>
+        </div>
+        <BudgetBar used={budget.textureBytesUsed} limit={budget.textureBytesLimit} />
 
         <div className="mt-2 font-semibold text-editor-text-muted">Fixed hardware ceiling</div>
         <ul className="list-inside list-disc space-y-0.5 text-editor-text-muted">
@@ -101,7 +118,7 @@ export function BottomPanel(): JSX.Element {
   const { state, setBottomTab } = useEditorStore();
 
   return (
-    <div className="flex h-56 shrink-0 flex-col border-t border-editor-border bg-editor-panel">
+    <div className={`flex ${state.activeBottomTab === "Animation" ? "h-80" : "h-56"} shrink-0 flex-col border-t border-editor-border bg-editor-panel`}>
       <div className="flex shrink-0 items-center gap-1 border-b border-editor-border px-2 py-1">
         {TABS.map((tab) => (
           <button
@@ -119,6 +136,7 @@ export function BottomPanel(): JSX.Element {
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {state.activeBottomTab === "Animation" && <AnimationPanel />}
         {state.activeBottomTab === "Output" && <OutputTab />}
         {state.activeBottomTab === "Debugger" && <DebuggerTab />}
         {state.activeBottomTab === "Hardware" && <HardwareBudgetTab />}

@@ -11,6 +11,7 @@ export const NODE_KIND_ICON: Record<SceneNodeKind, string> = {
   CollisionShape2D: "🛡",
   Area2D: "📦",
   AudioStreamPlayer: "🔊",
+  AnimationPlayer: "▶",
   Node3D: "◈",
   MeshInstance3D: "🧊",
   Camera3D: "🎥",

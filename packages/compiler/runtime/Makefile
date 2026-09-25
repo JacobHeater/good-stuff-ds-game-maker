@@ -20,7 +20,10 @@ INCLUDES	:=	include
 
 ARCH	:=	-march=armv5te -mtune=arm946e-s -mthumb
 
-CFLAGS	:=	-g -Wall -O2 -ffunction-sections -fdata-sections $(ARCH)
+# -fwrapv: script integers wrap on overflow (requirements/scripting/TASK.script-language-front-end.md), which C only defines with this.
+# -fno-strict-aliasing: matrices are our GsMatrix in some places and libnds's m4x4 in others, and are passed between them by cast; without this,
+# -O2 may reorder or drop the stores that fill one before the other is read (a scripted camera's view intermittently drew nothing).
+CFLAGS	:=	-g -Wall -O2 -fwrapv -fno-strict-aliasing -ffunction-sections -fdata-sections $(ARCH)
 CFLAGS	+=	$(INCLUDE) -DARM9
 
 ASFLAGS	:=	-g $(ARCH)

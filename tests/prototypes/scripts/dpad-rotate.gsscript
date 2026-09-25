@@ -1,0 +1,19 @@
+# Attach this to a MeshInstance3D (the model).
+# D-pad: Left/Right turn it around the vertical axis, Up/Down tip it forward and back.
+# A resets it to its starting angle.
+
+var speed = 90.0    # degrees per second while a direction is held
+
+func _process(delta):
+    if Input.is_button_down("left"):
+        rotation.y -= speed * delta
+    if Input.is_button_down("right"):
+        rotation.y += speed * delta
+    if Input.is_button_down("up"):
+        rotation.x -= speed * delta
+    if Input.is_button_down("down"):
+        rotation.x += speed * delta
+    if Input.is_button_pressed("a"):
+        rotation.x = 0.0
+        rotation.y = 0.0
+        rotation.z = 0.0

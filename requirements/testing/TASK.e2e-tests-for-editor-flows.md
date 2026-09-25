@@ -16,9 +16,14 @@ the approach works, not something to build a suite on. **The script is
 kept as it is** until this task replaces it (see the last scenario); it is
 not to be deleted just because a new suite exists.
 
-Two more prototypes, `tests/prototypes/e2e/export-rom.mjs` (8 checks) and
-`tests/prototypes/e2e/play.mjs` (6 checks, opens real melonDS windows), cover "Export ROM..." and
-the toolbar's Play the same way (both need the DS toolchain; Play also needs melonDS) and are kept
+Eight more prototypes (`tests/prototypes/e2e/lighting-parity.mjs`, 9 checks, reads the viewport's brightness against the DS lighting formula and drives the intensity slider; `tests/prototypes/e2e/texture-mesh.mjs`, 13 checks, writes real PNG files and reads the
+viewport's colors from a screenshot of its canvas; `tests/prototypes/e2e/transform-tools.mjs` drives real mouse drags on the
+3D viewport's gizmos, 10 checks; `tests/prototypes/e2e/undo-redo.mjs` uses real Ctrl+Z / Ctrl+Shift+Z,
+typing and gizmo drags, 13 checks), `tests/prototypes/e2e/export-rom.mjs` (8 checks),
+`tests/prototypes/e2e/play.mjs` (6 checks, opens real melonDS windows),
+`tests/prototypes/e2e/mesh-primitive.mjs` (6 checks, choosing a mesh's primitive) and
+`tests/prototypes/e2e/import-obj.mjs` (10 checks, importing an .obj model), cover "Export ROM...",
+the toolbar's Play, the Inspector's Mesh select and Import Model the same way (both need the DS toolchain; Play also needs melonDS) and are kept
 for the same reason.
 
 The technique it proved, which the suite should keep:

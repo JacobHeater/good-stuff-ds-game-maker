@@ -16,8 +16,9 @@ Found while scoping the compiler. A 3D scene in the editor today can say
 - **Lights.** `DirectionalLight3D` and `OmniLight3D` have a transform and
   nothing else: no color, no intensity. (The editor's viewport hardcodes an
   intensity for both.)
-- **Meshes.** `MeshInstance3D` has a primitive and a triangle count and no
-  color or material; the viewport paints every mesh the same grey.
+- **Meshes.** `MeshInstance3D` has a primitive (or model) and a triangle count and no
+  color or material; the viewport paints every untextured mesh the same grey. (A mesh can
+  now be given a PNG *texture*: `STORY.mesh-textures.md`.)
 - **What the viewport shows.** The 3D viewport is an orbit camera at a fixed
   position (`[4, 3, 6]`, 50° field of view) with a fixed ambient light. It
   never shows the scene *through* a `Camera3D`, so there's no way in the
@@ -35,7 +36,7 @@ file, and honored by both the editor viewport and the compiler:
 
 - **`Camera3D`**: field of view, near and far planes; and a way to mark
   which camera is the active one (a scene has exactly one).
-- **Lights**: color (and a simple intensity for directional lights).
+- **Lights**: color (and a simple intensity for directional lights). **Intensity is done** (`STORY.directional-light-intensity.md`); color is not.
 - **`MeshInstance3D`**: a color.
 - **A "view through the active camera" mode** in the 3D viewport, alongside
   the existing orbit view, at the DS's 256×192 with the DS aspect ratio, so

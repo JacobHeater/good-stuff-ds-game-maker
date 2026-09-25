@@ -107,3 +107,8 @@ Judgment calls worth knowing about:
 
 Verified end-to-end against the real app (see
 `startup-view/EPIC.startup-view.md`).
+
+## Update: the second screen of a 3D project
+`STORY.choose-2d-screen-in-3d-project.md` changed two things this task says. A 3D project's "Add Node" list now also offers the 2D kinds (under a "2D screen" heading), because the DS's
+second screen is a 2D screen; a 2D project still offers no 3D kinds. And a 3D project's screen filter (Top / Bottom, never Both) now picks which screen is being edited: the 3D
+screen shows the 3D editor, the 2D screen a 2D editor. There is still no 2D *tab* in a 3D project.

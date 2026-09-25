@@ -1,11 +1,11 @@
-import { PROJECT_MODES, type ProjectMode } from "@goodstuff/core";
+import { DEFAULT_TWO_D_SCREEN, PROJECT_MODES, type ProjectMode, type ScreenId } from "@goodstuff/core";
 import { useState, type FormEvent } from "react";
 
 import { useEditorStore } from "../editor/state/editor-store";
 
 const MODE_DESCRIPTIONS: Record<ProjectMode, string> = {
   "2D": "Sprites, tilemaps and labels on the DS's two screens. Uses the DS's 2D engine.",
-  "3D": "Polygon meshes, lights and cameras. The DS's 3D engine drives one screen at a time."
+  "3D": "Polygon meshes, lights and cameras. The DS's 3D engine drives one screen; the other screen is a 2D screen."
 };
 
 /**
@@ -17,6 +17,7 @@ export function NewProjectPanel({ onBack }: { onBack: () => void }): JSX.Element
   const { createProject } = useEditorStore();
   const [name, setName] = useState("");
   const [mode, setMode] = useState<ProjectMode | null>(null);
+  const [twoDScreen, setTwoDScreen] = useState<ScreenId>(DEFAULT_TWO_D_SCREEN);
   const [nameError, setNameError] = useState<string | null>(null);
   const [modeError, setModeError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export function NewProjectPanel({ onBack }: { onBack: () => void }): JSX.Element
     if (!trimmedName || !mode) return;
 
     setBusy(true);
-    const result = await createProject(trimmedName, mode);
+    const result = await createProject(trimmedName, mode, twoDScreen);
     setBusy(false);
     if (result.outcome === "error") {
       setSubmitError(result.message ?? "Could not create the project.");
@@ -94,6 +95,34 @@ export function NewProjectPanel({ onBack }: { onBack: () => void }): JSX.Element
           </span>
         )}
       </div>
+
+      {mode === "3D" && (
+        <div className="flex flex-col gap-1.5 text-xs" data-testid="two-d-screen-choice">
+          <span id="two-d-screen-label" className="text-editor-text-muted">
+            2D screen
+          </span>
+          <div role="radiogroup" aria-labelledby="two-d-screen-label" className="grid grid-cols-2 gap-3">
+            {(["top", "bottom"] as const).map((screen) => (
+              <button
+                key={screen}
+                type="button"
+                role="radio"
+                aria-checked={twoDScreen === screen}
+                onClick={() => setTwoDScreen(screen)}
+                className={`flex flex-col items-start gap-0.5 rounded border p-2.5 text-left ${
+                  twoDScreen === screen ? "border-editor-accent bg-editor-accent/15" : "border-editor-border bg-editor-panel-alt hover:border-editor-text-muted"
+                }`}
+              >
+                <span className="text-sm font-semibold">{screen === "top" ? "2D on top" : "2D on bottom"}</span>
+                <span className="text-[11px] leading-snug text-editor-text-muted">
+                  {screen === "top" ? "2D on the top screen; 3D on the bottom (touch) screen." : "2D on the bottom (touch) screen; 3D on the top screen."}
+                </span>
+              </button>
+            ))}
+          </div>
+          <span className="text-editor-text-muted">The DS's 3D engine drives one screen; the other is for 2D. You can swap them later.</span>
+        </div>
+      )}
 
       {submitError && <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">{submitError}</div>}
 

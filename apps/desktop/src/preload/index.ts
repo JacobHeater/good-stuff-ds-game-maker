@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { GoodStuffWindowApi } from "@goodstuff/core";
 
-import { APP_IPC_CHANNELS, PROJECT_IPC_CHANNELS, RECENTS_IPC_CHANNELS } from "../shared/project-ipc-channels";
+import { APP_IPC_CHANNELS, ASSETS_IPC_CHANNELS, PROJECT_IPC_CHANNELS, RECENTS_IPC_CHANNELS } from "../shared/project-ipc-channels";
 
 /**
  * Minimal, explicit API surface exposed to the renderer. Typed against
@@ -22,6 +22,11 @@ const api: GoodStuffWindowApi = {
     listDirectory: (filePath) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.listDirectory, filePath),
     exportRom: (snapshot, projectFilePath) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.exportRom, snapshot, projectFilePath),
     play: (snapshot) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.play, snapshot)
+  },
+  assets: {
+    importMesh: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importMesh),
+    importTexture: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importTexture),
+    pickSound: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickSound)
   },
   recents: {
     list: () => ipcRenderer.invoke(RECENTS_IPC_CHANNELS.list),

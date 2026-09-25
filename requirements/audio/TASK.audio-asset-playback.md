@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: done
 component: audio
-related: [STORY.audio-node-in-hardware-budget.md, scene-designer/SPIKE.custom-mesh-and-sprite-import.md, run-games-locally/SPIKE.game-runtime-approach.md]
+related: [STORY.import-sound-and-audio-player.md, TASK.sound-import-conversion.md, persistence/TASK.embed-imported-sounds-in-project-file.md, compiler/TASK.compile-sounds.md, STORY.audio-node-in-hardware-budget.md, scene-designer/SPIKE.custom-mesh-and-sprite-import.md, run-games-locally/SPIKE.game-runtime-approach.md]
 ---
 
 # Task: Real audio asset import and playback
@@ -35,6 +35,9 @@ Scenario: Assigned audio plays during a game preview
 ```
 
 ## Notes
-- Blocked on both the asset-import approach and the game-runtime
-  approach being decided first — this task shouldn't be started until
-  at least one of those two Spikes has a resolution.
+- **Delivered by `STORY.import-sound-and-audio-player.md`** (and its tasks, listed in `related`). Both blockers resolved: the asset
+  approach is the one models and textures use (embedded in the project file, already converted), and the runtime is the compiled
+  ROM run in an emulator (`run-games-locally/SPIKE.game-runtime-approach.md`).
+- "Assigned audio plays during a game preview": Play builds the ROM and opens melonDS, and an `AudioStreamPlayer` with Autoplay on
+  starts its sound there. A player with Autoplay off stays silent unless a script calls `play()` on it (`scripting/STORY.write-and-run-scripts.md`). The editor's own preview of a
+  sound is the Inspector's player.

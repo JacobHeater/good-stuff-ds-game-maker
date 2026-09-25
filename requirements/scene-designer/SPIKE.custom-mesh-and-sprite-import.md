@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: done
 component: scene-designer
-related: [EPIC.scene-designer.md, file-browser, audio]
+related: [EPIC.scene-designer.md, STORY.import-obj-model.md, SPIKE.sprite-image-import.md, file-browser, audio]
 ---
 
 # Spike: Custom mesh and sprite import
@@ -47,3 +47,21 @@ Scenario: Spike produces a written recommendation
 - This is blocked on project persistence existing first
   (`persistence/EPIC.project-persistence.md`), since "import an asset"
   presupposes a project directory to import it into.
+
+## Outcome (2026-09-24)
+The **mesh half is answered** and became `STORY.import-obj-model.md` (with
+`TASK.obj-parser.md`, `persistence/TASK.embed-imported-meshes-in-project-file.md` and
+`compiler/TASK.compile-imported-meshes.md`). The recommendation, decided with the product owner:
+- **Format:** Wavefront `.obj`, geometry only. Plain text, universally exported, easy to
+  parse and to bound. glTF is a possible later story.
+- **Storage:** embedded in the `.gsds`, so the project stays one file and Save As, Export
+  and Play work without a project directory. This also means the "blocked on persistence"
+  note above no longer applies: persistence exists, and it didn't need a directory layout.
+- **Hardware budget:** the old hardcoded `MESH_PRIMITIVE_TRIANGLE_COUNT` is already gone;
+  every consumer takes triangles from the geometry, so an imported model's real count drops in.
+- **Doesn't fit:** refused at import (vertex range about ±8, triangles over one frame's worth),
+  no automatic rescaling.
+- **Out of scope for the first cut:** materials and textures, vertex colors, glTF.
+
+The **sprite half** is not answered here; it moved to `SPIKE.sprite-image-import.md`, since
+images are binary, bigger, and constrained by the DS's palette and sprite-size rules.

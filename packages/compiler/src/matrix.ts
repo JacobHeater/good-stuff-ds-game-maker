@@ -93,6 +93,38 @@ export function withoutScale(m: Mat4): Mat4 {
   return [...x, 0, ...y, 0, ...z, 0, m[12], m[13], m[14], 1];
 }
 
+/**
+ * Splits an affine transform into a rotation-and-translation matrix and a per-axis scale, so that `rigid * diag(scale)`
+ * is `m`. The DS needs this: its geometry engine transforms a normal by the same matrix as a position and never
+ * renormalizes it, so a matrix that carries scale makes normals longer or shorter and wrecks the lighting. The runtime
+ * therefore loads `rigid` for both, and applies `scale` to positions only
+ * (requirements/compiler/BUG.rom-lighting-breaks-on-scaled-meshes.md).
+ *
+ * The scales are the lengths of the matrix's three axes. A mirrored transform (negative determinant) gets a negative
+ * x scale, so `rigid` is always a proper rotation. Shear (a non-uniformly scaled parent above a rotated child) can't be
+ * expressed as rotation times scale; it is approximated by the axes' lengths and directions.
+ */
+export function splitScale(m: Mat4): { rigid: Mat4; scale: [number, number, number] } {
+  const axes = [
+    [m[0], m[1], m[2]],
+    [m[4], m[5], m[6]],
+    [m[8], m[9], m[10]]
+  ] as Array<[number, number, number]>;
+  const lengths = axes.map((a) => Math.hypot(a[0], a[1], a[2]));
+  // A collapsed axis (scale 0) has no direction; fall back to the world axis so `rigid` stays a rotation.
+  const units = axes.map((a, i) => (lengths[i] > 1e-12 ? ([a[0] / lengths[i], a[1] / lengths[i], a[2] / lengths[i]] as [number, number, number]) : ((i === 0 ? [1, 0, 0] : i === 1 ? [0, 1, 0] : [0, 0, 1]) as [number, number, number])));
+  const [x, y, z] = units;
+  const determinant = x[0] * (y[1] * z[2] - y[2] * z[1]) - x[1] * (y[0] * z[2] - y[2] * z[0]) + x[2] * (y[0] * z[1] - y[1] * z[0]);
+  const scale: [number, number, number] = [lengths[0], lengths[1], lengths[2]];
+  if (determinant < 0) {
+    scale[0] = -scale[0];
+    x[0] = -x[0];
+    x[1] = -x[1];
+    x[2] = -x[2];
+  }
+  return { rigid: [...x, 0, ...y, 0, ...z, 0, m[12], m[13], m[14], 1], scale };
+}
+
 /** Euler angles (degrees, XYZ order) that produce the rotation part of `m`. The inverse of `rotationFromEulerXYZ`. */
 export function eulerXYZFromRotation(m: Mat4): { x: number; y: number; z: number } {
   const m11 = m[0];

@@ -174,8 +174,9 @@ or by the emulator comparison):
   current matrix at that moment. A sphere lit from the upper left is brightest
   at its upper left, which is what confirmed the sign.
 - **Culling** is off for now (a plane is double-sided).
-- **Known limitation:** normals are transformed by the same matrix as
-  positions, so a non-uniformly scaled mesh is shaded wrongly. Not addressed.
+- **Known limitation, now fixed:** normals are transformed by the same matrix as
+  positions and are never renormalized, so any scaled mesh (not just a non-uniformly scaled one) lost its lighting.
+  Fixed by applying scale to positions only (`BUG.rom-lighting-breaks-on-scaled-meshes.md`).
 
 ## Notes
 - Facts worth confirming rather than assuming, because the design leans on

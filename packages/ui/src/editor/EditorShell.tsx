@@ -9,14 +9,20 @@ import { BottomPanel } from "./panels/BottomPanel";
 import { FileSystemPanel } from "./panels/FileSystemPanel";
 import { InspectorPanel } from "./panels/InspectorPanel";
 import { SceneTreePanel } from "./panels/SceneTreePanel";
-import { EditorStoreProvider, useEditorStore } from "./state/editor-store";
+import { ScriptWorkspace } from "./script/ScriptWorkspace";
+import { EditorStoreProvider, screenRolesOf, useEditorStore } from "./state/editor-store";
 import { DualScreenViewport } from "./viewport/DualScreenViewport";
 import { Viewport3D } from "./viewport/Viewport3D";
 
 function ActiveViewport(): JSX.Element {
   const { state } = useEditorStore();
-  if (state.activeWorkspace === "3D") return <Viewport3D />;
+  if (state.activeWorkspace === "3D") {
+    // A 3D project has one screen for the 3D engine and one for 2D; the screen being looked at decides which editor is shown.
+    const roles = screenRolesOf(state);
+    return roles && state.screenFilter === roles.twoD ? <DualScreenViewport /> : <Viewport3D />;
+  }
   if (state.activeWorkspace === "2D") return <DualScreenViewport />;
+  if (state.activeWorkspace === "Script") return <ScriptWorkspace />;
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-editor-bg text-xs text-editor-text-muted">
       The {state.activeWorkspace} workspace isn't built yet.

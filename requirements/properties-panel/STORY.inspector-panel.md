@@ -27,6 +27,10 @@ message instead.
   (degrees), and Scale, each as X/Y/Z number field triples. If the
   node also has `mesh` data (i.e. it's a `MeshInstance3D`), show its
   primitive name and triangle count as a read-only line.
+- `AudioStreamPlayer` nodes (declared with the 2D kinds but not drawn by either pipeline) show
+  the **audio player** instead of Position X / Y, since a sound has no place in the scene:
+  the sound, a preview, autoplay, volume, pitch and loop
+  (`audio/STORY.import-sound-and-audio-player.md`).
 
 ## Acceptance Criteria
 ```gherkin
@@ -39,6 +43,11 @@ Scenario: Selecting a 2D node shows Position X/Y fields
   Then the Inspector shows editable "Position X" and "Position Y" fields
   And it does not show Rotation or Scale fields
 
+Scenario: An AudioStreamPlayer shows the audio player, not a position
+  Given an AudioStreamPlayer node is selected
+  Then the Inspector shows the audio player (Sound, Play, Autoplay, Volume, Pitch, Loop)
+  And no Position X / Position Y fields
+
 Scenario: Editing a 2D position field updates the node
   Given a Sprite2D node is selected with Position X of 10
   When the user changes "Position X" to 20
@@ -49,7 +58,11 @@ Scenario: Selecting a 3D node shows Position/Rotation/Scale fields
   Given a MeshInstance3D node is selected
   Then the Inspector shows editable Position, Rotation, and Scale fields,
     each with X/Y/Z inputs
-  And it shows the node's mesh primitive name and triangle count
+  And it shows a Mesh selector for the node's mesh, with each option's triangle count: the four
+    primitives, then any models imported into the project
+    (`scene-designer/STORY.choose-mesh-primitive.md`, `scene-designer/STORY.import-obj-model.md`)
+  And it shows a Texture field (None or a project texture) and an "Import PNG..." button
+    (`scene-designer/STORY.mesh-textures.md`)
 
 Scenario: Editing a 3D transform field updates the node
   Given a MeshInstance3D node is selected

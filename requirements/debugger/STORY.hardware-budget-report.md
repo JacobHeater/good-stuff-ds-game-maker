@@ -21,8 +21,13 @@ Show, for the currently open scene:
   used/limit count and a progress bar that turns red past 100%.
 - Audio channel budget (players in scene vs. 16 channels), same
   used/limit + bar treatment.
+- Sound memory (the bytes of the distinct sounds the scene's audio players use vs.
+  2 MB of the DS's RAM), same treatment, under the audio channels. Added with
+  `audio/STORY.import-sound-and-audio-player.md`.
 - 3D triangle budget (total `MeshInstance3D` triangle cost in the
   scene vs. ~2048/frame), same treatment.
+- Texture memory (the bytes of the distinct textures the scene's meshes use vs.
+  the DS's 512 KB), same treatment. Added with `scene-designer/STORY.mesh-textures.md`.
 - A static list of fixed hardware facts (CPU, RAM, VRAM, 3D polygon
   budget, max texture size, total scene node count) for reference.
 

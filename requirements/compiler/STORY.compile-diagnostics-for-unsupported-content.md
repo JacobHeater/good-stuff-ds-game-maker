@@ -29,10 +29,21 @@ entry), so a compile is never a mystery.
 | More than 4 directional lights | Error |
 | `OmniLight3D` | Warning: skipped (no positional lights on the DS) |
 | Total triangles over the hardware budget | Error, with the count and the limit |
-| 3D nodes assigned to both screens | Error: the DS drives 3D on one screen only |
+| A visible 2D node on a 3D project's 2D screen (Label, Sprite2D, ...; not a plain Node2D group) | Warning: not drawn by the ROM yet (`two-d-node-not-built`) |
 | A value that doesn't fit the DS's fixed-point range | Error naming the node |
 | A 2D project | Error: 2D compile isn't supported yet |
-| `CollisionShape3D`, `AudioStreamPlayer` in a 3D project | No diagnostic: ignored by design, documented |
+| `CollisionShape3D` in a 3D project | Compiled (shape and size), no diagnostic when a script passes it to `overlaps()`; otherwise a warning (`collision-shape-unused`) |
+| `AnimationPlayer` with no animations | Warning: left out (`player-without-animations`) |
+| `AnimationPlayer` whose animations nothing starts | Warning: in the ROM, but no Autoplay and no script plays it (`animation-not-started`) |
+| An animation track for a node that isn't in the game | Error (`animation-target-missing`) |
+| `AudioStreamPlayer` with no sound | Warning: left out (`player-without-sound`) |
+| `AudioStreamPlayer` naming a sound the project lacks | Error (`missing-sound`) |
+| `AudioStreamPlayer` with Autoplay off | Warning: in the ROM, but nothing starts it (`sound-not-started`) |
+| A pitch beyond the sound hardware's playback rate | Warning: limited (`sound-pitch-clamped`) |
+| More than 16 players starting at once | Error (`too-many-sounds`) |
+| Sounds over the 2 MB sound budget | Error, with the total and the limit (`sound-memory`) |
+
+(An `AudioStreamPlayer` and a `CollisionShape3D` used to be in the "ignored by design" row; both compile now. See `compiler/TASK.compile-sounds.md` and `collision/TASK.compile-and-run-collision-checks.md`.)
 
 ## Acceptance Criteria
 ```gherkin
@@ -57,9 +68,13 @@ Scenario: Over-budget geometry is an error with numbers
   Then compilation is refused
   And the message states the scene's count and the limit
 
-Scenario: Mixed screens are an error
-  Given 3D nodes assigned to both screens
-  Then compilation is refused and the message says 3D output is per single screen
+Scenario: The project decides which screen has 3D
+  Given a 3D project (its scene root records which screen the 3D engine drives)
+  Then the ROM draws 3D on that screen whatever a node's own screen says; there is no "mixed screens" error (it was removed when the choice moved to the project)
+
+Scenario: 2D nodes are not built yet
+  Given a Label or Sprite2D on the project's 2D screen
+  Then the ROM builds and a warning names the node and says the ROM doesn't draw 2D nodes yet
 
 Scenario: A 2D project is refused clearly
   Given a 2D project
@@ -75,9 +90,13 @@ Scenario: Diagnostics reach the user
   Then each is shown in the Output log, naming its node
   And the command-line entry prints the same list and exits non-zero on errors
 
-Scenario: Ignored-by-design nodes stay quiet
-  Given a 3D project containing a CollisionShape3D
+Scenario: Grouping nodes stay quiet
+  Given a 3D project containing a Node3D with nothing under it
   Then compiling produces no diagnostic about it
+
+Scenario: A collision shape nothing checks is reported
+  Given a 3D project containing a CollisionShape3D that no script passes to overlaps()
+  Then compiling succeeds with a warning naming it (collision-shape-unused)
 ```
 
 ## Notes

@@ -49,9 +49,10 @@ vertex lists, camera, lights) and a checked-in libnds program draws
 whatever the table describes. That keeps generated code trivial, lets the
 runtime be built and debugged once on its own, and lets the translation
 step be a pure TypeScript function that's testable without any toolchain.
-The cost is that scripting will eventually need either real code
-generation or an interpreter in the runtime; that belongs to
-`scripting/SPIKE.scripting-language-approach.md`, not here.
+The cost was that scripting would need real code generation or an
+interpreter; `scripting/SPIKE.scripting-language-approach.md` chose
+generation: scripts compile to a C file beside the data tables
+(`TASK.compile-scripts-to-c.md`), and the runtime gained a node table for them.
 
 The toolchain is **detected, not bundled**: the user installs devkitPro,
 and the app finds it (`DEVKITPRO`, then common install paths) and says
@@ -67,8 +68,9 @@ it's set by what the scene model can express:
 | `Camera3D` | Projection + view. The model has no field of view, near/far or "which camera is active", so defaults are needed | Yes, with defaults |
 | `DirectionalLight3D` | A DS hardware light; the DS has 4 | Yes (max 4) |
 | `OmniLight3D` | The DS's fixed pipeline has no positional lights | Warn and skip |
-| `CollisionShape3D` | Draws nothing; there is no physics runtime | Ignored |
-| `AudioStreamPlayer` (offered in 3D projects) | No audio assets exist | Ignored |
+| `CollisionShape3D` | Draws nothing; compiled with its shape and size so scripts can ask whether two overlap (`collision/EPIC.collision-shapes.md`); no physics | Yes, added after the first milestone |
+| `AnimationPlayer` (offered in 3D projects) | Its animations, tracks and keys are built in and played by the runtime (`animation/EPIC.animation-player.md`) | Yes, added after the first milestone |
+| `AudioStreamPlayer` (offered in 3D projects) | Compiled with its sound: `soundPlaySample` on the DS's sound hardware (see `TASK.compile-sounds.md`) | Yes, added after the first milestone |
 | All 2D kinds | Need image assets that don't exist yet | Not in a 3D project; see `STORY.compile-2d-scene-to-nds-rom.md` |
 
 **What the attempt turned up** (each has its own ticket). The first four
@@ -87,9 +89,9 @@ were editor defects, now fixed; the rest are open:
   aimed the light from its position at the origin). Found because a
   UI-authored scene looked black in the editor and lit in the ROM.
   `scene-designer/BUG.directional-light-ignores-rotation.md`.
-- **Open:** the editor can't create or change a mesh's primitive: every
-  mesh added through the UI is a cube, and spheres, cylinders and planes
-  exist only in the model and in files.
+- **Fixed:** the editor couldn't create or change a mesh's primitive (every
+  mesh added through the UI was a cube). The Inspector now has a Mesh selector;
+  a UI-authored scene with all four shapes was compiled and run in melonDS.
   `scene-designer/STORY.choose-mesh-primitive.md`.
 - **Open:** the FPS target is editor state, not saved in the project, so a
   compile can't know it and the caller has to supply one (60 by default).
@@ -116,8 +118,9 @@ diagnostics, and the build driver, with the C runtime under its
 toolchain, running it) with a Node implementation and an in-memory or fake
 one so the rest is testable without devkitPro installed.
 
-**Out of scope for this Epic:** scripting, collision and physics, audio
-playback, real asset import, saving to a cartridge or flashcard, and an
+**Out of scope for this Epic:** physics (collision shapes and overlap checks are built: `collision/EPIC.collision-shapes.md`), audio
+playback beyond starting sounds and what scripts ask for (`TASK.compile-sounds.md`),
+scripts (delivered separately: `TASK.compile-scripts-to-c.md`), 2D image asset import, saving to a cartridge or flashcard, and an
 in-editor interpreted preview (`run-games-locally/SPIKE.game-runtime-approach.md`
 recorded that the first milestone is the real ROM path).
 
@@ -168,9 +171,28 @@ app by `tests/prototypes/e2e/export-rom.mjs`).
 (`run-games-locally/STORY.play-runs-rom-in-emulator.md`; verified against the running app by
 `tests/prototypes/e2e/play.mjs`).
 
-Not done: 2D. Things that are built but not independently
-verified: lighting (checked by eye, not by test; the silhouette comparison
-ignores shading), 30 FPS pacing (built in, but melonDS's title reports
-emulator speed, not the presentation rate, so it can't be measured that
-way), and normals under non-uniform scale (the DS transforms normals by the
-same matrix as positions, so a scaled mesh's shading is off; not addressed).
+**And imported models:** a mesh can be an `.obj` model imported into the project
+(`scene-designer/STORY.import-obj-model.md`, `TASK.compile-imported-meshes.md`, both done). A UI-authored
+project with two houses and a cube was compiled and run in melonDS and matches its reference render
+(IoU 0.941).
+
+**And textures:** a mesh can wear a PNG texture (`scene-designer/STORY.mesh-textures.md`,
+`TASK.compile-textures.md`, both done): 16-bit textures uploaded at startup, texture coordinates per vertex, a
+texture-memory check. A textured plane and cube were run in melonDS and sampled: every quadrant of the picture
+is the source image's color, upright.
+
+**And sound:** an `AudioStreamPlayer` with a sound compiles to constant sample data plus a player table
+(`TASK.compile-sounds.md`, done; `audio/STORY.import-sound-and-audio-player.md`). The runtime calls libnds's `soundPlaySample` at
+startup for every player with Autoplay on. It is measured on melonDS's own audio output (`sound.rom.test.ts`, 9 tests): the sound
+plays and stops as it should, 50% volume reads exactly half the level of 100%, 2x pitch lasts half as long and 0.5x twice as long,
+a loop keeps going, several players add up, and a sound of nearly 2 MB (the budget) plays beside the 3D scene.
+
+**And lighting, now measured:** a scaled mesh used to ignore the lights entirely in the ROM, and a scene with no light
+rendered black (`BUG.rom-lighting-breaks-on-scaled-meshes.md`, done). The DS transforms a normal by the same matrix as its
+position and never renormalizes it, so the compiler now splits each mesh's transform into rotation + translation and a
+separate scale, and the runtime applies the scale to positions only. Real ROMs at several angles, scales and intensities are
+checked against the DS lighting formula in `@goodstuff/core` (`lighting.rom.test.ts`); directional lights have an intensity
+(`scene-designer/STORY.directional-light-intensity.md`, the level of a white light, 31 steps).
+
+Not done: 2D. Things that are built but not independently verified: 30 FPS pacing (built in, but melonDS's title reports
+emulator speed, not the presentation rate, so it can't be measured that way).

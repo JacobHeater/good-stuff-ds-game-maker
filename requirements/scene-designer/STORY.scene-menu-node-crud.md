@@ -39,6 +39,9 @@ on the open scene's contents:
   meaningful is selected), auto-names it to avoid sibling name
   collisions, and selects the new node. The other mode's kinds are not
   offered.
+- **Import Sound...** — asks for a .wav, .mp3 or .ogg file and adds an `AudioStreamPlayer`
+  that plays it under the selected node, in 2D and 3D projects
+  (`audio/STORY.import-sound-and-audio-player.md`).
 - **Duplicate Node** / **Delete Node** — disabled when the scene root
   itself is selected (the root can't be duplicated or deleted).
   Duplicating deep-clones the node and its children with fresh ids and

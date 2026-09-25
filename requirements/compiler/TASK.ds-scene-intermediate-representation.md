@@ -22,8 +22,8 @@ Lives in a new package, `@goodstuff/compiler`, which depends only on
 `translateScene3D(snapshot) → DsScene3D | diagnostics`, covering:
 
 - **Selection.** Walk the scene tree in order. Skip nodes with `visible:
-  false` and everything under them. Ignore `CollisionShape3D` and
-  `AudioStreamPlayer`. Anything that can't be represented is reported by
+  false` and everything under them. (`CollisionShape3D` and
+  `AudioStreamPlayer` were ignored at first; both compile now: see `collision/` and `TASK.compile-sounds.md`.) Anything that can't be represented is reported by
   `STORY.compile-diagnostics-for-unsupported-content.md`, not dropped here.
 - **Baked world transforms.** Compose each mesh's translation, rotation and
   scale down through its `Node3D` ancestors into one world matrix, at

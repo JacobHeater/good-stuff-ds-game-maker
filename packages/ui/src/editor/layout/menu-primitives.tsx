@@ -3,11 +3,14 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 export function MenuItem({
   label,
   icon,
+  shortcut,
   disabled,
   onSelect
 }: {
   label: string;
   icon?: string;
+  /** The keyboard shortcut to show at the right, e.g. "Ctrl+Z". Display only: the shortcut itself is handled elsewhere. */
+  shortcut?: string;
   disabled?: boolean;
   onSelect: () => void;
 }): JSX.Element {
@@ -21,7 +24,8 @@ export function MenuItem({
       }`}
     >
       {icon && <span className="w-4 text-center">{icon}</span>}
-      <span className="truncate">{label}</span>
+      <span className="flex-1 truncate">{label}</span>
+      {shortcut && <span className="shrink-0 text-[10px] text-editor-text-muted">{shortcut}</span>}
     </button>
   );
 }

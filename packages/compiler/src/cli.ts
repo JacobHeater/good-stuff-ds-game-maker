@@ -6,8 +6,10 @@
  *       Check, translate and build a project into a ROM.
  *   node dist/cli.mjs scene-data <project> <out.c>
  *       Translate a project and write only the generated scene_data.c (no toolchain needed).
+ *   node dist/cli.mjs script-code <project> <out.c>
+ *       The same, for the generated script_code.c.
  *
- * <project> is a .gsds file, or fixture:cube | fixture:primitives | fixture:nested.
+ * <project> is a .gsds file, or fixture:cube | fixture:primitives | fixture:nested | fixture:imported | fixture:textured | fixture:textured-shapes | fixture:sound.
  *
  * Exit codes: 0 success, 1 the project can't be compiled or the build failed, 2 bad usage,
  * 3 the DS toolchain isn't installed.
@@ -22,17 +24,22 @@ import { NodeBuildFileSystem, NodeBuildRunner, NodeToolchainLocator } from "./bu
 import { RomBuilder } from "./build/rom-builder";
 import { compileProject } from "./compile-project";
 import { formatDiagnostic, hasErrors } from "./diagnostics";
-import { cubeProject, nestedProject, primitivesProject } from "./fixtures";
-import { writeSceneDataC } from "./scene-data-writer";
+import { audioPlayerNode, cubeProject, importedModelProject, nestedProject, primitivesProject, soundProbeProject, texturedPrimitivesProject, texturedProject, toneSound } from "./fixtures";
+import { writeSceneDataC, writeScriptCodeC } from "./scene-data-writer";
 import { translateScene3D } from "./translate-scene-3d";
 
 const FIXTURES: Record<string, () => ProjectSnapshot> = {
   cube: cubeProject,
   primitives: primitivesProject,
-  nested: nestedProject
+  nested: nestedProject,
+  imported: importedModelProject,
+  textured: texturedProject,
+  "textured-shapes": texturedPrimitivesProject,
+  // A looping 2-second 440 Hz tone at 22 kHz: something to listen to.
+  sound: () => soundProbeProject([audioPlayerNode("Tone", { soundId: "tone", loop: true })], [toneSound("tone", { sampleRate: 22050, seconds: 2 })])
 };
 
-const USAGE = "usage: cli <compile|scene-data> <project.gsds | fixture:cube|primitives|nested> <out>";
+const USAGE = "usage: cli <compile|scene-data|script-code> <project.gsds | fixture:cube|primitives|nested|imported|textured|textured-shapes|sound> <out>";
 
 function loadProject(source: string): ProjectSnapshot {
   if (source.startsWith("fixture:")) {
@@ -45,17 +52,17 @@ function loadProject(source: string): ProjectSnapshot {
 
 async function main(argv: string[]): Promise<number> {
   const [command, source, out] = argv;
-  if ((command !== "compile" && command !== "scene-data") || !source || !out) {
+  if ((command !== "compile" && command !== "scene-data" && command !== "script-code") || !source || !out) {
     console.error(USAGE);
     return 2;
   }
   const project = loadProject(source);
 
-  if (command === "scene-data") {
+  if (command === "scene-data" || command === "script-code") {
     const { scene, diagnostics } = translateScene3D(project);
     for (const d of diagnostics) console.error(formatDiagnostic(d));
     if (hasErrors(diagnostics) || !scene) return 1;
-    writeFileSync(out, writeSceneDataC(scene), "utf-8");
+    writeFileSync(out, command === "scene-data" ? writeSceneDataC(scene) : writeScriptCodeC(scene), "utf-8");
     console.log(`wrote ${out}`);
     return 0;
   }

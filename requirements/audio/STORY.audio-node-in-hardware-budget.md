@@ -28,14 +28,18 @@ Scenario: AudioStreamPlayer nodes count toward the audio channel budget
   Given a scene with 4 AudioStreamPlayer nodes
   Then the Hardware tab's audio channel budget shows "4 / 16"
 
-Scenario: An AudioStreamPlayer node has no actual sound
-  Given an AudioStreamPlayer node in the scene
-  Then no audio file is associated with it
-  And nothing plays when the scene is viewed or the Play button is pressed
+Scenario: An AudioStreamPlayer node starts with no sound
+  Given a newly added AudioStreamPlayer node
+  Then no sound is associated with it
+  And nothing plays for it when the game is run
+  (This used to say nothing plays at all; sounds can now be imported and played, see
+  `STORY.import-sound-and-audio-player.md`.)
 ```
 
 ## Notes
-- This story exists specifically to record that the node kind and
-  budget counting are intentionally ahead of actual playback — don't
-  mistake the presence of `AudioStreamPlayer` in the model for
-  functioning audio. Real playback is `TASK.audio-asset-playback.md`.
+- This story recorded that the node kind and budget counting were
+  intentionally ahead of actual playback. Playback now exists:
+  `STORY.import-sound-and-audio-player.md` (import, an audio player in
+  the Inspector, and sounds in the ROM). The audio channel budget here
+  still counts every `AudioStreamPlayer` in the scene; the sound memory
+  budget is new.

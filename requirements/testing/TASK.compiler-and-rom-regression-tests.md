@@ -82,6 +82,23 @@ Scenario: Fixtures are the single source of truth
 ```
 
 ## Notes
+- `lighting.rom.test.ts` (10 tests) holds real ROMs to the DS lighting formula: a flat plane (`lightProbeProject`) lit at 0/45/60/90
+  degrees while scaled 3x, unscaled, non-uniformly scaled, at 50% and 0% intensity, and with no light. It found the bug where a scaled
+  mesh lost its light. The editor is held to the same formula by `tests/prototypes/e2e/lighting-parity.mjs`.
+- `sound.rom.test.ts` (9 tests) holds real ROMs to what they should sound like, measured on melonDS's own audio output with a
+  peak meter (`audio-meter.ts`, `tools/ds-toolchain/measure-melonds-audio.ps1`; it needs a sound output device): an autoplay sound
+  plays at the tone's level (0.2504), a player with Autoplay off and a ROM with no player are silent, volume 50%/25%/0% read
+  0.1252/0.0626/silence, a non-looping 2 s sound sounds for 2.05 s, 2x pitch for 1.03 s and 0.5x for 4.07 s, a loop is still going
+  after 7 s without gaps, two players double the level, and a 1.97 MB sound plays. Breaking the volume and pitch in the compiler on
+  purpose makes the volume and pitch tests fail (ratio 1.0 and 2.05 s), so they measure what they claim. Fixtures `toneSound`,
+  `audioPlayerNode` and `soundProbeProject` (also `fixture:sound` in the CLI, to listen to one).
+- Fixtures also include `texturedProject` (a quadrant-colored picture on a plane and a cube: the emulator test
+  **samples the actual colors** at the eight quadrant centers and fails if the picture is mirrored or the channels
+  are mixed up; verified by breaking the fixture on purpose) and `texturedPrimitivesProject` (the picture on every
+  primitive, silhouette-checked).
+- Fixtures now include `importedModelProject` (two instances of an OBJ house sharing one vertex table, beside a
+  cube), so imported meshes are in the emulator suite permanently; its source text is
+  `tests/prototypes/e2e/models/house.obj` (a unit test checks the two haven't drifted).
 **Implemented, so `in-progress`** (the remaining gaps are listed at the end).
 - **Runner:** `vitest` 2, at the repo root (`pnpm test`). vitest 5 was tried first
   and won't start against the repo's Vite 5. The fast tests are `*.test.ts`; the
@@ -121,3 +138,10 @@ Scenario: Fixtures are the single source of truth
   the same grey. Use silhouettes.
 - Don't delete the hello-cube ROM the Spike produces; it's the smallest
   possible emulator test and the baseline for "the toolchain works".
+- Scripting adds four emulator suites (`script-semantics`, `script-runtime`, `script-input`, `script-sound` in `packages/compiler/src/testing/`),
+  all run by `pnpm test:rom`; see `scripting/STORY.write-and-run-scripts.md` and `compiler/TASK.runtime-node-table-and-script-services.md`.
+- Collision adds three emulator suites (`collision`, `collision-scene`, `collision-game` in `packages/compiler/src/testing/`) and an oracle with its own fast test
+  (`collision-oracle.test.ts`); see `collision/TASK.compile-and-run-collision-checks.md`.
+- Solid shapes add `collision-body` and `platformer-game` (and `player-script` was rewritten for them); animations add `animation` and `animation-game`, all in
+  `packages/compiler/src/testing/` and all run by `pnpm test:rom` (the `*-game` ones need the project path an editor E2E prints, or they are skipped). `framebuffer-dump.ts`'s
+  `runDump` takes an optional wait for ROMs that do a lot of work before they draw their answers.

@@ -110,3 +110,24 @@ generation in `TASK.generate-json-schema-from-interfaces.md` — the
 schema is currently hand-authored, not generated from the TypeScript
 interfaces. Everything else in this Epic's narrative acceptance
 criteria is satisfied.
+
+## Update: light intensity
+A directional light can carry `light: { intensity }` (0..1; absent means 100%), an additive optional field validated by the schema
+(`STORY.directional-light-intensity.md`, done). `formatVersion` stays 1; an older build rejects a file containing it.
+
+## Update: imported sounds
+Sounds are embedded too (`TASK.embed-imported-sounds-in-project-file.md`, done): an optional `sounds` array (each mono 16-bit
+samples as base64, plus the sample rate) and an optional `audio` block on an `AudioStreamPlayer` (`soundId`, `autoplay`, `volume`,
+`pitch`, `loop`). Still `formatVersion` 1 and one-way for older builds; unused sounds aren't saved.
+
+## Update: imported textures
+Textures imported from PNG files are embedded the same way (`TASK.embed-imported-textures-in-project-file.md`, done):
+an optional `textures` array holding each picture already converted to the DS's 16-bit format, and an optional
+`textureId` on a mesh. Still `formatVersion` 1 and still one-way for older builds.
+
+## Update: imported models
+A project can now embed 3D models imported from `.obj` files (`TASK.embed-imported-meshes-in-project-file.md`,
+done). It is an additive, optional `meshes` field and an optional `importedMeshId` on a mesh, so the format
+version stays 1 and existing files are untouched; the cost is that an older build rejects a file that
+contains a model. Validation now checks cross-references (every model a mesh names exists, array lengths
+agree, indices in range), which JSON Schema alone can't say.

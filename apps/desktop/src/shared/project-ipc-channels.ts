@@ -8,6 +8,12 @@ export const PROJECT_IPC_CHANNELS = {
   play: "project:play"
 } as const;
 
+export const ASSETS_IPC_CHANNELS = {
+  importMesh: "assets:import-mesh",
+  importTexture: "assets:import-texture",
+  pickSound: "assets:pick-sound"
+} as const;
+
 export const RECENTS_IPC_CHANNELS = {
   list: "recents:list",
   remove: "recents:remove",

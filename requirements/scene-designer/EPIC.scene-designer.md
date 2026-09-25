@@ -61,15 +61,35 @@ and the workspace lock — a project commits to 2D or 3D at creation
 Scene Designer only ever shows that mode's viewport tab and node kinds
 (`TASK.lock-workspace-to-project-mode.md`).
 
-What's still missing, in rough priority order: undo/redo for scene
-edits, a real asset pipeline (custom meshes/sprites instead of
-only built-in primitives), and the properties a 3D scene needs to say
+The toolbar has **Select / Move / Rotate / Scale** tools (`STORY.transform-tools-on-toolbar.md`, done)
+that put a gizmo on the selected 3D node in the viewport, so nodes can be placed by dragging as well as by
+typing numbers. Custom 3D models can now be imported from `.obj` files
+(`STORY.import-obj-model.md`, done): geometry only, one color, embedded in the project file.
+
+**Textures:** a PNG can be imported and put on a 3D mesh (`STORY.mesh-textures.md`, done): converted to the DS's
+16-bit format at import (a size the DS can't use is refused), drawn in the viewport, counted in the hardware
+budget, and compiled into the ROM.
+
+**Sound:** a sound (WAV, MP3 or OGG) can be imported (`audio/STORY.import-sound-and-audio-player.md`, done) and played by an
+`AudioStreamPlayer`, whose Inspector is an audio player: a preview with play/stop and a position bar, autoplay on load, volume,
+pitch and loop. Sounds are embedded in the project file already converted (mono, 16-bit, at most 32 kHz) and compiled into the ROM.
+
+**Lighting** in the viewport now follows the DS's own model (`BUG.editor-lighting-differs-from-rom.md`, done): per vertex, no tone
+mapping, unlit when there are no lights, with a direction arrow on each directional light; and a directional light has an
+**Intensity** slider (`STORY.directional-light-intensity.md`, done). Comparing the editor with real ROMs found that the ROM
+ignored lights on scaled meshes, fixed in `compiler/BUG.rom-lighting-breaks-on-scaled-meshes.md`.
+
+**Undo/redo** for scene edits works (`TASK.undo-redo-for-scene-edits.md`, done): Ctrl+Z / Ctrl+Shift+Z and
+Scene menu entries, one step per typed value or drag.
+
+What's still missing, in rough priority order: image assets for 2D sprites (`SPIKE.sprite-image-import.md`),
+per-material colors and textures for models, and the properties a 3D scene needs to say
 what the game shows (camera field of view and active camera, light and
 mesh colors, a view through the game camera —
 `STORY.camera-light-and-material-properties.md`, found while scoping the
-compiler). Also open: the UI can't choose a mesh's primitive, so every mesh
-is a cube (`STORY.choose-mesh-primitive.md`), and the FPS target isn't saved
-in the project (`TASK.save-fps-target-in-project.md`). Three defects the
+compiler). Also open: the FPS target isn't saved in the project
+(`TASK.save-fps-target-in-project.md`). A mesh's primitive can now be chosen in
+the Inspector (`STORY.choose-mesh-primitive.md`, done). Three defects the
 compiler exposed are fixed: the budget's sphere and cylinder triangle counts
 (`debugger/BUG.mesh-triangle-budget-disagrees-with-rendered-geometry.md`), the
 viewport ignoring parent transforms (`BUG.3d-viewport-ignores-parent-transforms.md`)

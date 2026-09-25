@@ -1,4 +1,4 @@
-import { getPrimitiveGeometry, type ProjectSnapshot, type SceneNode } from "@goodstuff/core";
+import { resolveMeshGeometry, type ProjectSnapshot, type SceneNode } from "@goodstuff/core";
 import { Group, Object3D, PerspectiveCamera, Vector3 } from "three";
 
 import { DEFAULTS } from "../translate-scene-3d";
@@ -65,7 +65,7 @@ export function referenceSilhouette(project: ProjectSnapshot): Silhouette {
   const v = new Vector3();
 
   for (const { object, node } of meshes) {
-    const geometry = getPrimitiveGeometry(node.mesh!.primitive);
+    const geometry = resolveMeshGeometry(node.mesh!, project.meshes)!;
     const screen: Array<[number, number]> = [];
     for (let i = 0; i < geometry.positions.length; i += 3) {
       v.set(geometry.positions[i], geometry.positions[i + 1], geometry.positions[i + 2]).applyMatrix4(object.matrixWorld);

@@ -1,3 +1,6 @@
+import type { AnimationPlayerData } from "./animation";
+import type { AudioPlayerData } from "./audio-player";
+import type { CollisionShapeData } from "./collision-shape";
 import { getPrimitiveTriangleCount } from "./primitive-geometry";
 import type { ScreenId } from "./index";
 
@@ -16,7 +19,8 @@ export type SceneNodeKind2D =
   | "Label"
   | "CollisionShape2D"
   | "Area2D"
-  | "AudioStreamPlayer";
+  | "AudioStreamPlayer"
+  | "AnimationPlayer";
 
 export type SceneNodeKind3D =
   | "Node3D"
@@ -38,7 +42,8 @@ export const SCENE_NODE_KINDS_2D: SceneNodeKind2D[] = [
   "Label",
   "CollisionShape2D",
   "Area2D",
-  "AudioStreamPlayer"
+  "AudioStreamPlayer",
+  "AnimationPlayer"
 ];
 
 /** All 3D node kinds, in the order they should be offered in "Add Node" pickers. */
@@ -72,14 +77,34 @@ export interface Vector3 {
 }
 
 /** Basic primitive shapes offered until custom mesh import exists. Their geometry lives in `primitive-geometry.ts`. */
-export type MeshPrimitive = "cube" | "sphere" | "plane" | "cylinder";
+export const MESH_PRIMITIVES = ["cube", "sphere", "plane", "cylinder"] as const;
+export type MeshPrimitive = (typeof MESH_PRIMITIVES)[number];
+
+/**
+ * What a light has beyond a transform. `intensity` is 0..1 and means the brightness of a white light: the DS has no
+ * light strength, only a light color, so it is compiled as a color of `round(31 * intensity)` (31 real steps, and
+ * nothing brighter than full white). See requirements/scene-designer/STORY.directional-light-intensity.md.
+ */
+export interface LightData {
+  intensity: number;
+}
+
+/** A light's intensity, 1 when it has none (every light in a project saved before intensity existed). */
+export function getLightIntensity(node: { light?: LightData }): number {
+  return node.light?.intensity ?? 1;
+}
 
 export interface MeshInstance3DData {
-  primitive: MeshPrimitive;
+  /** A built-in shape. Exactly one of `primitive` and `importedMeshId` is set. */
+  primitive?: MeshPrimitive;
+  /** The id of an imported model in the project's `meshes` (see `imported-mesh.ts`). */
+  importedMeshId?: string;
+  /** The id of a texture in the project's `textures` (see `imported-texture.ts`); absent for a plain mesh. */
+  textureId?: string;
   /**
    * Triangles this instance contributes to the DS's per-frame 3D budget, as of when the node was
-   * created. A record of the count only: the budget and the compiler always recompute it from the
-   * primitive's geometry (`getPrimitiveTriangleCount`), so a project saved before the primitives
+   * created or its mesh last changed. A record of the count only: the budget and the compiler always
+   * recompute it from the geometry (`resolveMeshGeometry`), so a project saved before the primitives
    * were re-tessellated still reports the right cost.
    */
   triangleCount: number;
@@ -106,6 +131,16 @@ export interface SceneNode {
   };
   /** Mesh primitive + triangle cost; present only on MeshInstance3D nodes. */
   mesh?: MeshInstance3DData;
+  /** Light properties; only meaningful on a DirectionalLight3D. Absent means the defaults (full intensity). */
+  light?: LightData;
+  /** Sound and playback settings; only meaningful on an AudioStreamPlayer. Absent means the defaults (see `getAudioPlayer`). */
+  audio?: AudioPlayerData;
+  /** Shape and size; only meaningful on a CollisionShape3D. Absent means the defaults (see `getCollisionShape`). */
+  collision?: Partial<Omit<CollisionShapeData, "size">> & { size?: Partial<Vector3> };
+  /** Animations; only meaningful on an AnimationPlayer. Absent means none (see `getAnimationPlayer`). */
+  animation?: Partial<AnimationPlayerData>;
+  /** The id of the script (in the project's `scripts`) attached to this node, if any. */
+  scriptId?: string;
 }
 
 let nodeCounter = 0;

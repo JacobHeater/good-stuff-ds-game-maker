@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
 
+import { registerAssetsIpcHandlers } from "./assets-ipc";
 import { registerExportRomIpcHandler } from "./export-rom-ipc";
 import { registerPlayIpcHandler, stopPlaySession } from "./play-ipc";
 import { registerProjectIpcHandlers } from "./project-ipc";
@@ -49,6 +50,7 @@ app.whenReady().then(() => {
   registerRecentProjectsIpcHandlers(recentProjects);
   registerExportRomIpcHandler();
   registerPlayIpcHandler();
+  registerAssetsIpcHandlers();
   createMainWindow();
 
   app.on("activate", () => {

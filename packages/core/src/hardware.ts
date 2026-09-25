@@ -37,7 +37,12 @@ export const DS_HARDWARE_PROFILE = {
     maxTextureSizePx: 1024
   },
   audio: {
-    channels: 16
+    channels: 16,
+    /**
+     * Main RAM a game may spend on the samples of the sounds it plays: half of the DS's 4 MB, leaving the rest for the program,
+     * the 3D data and the textures' source data (the samples sit in RAM, where the sound hardware reads them from).
+     */
+    soundMemoryBytes: 2 * 1024 * 1024
   },
   frameRate: {
     /** The DS LCD refreshes at ~59.8Hz; games target 60fps or a 30fps half-step. */

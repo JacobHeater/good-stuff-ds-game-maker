@@ -42,6 +42,8 @@ admin rights.
 | `build-example.sh` | Builds libnds's bundled `Simple_Tri` example, to prove the toolchain. |
 | `make-rom.sh <msys dir>` | Runs `make` on a directory the way the compiler's build driver does (env vars, `PATH`). |
 | `capture-melonds.ps1` | Runs a ROM in melonDS and saves a picture of the emulator window. |
+| `measure-melonds-audio.ps1` | The audio counterpart: runs a ROM in melonDS (`-Rom`), or watches a running program and its child processes (`-RootPid`), and prints how loud its audio output is over time, from Windows' per-application peak meter. Used by the sound tests. |
+| `melonds-input.ps1` | Runs a ROM in melonDS and sends it real key presses and touches (`-Tap`, `-Hold`, `-Click`), then saves a picture. melonDS has no keys bound on this machine, so it runs a temporary copy of melonDS with its own config (A=X, B=Z, X=S, Y=A, L=Q, R=W, Start=Enter, Select=Backspace, arrows) and leaves the installed one alone. Used by the script input tests. |
 | `build-fixture-and-capture.ps1` | Compiles a fixture or `.gsds` project, runs it, and saves a picture: the quickest way to *look* at what the compiler produces. |
 
 `pnpm test:rom` (repo root) does the same build-run-capture automatically and

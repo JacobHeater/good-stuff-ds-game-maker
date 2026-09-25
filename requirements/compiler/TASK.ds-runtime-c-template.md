@@ -96,3 +96,8 @@ generates, so it can't drift). Verification, scenario by scenario:
   ROM size grows with distinct primitives, not with instances.
 - Out of scope: textures, sprites, input, audio, and any per-frame
   animation. The first ROM is a still frame drawn every frame.
+
+## Update
+The screen the scene names is now the project's 3D screen: the scene root's screen, chosen in New Project ("2D on top" puts 3D on the bottom) and changeable from the toolbar
+(`scene-designer/STORY.choose-2d-screen-in-3d-project.md`). The runtime is unchanged: it already drove 3D on the named screen and left the other a black backdrop, which is where a
+3D project's 2D nodes will be drawn once 2D is compiled.

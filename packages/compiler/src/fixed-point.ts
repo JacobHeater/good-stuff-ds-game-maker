@@ -5,6 +5,8 @@
  * - `f32`  20.12 fixed point in an int32. Matrices and positions. 1.0 = 4096.
  * - `v16`   4.12 fixed point in an int16. Vertex coordinates; roughly ±8 (that's the geometry
  *           engine's vertex format, which is why primitives are unit-sized and the matrix does the rest).
+ * - `t16`   12.4 fixed point in an int16. Texture coordinates, in *texels* (so a coordinate of 0.5 on a 64-wide
+ *           texture is 32 texels, which is 512). Roughly +-2048 texels.
  * - `v10`   .9 fixed point in a 10-bit field. Normals and light directions: -512..511 covers -1..~1.
  * - `rgb15` 5 bits per channel, red in the low bits.
  */
@@ -19,7 +21,7 @@ const V16_MAX = 2 ** 15 - 1;
 /** A value that can't be represented in the target DS format. */
 export class FixedPointRangeError extends Error {
   constructor(
-    public readonly format: "f32" | "v16",
+    public readonly format: "f32" | "v16" | "t16",
     public readonly value: number
   ) {
     super(`${value} does not fit the DS ${format} format`);
@@ -36,6 +38,16 @@ export function toF32(value: number): number {
 export function toV16(value: number): number {
   const fixed = Math.round(value * FIXED_ONE);
   if (!Number.isFinite(fixed) || fixed < V16_MIN || fixed > V16_MAX) throw new FixedPointRangeError("v16", value);
+  return fixed + 0;
+}
+
+/**
+ * A texture coordinate (0..1 across the picture, `size` texels wide or tall) to the DS's texel-based 12.4 format.
+ * Coordinates past 0..1 tile the texture; how far they can go depends on the size (2048 / size on either side).
+ */
+export function toT16(uv: number, size: number): number {
+  const fixed = Math.round(uv * size * 16);
+  if (!Number.isFinite(fixed) || fixed < V16_MIN || fixed > V16_MAX) throw new FixedPointRangeError("t16", uv);
   return fixed + 0;
 }
 

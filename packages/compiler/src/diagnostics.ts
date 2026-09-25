@@ -12,9 +12,26 @@ export type DiagnosticCode =
   | "too-many-lights"
   | "omni-light-skipped"
   | "over-triangle-budget"
-  | "mixed-screens"
+  | "two-d-node-not-built"
   | "out-of-range"
-  | "mesh-without-geometry";
+  | "mesh-without-geometry"
+  | "missing-model"
+  | "missing-texture"
+  | "texture-needs-uvs"
+  | "texture-memory"
+  | "missing-sound"
+  | "player-without-sound"
+  | "sound-not-started"
+  | "sound-pitch-clamped"
+  | "too-many-sounds"
+  | "sound-memory"
+  | "script-error"
+  | "script-warning"
+  | "missing-script"
+  | "collision-shape-unused"
+  | "player-without-animations"
+  | "animation-not-started"
+  | "animation-target-missing";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;

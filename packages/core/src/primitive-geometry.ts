@@ -12,6 +12,11 @@ import type { MeshPrimitive } from "./scene-node";
  * counter-clockwise when viewed from outside, so the front face is the outward
  * one in both three.js and the DS.
  *
+ * `uvs` (optional: a model may have none) gives a texture coordinate per vertex, two numbers each, in *image
+ * space*: `u` runs left to right and `v` runs top to bottom across the picture, so the first row of pixels is
+ * `v = 0`. Three.js (with no vertical flip) and the DS (whose `t` grows downward) both use that directly. The
+ * primitives map a picture upright as seen from outside; see requirements/scene-designer/TASK.texture-uv-coordinates.md.
+ *
  * Every primitive is unit-sized and centered on the origin. Size and placement
  * come from a node's transform, which keeps vertex coordinates small — the DS's
  * vertex format is 4.12 fixed point, so roughly ±8.
@@ -25,6 +30,8 @@ export interface PrimitiveGeometry {
   readonly positions: readonly number[];
   /** x, y, z per vertex, unit length. Same length as `positions`. */
   readonly normals: readonly number[];
+  /** u, v per vertex (image space, see above); absent when the geometry has no texture coordinates. */
+  readonly uvs?: readonly number[];
   readonly triangleCount: number;
 }
 
@@ -35,25 +42,37 @@ export const SPHERE_RINGS = 8;
 export const CYLINDER_SEGMENTS = 12;
 
 type Vec3 = readonly [number, number, number];
+type Vec2 = readonly [number, number];
 
 class TriangleList {
   readonly positions: number[] = [];
   readonly normals: number[] = [];
+  readonly uvs: number[] = [];
 
-  /** Adds one triangle. Vertices must be counter-clockwise seen from outside; normals are per vertex. */
-  add(a: Vec3, b: Vec3, c: Vec3, na: Vec3, nb: Vec3 = na, nc: Vec3 = na): void {
+  /** Adds one triangle. Vertices must be counter-clockwise seen from outside; normals and UVs are per vertex. */
+  add(a: Vec3, b: Vec3, c: Vec3, na: Vec3, nb: Vec3, nc: Vec3, ua: Vec2, ub: Vec2, uc: Vec2): void {
     this.positions.push(...a, ...b, ...c);
     this.normals.push(...na, ...nb, ...nc);
+    this.uvs.push(...ua, ...ub, ...uc);
   }
 
-  /** A quad a-b-c-d (counter-clockwise from outside) as two triangles sharing one flat normal. */
+  /** A triangle sharing one flat normal. */
+  flat(a: Vec3, b: Vec3, c: Vec3, n: Vec3, ua: Vec2, ub: Vec2, uc: Vec2): void {
+    this.add(a, b, c, n, n, n, ua, ub, uc);
+  }
+
+  /**
+   * A quad a-b-c-d as two triangles sharing one flat normal. Vertices go counter-clockwise seen from outside,
+   * starting at the picture's bottom-left: a = bottom-left, b = bottom-right, c = top-right, d = top-left, so
+   * the picture is upright and unmirrored as seen from outside.
+   */
   quad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, n: Vec3): void {
-    this.add(a, b, c, n);
-    this.add(a, c, d, n);
+    this.flat(a, b, c, n, [0, 1], [1, 1], [1, 0]);
+    this.flat(a, c, d, n, [0, 1], [1, 0], [0, 0]);
   }
 
   build(): PrimitiveGeometry {
-    return { positions: this.positions, normals: this.normals, triangleCount: this.positions.length / 9 };
+    return { positions: this.positions, normals: this.normals, uvs: this.uvs, triangleCount: this.positions.length / 9 };
   }
 }
 
@@ -95,10 +114,16 @@ function cylinder(): PrimitiveGeometry {
     const p1: Vec3 = [r * c1, -h, -r * s1];
     const q0: Vec3 = [r * c0, h, -r * s0];
     const q1: Vec3 = [r * c1, h, -r * s1];
-    t.add(p0, p1, q1, n0, n1, n1); // side
-    t.add(p0, q1, q0, n0, n1, n0);
-    t.add([0, h, 0], q0, q1, [0, 1, 0]); // top cap
-    t.add([0, -h, 0], p1, p0, [0, -1, 0]); // bottom cap
+    // The side wraps the picture once around: u follows the segment (left to right as seen from outside), v runs from the top edge down.
+    const u0 = i / CYLINDER_SEGMENTS;
+    const u1 = (i + 1) / CYLINDER_SEGMENTS;
+    t.add(p0, p1, q1, n0, n1, n1, [u0, 1], [u1, 1], [u1, 0]); // side
+    t.add(p0, q1, q0, n0, n1, n0, [u0, 1], [u1, 0], [u0, 0]);
+    // The caps show the picture as a disc-shaped cut-out: the top's picture-top is toward -Z, the bottom's (seen from below) toward +Z.
+    const top = (p: Vec3): Vec2 => [p[0] + 0.5, p[2] + 0.5];
+    const bottom = (p: Vec3): Vec2 => [p[0] + 0.5, 0.5 - p[2]];
+    t.flat([0, h, 0], q0, q1, [0, 1, 0], [0.5, 0.5], top(q0), top(q1)); // top cap
+    t.flat([0, -h, 0], p1, p0, [0, -1, 0], [0.5, 0.5], bottom(p1), bottom(p0)); // bottom cap
   }
   return t.build();
 }
@@ -107,25 +132,29 @@ function sphere(): PrimitiveGeometry {
   // Radius 0.5, poles on ±Y, smooth-shaded: a vertex's normal is its direction from the center.
   const t = new TriangleList();
   const r = 0.5;
-  const vertex = (ring: number, segment: number): [Vec3, Vec3] => {
+  // Equirectangular UVs: u goes once around the equator (left to right as seen from outside), v from the top pole (0)
+  // to the bottom (1). A pole is a single point, so its u is the middle of its segment; a vertex on the seam gets
+  // u = 1 rather than 0, so the wrap doesn't smear the picture across the whole width.
+  const vertex = (ring: number, segment: number): [Vec3, Vec3, Vec2] => {
     const phi = (ring / SPHERE_RINGS) * Math.PI; // 0 at the top pole, PI at the bottom
     const theta = (segment / SPHERE_SEGMENTS) * Math.PI * 2;
     const n: Vec3 = [Math.sin(phi) * Math.cos(theta), Math.cos(phi), -Math.sin(phi) * Math.sin(theta)];
-    return [[r * n[0], r * n[1], r * n[2]], n];
+    return [[r * n[0], r * n[1], r * n[2]], n, [segment / SPHERE_SEGMENTS, ring / SPHERE_RINGS]];
   };
+  const atPole = (uv: Vec2): Vec2 => [uv[0] + 0.5 / SPHERE_SEGMENTS, uv[1]];
   for (let ring = 0; ring < SPHERE_RINGS; ring++) {
     for (let seg = 0; seg < SPHERE_SEGMENTS; seg++) {
-      const [tl, ntl] = vertex(ring, seg);
-      const [tr, ntr] = vertex(ring, seg + 1);
-      const [bl, nbl] = vertex(ring + 1, seg);
-      const [br, nbr] = vertex(ring + 1, seg + 1);
+      const [tl, ntl, utl] = vertex(ring, seg);
+      const [tr, ntr, utr] = vertex(ring, seg + 1);
+      const [bl, nbl, ubl] = vertex(ring + 1, seg);
+      const [br, nbr, ubr] = vertex(ring + 1, seg + 1);
       if (ring === 0) {
-        t.add(tl, bl, br, ntl, nbl, nbr); // the top row is a fan around the pole: one triangle per segment
+        t.add(tl, bl, br, ntl, nbl, nbr, atPole(utl), ubl, ubr); // the top row is a fan around the pole: one triangle per segment
       } else if (ring === SPHERE_RINGS - 1) {
-        t.add(tl, bl, tr, ntl, nbl, ntr); // and so is the bottom row
+        t.add(tl, bl, tr, ntl, nbl, ntr, utl, atPole(ubl), utr); // and so is the bottom row
       } else {
-        t.add(tl, bl, br, ntl, nbl, nbr);
-        t.add(tl, br, tr, ntl, nbr, ntr);
+        t.add(tl, bl, br, ntl, nbl, nbr, utl, ubl, ubr);
+        t.add(tl, br, tr, ntl, nbr, ntr, utl, ubr, utr);
       }
     }
   }

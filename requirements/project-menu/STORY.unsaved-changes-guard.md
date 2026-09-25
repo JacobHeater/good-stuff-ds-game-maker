@@ -85,6 +85,9 @@ Scenario: Opening a project from the recent list is guarded the same way
 ```
 
 ## Notes
+- **Update:** undo/redo (`scene-designer/TASK.undo-redo-for-scene-edits.md`) keeps this rule exact: history
+  holds references to the scene trees, so undoing back to the saved tree makes the project read as clean, and
+  undoing past a save reads as dirty. Verified in the running app.
 - Closing the window needs the Electron main process to hold the close
   event until the renderer answers; that's the only part that isn't
   purely UI.

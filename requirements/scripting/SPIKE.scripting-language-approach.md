@@ -1,54 +1,53 @@
 ---
-status: proposed
+status: done
 component: scripting
-related: [EPIC.scripting.md, run-games-locally/SPIKE.game-runtime-approach.md]
+related: [EPIC.scripting.md, STORY.write-and-run-scripts.md, TASK.script-language-front-end.md, run-games-locally/SPIKE.game-runtime-approach.md, compiler/EPIC.compile-and-export-nds-rom.md]
 ---
 
 # Spike: Scripting language and execution approach
 
 ## Context
-Whatever language a user writes game logic in has to actually run
-somewhere. Real DS homebrew is compiled C/C++ (devkitPro/libnds) —
-there is no interpreter running on real DS hardware today the way
-GDScript runs inside Godot's engine at runtime. This project could:
+Whatever language a user writes game logic in has to actually run somewhere. Real DS homebrew is compiled C/C++
+(devkitPro/libnds); there is no interpreter on real DS hardware the way GDScript runs inside Godot's engine. Three
+directions were on the table: an interpreted language that only runs in an in-editor preview; a small language that
+compiles down for the DS; or a staged combination.
 
-1. **Target an in-editor interpreted preview only** (see
-   `run-games-locally/SPIKE.game-runtime-approach.md`) — pick any
-   scripting language that's easy to embed in an Electron/Node
-   process (JS/TS is the obvious candidate, since the whole stack is
-   already TypeScript) and accept that it only runs in the editor's
-   preview, not on real hardware, until/unless a real compiler exists.
-2. **Design a small DSL that compiles down** to something that could
-   eventually target real DS hardware via the future `compiler`
-   component — much more DS-authentic, much more work, and coupled to
-   decisions that component hasn't made yet either.
-3. **Some staged combination**: start with an interpreted JS/TS-based
-   scripting layer for the editor preview, and treat "real hardware
-   compilation of scripts" as an explicitly separate, later problem
-   that the `compiler` epic owns.
+`run-games-locally/SPIKE.game-runtime-approach.md` already settled the first half of this: **the first milestone is a real
+compiled ROM run in an emulator**, and an in-editor interpreted preview is deliberately not part of it. So scripts must run
+on the DS itself.
 
-## Description
-Investigate and recommend a starting approach, given the project is
-TypeScript end-to-end and has no compiler toolchain yet. The
-recommendation should be honest about what "scripting" means before a
-real compiler exists — i.e., whether it's acceptable for an initial
-version to only support the in-editor preview runtime.
+## Decision
+Made by the product owner (asked with the alternatives below), not derived:
+- **Execution: compile to C.** The compiler translates scripts to C that is built into the ROM with the runtime. It is the fastest
+  option on the DS's 67 MHz CPU and it is real DS code. The cost: script mistakes must be caught by our own checker (with
+  line/column messages), because a gcc error inside generated code would mean nothing to a script author.
+  Rejected: a bytecode VM in the ROM (sandboxed and debuggable, but slower and a second runtime to write), and visual
+  event blocks with no language (simplest, but too limited to be the answer).
+- **Language: GDScript-like.** Indentation-based, small and statically checkable, familiar from the Godot editor this app is
+  modeled on. Rejected: a TypeScript subset (a restricted subset that maps to C needs a careful type checker and surprises
+  people expecting all of TypeScript) and a C-like custom language.
+- **First slice:** per-frame updates, buttons and touch input, moving and rotating nodes (position, rotation, scale, visibility),
+  and playing sounds. (`STORY.write-and-run-scripts.md`)
+- **Storage and editing:** scripts are **embedded in the project file** like models, textures and sounds, attached to a node from the
+  Inspector, and edited in the Script tab with a real code editor (syntax colors, error underlines).
+
+Consequences worked out while designing it (each is in a ticket):
+- **The runtime can no longer bake every transform.** Until now it drew constant matrices with no hierarchy. Scripts move nodes, so the
+  runtime gets a node table and composes transforms each frame, but only for nodes a script can change and their descendants;
+  everything else keeps its baked matrix, so existing scenes render exactly as before
+  (`compiler/TASK.runtime-node-table-and-script-services.md`).
+- **`float` is fixed point.** The ARM9 has no FPU, so a script `float` is the DS's own 20.12 fixed-point number (range about
+  +-524288, step 1/4096), not a C `float`.
+- **The editor does not run scripts.** Play builds the ROM and runs it in the emulator, as for everything else; a script's errors are
+  found by the checker in the editor, not by running it.
+- **Testing on the target:** there is no host C compiler on the development machine, so generated code is verified by running it on
+  the real ARM code in melonDS (`compiler/TASK.compile-scripts-to-c.md`).
 
 ## Acceptance Criteria
 ```gherkin
-Scenario: Spike produces a written recommendation
-  Given the three options above
-  Then a written recommendation exists for the scripting language and
-    execution model to start with
-  And it states explicitly whether/how it depends on `compiler` or
-    `run-games-locally` decisions
-  And it defines what a minimal first Story would look like (e.g.
-    "attach a JS function to a node's on-update event, runnable only
-    in an in-editor preview")
+Scenario: The spike produces a written recommendation
+  Given the three options
+  Then a decision exists for the scripting language and execution model
+  And it states how it depends on the compiler and run-games-locally decisions
+  And it defines the first Story
 ```
-
-## Notes
-- This is tightly coupled to `run-games-locally/SPIKE.game-runtime-approach.md`
-  — read both together, since "what language can scripts be written
-  in" and "how does a game actually run" are really the same
-  underlying architecture decision viewed from two components.
