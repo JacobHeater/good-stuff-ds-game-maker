@@ -11,3 +11,5 @@ extraResources:
   # The C runtime "Export ROM..." builds ROMs from (see src/main/export-rom-ipc.ts).
   - from: ../../packages/compiler/runtime
     to: compiler-runtime
+  - from: ../../packages/compiler/runtime2d
+    to: compiler-runtime-2d

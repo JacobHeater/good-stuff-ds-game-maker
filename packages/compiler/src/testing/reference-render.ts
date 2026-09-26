@@ -114,3 +114,16 @@ export function silhouetteIoU(a: Silhouette, b: Silhouette): number {
 export function coveredPixels(s: Silhouette): number {
   return s.mask.reduce((n, v) => n + v, 0);
 }
+
+/**
+ * Where a point of the scene (world coordinates) lands on the 256x192 screen, seen from the project's first camera, as three.js projects it: an independent
+ * check of the DS runtime's own ray math, which turns a touched pixel back into a ray.
+ */
+export function projectToScreen(project: ProjectSnapshot, world: [number, number, number]): { x: number; y: number } {
+  const { camera } = buildThreeScene(project.scene);
+  if (!camera) throw new Error("The project has no camera.");
+  const cam: PerspectiveCamera = camera;
+  cam.updateMatrixWorld(true);
+  const v = new Vector3(...world).project(cam);
+  return { x: (v.x * 0.5 + 0.5) * DS_WIDTH, y: (1 - (v.y * 0.5 + 0.5)) * DS_HEIGHT };
+}

@@ -11,6 +11,7 @@ import { InspectorPanel } from "./panels/InspectorPanel";
 import { SceneTreePanel } from "./panels/SceneTreePanel";
 import { ScriptWorkspace } from "./script/ScriptWorkspace";
 import { EditorStoreProvider, screenRolesOf, useEditorStore } from "./state/editor-store";
+import { SceneTabs } from "./layout/SceneTabs";
 import { DualScreenViewport } from "./viewport/DualScreenViewport";
 import { Viewport3D } from "./viewport/Viewport3D";
 
@@ -41,6 +42,7 @@ function EditorWorkspace(): JSX.Element {
           <FileSystemPanel />
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
+          <SceneTabs />
           <ActiveViewport />
           <BottomPanel />
         </div>

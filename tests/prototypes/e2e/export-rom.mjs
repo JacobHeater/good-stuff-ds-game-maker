@@ -208,10 +208,13 @@ try {
   await createProject("Flat", "2D", `${work}/flat.gsds`);
   const callsAfter2dCreate = (await saveCalls()).length;
   assert.equal(callsAfter2dCreate, calls2d + 1);
+  await answerSaveWith(`${work}/flat.nds`);
+  const exportedBefore = ((await body()).match(/Exported ROM to/g) ?? []).length; // the Output log keeps the earlier exports
   await exportRom();
-  await waitText("2D compilation isn't supported yet");
-  assert.equal((await saveCalls()).length, callsAfter2dCreate, "no location was asked for");
-  pass("a 2D project reports that 2D export isn't supported yet");
+  await page.waitForFunction((n) => (document.body.innerText.match(/Exported ROM to/g) ?? []).length > n, { timeout: 90000 }, exportedBefore);
+  assert.equal((await saveCalls()).length, callsAfter2dCreate + 1, "a location was asked for");
+  assert.equal(readFileSync(`${work}/flat.nds`).subarray(0, 8).toString(), "HOMEBREW");
+  pass("a 2D project exports a ROM too (2D compilation exists now: sprites, see sprite-image.mjs)");
 
   console.log(`\nAll ${checks} checks passed.`);
 } catch (err) {

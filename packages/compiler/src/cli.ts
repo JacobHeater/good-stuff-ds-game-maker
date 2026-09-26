@@ -24,8 +24,8 @@ import { NodeBuildFileSystem, NodeBuildRunner, NodeToolchainLocator } from "./bu
 import { RomBuilder } from "./build/rom-builder";
 import { compileProject } from "./compile-project";
 import { formatDiagnostic, hasErrors } from "./diagnostics";
-import { audioPlayerNode, cubeProject, importedModelProject, nestedProject, primitivesProject, soundProbeProject, texturedPrimitivesProject, texturedProject, toneSound } from "./fixtures";
-import { writeSceneDataC, writeScriptCodeC } from "./scene-data-writer";
+import { audioPlayerNode, cubeProject, importedModelProject, nestedProject, primitivesProject, soundProbeProject, spritesProject, cubeWithSpritesProject, texturedPrimitivesProject, texturedProject, toneSound } from "./fixtures";
+import { writeSceneDataC, writeSceneTableC, writeScriptCodeFileC } from "./scene-data-writer";
 import { translateScene3D } from "./translate-scene-3d";
 
 const FIXTURES: Record<string, () => ProjectSnapshot> = {
@@ -35,11 +35,13 @@ const FIXTURES: Record<string, () => ProjectSnapshot> = {
   imported: importedModelProject,
   textured: texturedProject,
   "textured-shapes": texturedPrimitivesProject,
+  sprites: spritesProject,
+  "cube-sprites": cubeWithSpritesProject,
   // A looping 2-second 440 Hz tone at 22 kHz: something to listen to.
   sound: () => soundProbeProject([audioPlayerNode("Tone", { soundId: "tone", loop: true })], [toneSound("tone", { sampleRate: 22050, seconds: 2 })])
 };
 
-const USAGE = "usage: cli <compile|scene-data|script-code> <project.gsds | fixture:cube|primitives|nested|imported|textured|textured-shapes|sound> <out>";
+const USAGE = "usage: cli <compile|scene-data|script-code|scene-table> <project.gsds | fixture:cube|primitives|nested|imported|textured|textured-shapes|sound|sprites|cube-sprites> <out>";
 
 function loadProject(source: string): ProjectSnapshot {
   if (source.startsWith("fixture:")) {
@@ -52,17 +54,18 @@ function loadProject(source: string): ProjectSnapshot {
 
 async function main(argv: string[]): Promise<number> {
   const [command, source, out] = argv;
-  if ((command !== "compile" && command !== "scene-data" && command !== "script-code") || !source || !out) {
+  if ((command !== "compile" && command !== "scene-data" && command !== "script-code" && command !== "scene-table") || !source || !out) {
     console.error(USAGE);
     return 2;
   }
   const project = loadProject(source);
 
-  if (command === "scene-data" || command === "script-code") {
+  if (command === "scene-data" || command === "script-code" || command === "scene-table") {
     const { scene, diagnostics } = translateScene3D(project);
     for (const d of diagnostics) console.error(formatDiagnostic(d));
     if (hasErrors(diagnostics) || !scene) return 1;
-    writeFileSync(out, command === "scene-data" ? writeSceneDataC(scene) : writeScriptCodeC(scene), "utf-8");
+    // The files of a project with one scene: what the runtime is checked in with, so it builds on its own.
+    writeFileSync(out, command === "scene-data" ? writeSceneDataC(scene) : command === "scene-table" ? writeSceneTableC(1) : writeScriptCodeFileC([scene]), "utf-8");
     console.log(`wrote ${out}`);
     return 0;
   }

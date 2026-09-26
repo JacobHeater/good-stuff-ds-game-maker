@@ -1,7 +1,7 @@
-import { getNodeKindsForMode, isTwoDVisualKind } from "@goodstuff/core";
+import { getNodeKindsForMode, instanceWouldCycle, isTwoDVisualKind, listScenes, withSceneTree } from "@goodstuff/core";
 
-import { NODE_KIND_ICON } from "../node-icons";
-import { useEditorStore } from "../state/editor-store";
+import { NodeIcon } from "../NodeIcon";
+import { selectedNodeIdsOf, useEditorStore } from "../state/editor-store";
 import { MenuDropdown, MenuItem, MenuSectionLabel, MenuSeparator } from "./menu-primitives";
 
 /**
@@ -11,8 +11,10 @@ import { MenuDropdown, MenuItem, MenuSectionLabel, MenuSeparator } from "./menu-
  * `requirements/project-menu/EPIC.project-menu.md` for the ownership rule.
  */
 export function SceneMenu(): JSX.Element {
-  const { state, addNode, deleteNode, duplicateNode, importModel, importSound, undo, redo, undoLabel, redoLabel } = useEditorStore();
-  const hasSelection = state.selectedNodeId !== state.sceneRoot.id;
+  const { state, addNode, importModel, importRiggedModel, importSound, importSprite, undo, redo, undoLabel, redoLabel, duplicateSelected, deleteSelected, instantiateScene } = useEditorStore();
+  const otherScenes = state.project ? listScenes(withSceneTree(state.project, state.activeSceneId, state.sceneRoot)).filter((scene) => scene.id !== state.activeSceneId) : [];
+  // Duplicate and Delete act on every selected node; the scene root can be selected but is never duplicated or deleted.
+  const hasSelection = selectedNodeIdsOf(state).some((id) => id !== state.sceneRoot.id);
   const mode = state.project?.mode;
 
   return (
@@ -26,31 +28,50 @@ export function SceneMenu(): JSX.Element {
             <>
               <MenuSectionLabel label={`Add ${mode} Node`} />
               {getNodeKindsForMode(mode).filter((kind) => mode === "2D" || !isTwoDVisualKind(kind)).map((kind) => (
-                <MenuItem key={kind} label={kind} icon={NODE_KIND_ICON[kind]} onSelect={run(() => addNode(kind))} />
+                <MenuItem key={kind} label={kind} icon={<NodeIcon kind={kind} />} onSelect={run(() => addNode(kind))} />
               ))}
               {mode === "3D" && <MenuItem label="Import Model (.obj)..." onSelect={run(() => void importModel())} />}
+              {mode === "3D" && <MenuItem label="Import Animated Model (several .obj)..." onSelect={run(() => void importModel(true))} />}
+              {mode === "3D" && <MenuItem label="Import Rigged Model (.glb / .gltf)..." onSelect={run(() => void importRiggedModel())} />}
               {mode === "3D" && (
                 <>
                   <MenuSeparator />
                   <MenuSectionLabel label="Add 2D Node (the 2D screen)" />
                   {getNodeKindsForMode(mode).filter(isTwoDVisualKind).map((kind) => (
-                    <MenuItem key={kind} label={kind} icon={NODE_KIND_ICON[kind]} onSelect={run(() => addNode(kind))} />
+                    <MenuItem key={kind} label={kind} icon={<NodeIcon kind={kind} />} onSelect={run(() => addNode(kind))} />
                   ))}
                 </>
               )}
               <MenuItem label="Import Sound..." onSelect={run(() => void importSound(null))} />
+              <MenuItem label="Import Sprite Image..." onSelect={run(() => void importSprite(null))} />
+              <MenuSeparator />
+            </>
+          )}
+          {otherScenes.length > 0 && (
+            <>
+              <MenuSectionLabel label="Instantiate Scene (a scene inside this one)" />
+              {otherScenes.map((scene) => (
+                <MenuItem
+                  key={scene.id}
+                  label={scene.name}
+                  disabled={state.project ? instanceWouldCycle(withSceneTree(state.project, state.activeSceneId, state.sceneRoot), state.activeSceneId, scene.id) : true}
+                  onSelect={run(() => instantiateScene(scene.id))}
+                />
+              ))}
               <MenuSeparator />
             </>
           )}
           <MenuItem
             label="Duplicate Node"
+            shortcut="Ctrl+D"
             disabled={!hasSelection}
-            onSelect={run(() => duplicateNode(state.selectedNodeId))}
+            onSelect={run(duplicateSelected)}
           />
           <MenuItem
             label="Delete Node"
+            shortcut="Del"
             disabled={!hasSelection}
-            onSelect={run(() => deleteNode(state.selectedNodeId))}
+            onSelect={run(deleteSelected)}
           />
         </>
       )}

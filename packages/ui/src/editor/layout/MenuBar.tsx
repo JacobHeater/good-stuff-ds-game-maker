@@ -1,3 +1,4 @@
+import logo from "../icons/Logo.png";
 import { ProjectMenu } from "./ProjectMenu";
 import { SceneMenu } from "./SceneMenu";
 
@@ -11,6 +12,7 @@ const PLACEHOLDER_MENUS = ["Debug", "Editor", "Help"] as const;
 export function MenuBar(): JSX.Element {
   return (
     <div className="flex h-8 shrink-0 items-center gap-1 border-b border-editor-border bg-editor-panel px-2 text-xs">
+      <img src={logo} alt="" draggable={false} data-testid="app-logo" className="h-5 w-5 select-none" />
       <span className="mr-2 font-semibold text-editor-accent">Good Stuff DS Game Maker</span>
       <SceneMenu />
       <ProjectMenu />

@@ -1,0 +1,1229 @@
+{
+  "formatVersion": 1,
+  "id": "2dc77420-26c9-4302-99fe-71119092b5a7",
+  "name": "Coin Collector",
+  "mode": "3D",
+  "createdAt": "2026-09-26T20:57:27.390Z",
+  "updatedAt": "2026-09-26T20:57:27.390Z",
+  "scene": {
+    "id": "node3d-36",
+    "name": "Main",
+    "kind": "Node3D",
+    "screen": "top",
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "visible": true,
+    "children": [
+      {
+        "id": "camera3d-15",
+        "name": "Camera",
+        "kind": "Camera3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 9,
+            "z": 9
+          },
+          "rotation": {
+            "x": -45,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "scriptId": "camera"
+      },
+      {
+        "id": "directionallight3d-16",
+        "name": "Sun",
+        "kind": "DirectionalLight3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 8,
+            "z": 0
+          },
+          "rotation": {
+            "x": -50,
+            "y": -30,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      },
+      {
+        "id": "meshinstance3d-18",
+        "name": "Ground",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-17",
+            "name": "GroundShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": -0.5,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 24,
+            "y": 1,
+            "z": 24
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#4c9a52"
+        }
+      },
+      {
+        "id": "meshinstance3d-20",
+        "name": "WallNorth",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-19",
+            "name": "WallNorthShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 1,
+            "z": -12
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 24,
+            "y": 3,
+            "z": 1
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#8a8f98"
+        }
+      },
+      {
+        "id": "meshinstance3d-22",
+        "name": "WallSouth",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-21",
+            "name": "WallSouthShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 1,
+            "z": 12
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 24,
+            "y": 3,
+            "z": 1
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#8a8f98"
+        }
+      },
+      {
+        "id": "meshinstance3d-24",
+        "name": "WallWest",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-23",
+            "name": "WallWestShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": -12,
+            "y": 1,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 3,
+            "z": 24
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#8a8f98"
+        }
+      },
+      {
+        "id": "meshinstance3d-26",
+        "name": "WallEast",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-25",
+            "name": "WallEastShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 12,
+            "y": 1,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 3,
+            "z": 24
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#8a8f98"
+        }
+      },
+      {
+        "id": "meshinstance3d-28",
+        "name": "Crate",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-27",
+            "name": "CrateShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 3,
+            "y": 0.5,
+            "z": 2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 2,
+            "y": 1,
+            "z": 2
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#a5683a"
+        }
+      },
+      {
+        "id": "meshinstance3d-14",
+        "name": "Player",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-13",
+            "name": "PlayerShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 1.5,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.8,
+            "y": 0.8,
+            "z": 0.8
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#3b82f6"
+        },
+        "scriptId": "player"
+      },
+      {
+        "id": "meshinstance3d-30",
+        "name": "Enemy",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-29",
+            "name": "EnemyShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 8,
+            "y": 0.6,
+            "z": -8
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.9,
+            "y": 0.9,
+            "z": 0.9
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#e0342f"
+        },
+        "scriptId": "chaser"
+      },
+      {
+        "id": "meshinstance3d-2",
+        "name": "Coin1",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-1",
+            "name": "CoinShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": -6,
+            "y": 0.7,
+            "z": -6
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#ffd21f"
+        },
+        "scriptId": "coin"
+      },
+      {
+        "id": "meshinstance3d-4",
+        "name": "Coin2",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-3",
+            "name": "CoinShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 6,
+            "y": 0.7,
+            "z": -6
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#ffd21f"
+        },
+        "scriptId": "coin"
+      },
+      {
+        "id": "meshinstance3d-6",
+        "name": "Coin3",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-5",
+            "name": "CoinShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0.7,
+            "z": -3
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#ffd21f"
+        },
+        "scriptId": "coin"
+      },
+      {
+        "id": "meshinstance3d-8",
+        "name": "Coin4",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-7",
+            "name": "CoinShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": -6,
+            "y": 0.7,
+            "z": 5
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#ffd21f"
+        },
+        "scriptId": "coin"
+      },
+      {
+        "id": "meshinstance3d-10",
+        "name": "Coin5",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-9",
+            "name": "CoinShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 6,
+            "y": 0.7,
+            "z": 5
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#ffd21f"
+        },
+        "scriptId": "coin"
+      },
+      {
+        "id": "meshinstance3d-12",
+        "name": "Coin6",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-11",
+            "name": "CoinShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0.7,
+            "z": 8
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 0.6,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#ffd21f"
+        },
+        "scriptId": "coin"
+      },
+      {
+        "id": "label-31",
+        "name": "Coins",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 8
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Coins: {} / 6",
+          "color": 3
+        }
+      },
+      {
+        "id": "label-32",
+        "name": "Time",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 24
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Time: {}",
+          "color": 7
+        }
+      },
+      {
+        "id": "label-33",
+        "name": "Best",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 40
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Best: {}",
+          "color": 6
+        }
+      },
+      {
+        "id": "label-34",
+        "name": "Message",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 80
+        },
+        "visible": false,
+        "children": [],
+        "label": {
+          "text": "You got them all!",
+          "color": 2
+        }
+      },
+      {
+        "id": "label-35",
+        "name": "Hint",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 160
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "D-pad move, A jump",
+          "color": 7
+        }
+      }
+    ],
+    "transform3D": {
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    }
+  },
+  "scripts": [
+    {
+      "id": "player",
+      "name": "Player",
+      "source": "# Runs around, jumps, and works out when the game is won.\nglobal var score = 0\nglobal var best = 0\n\nvar vy = 0.0\nvar time = 0.0\nvar won = false\n\nfunc _ready():\n    if has_save():\n        load_game()\n    score = 0\n    $Coins.value = 0\n    $Best.value = best\n\nfunc _process(delta):\n    var speed = 6.0\n    var dx = 0.0\n    var dz = 0.0\n    if Input.is_button_down(\"left\"):\n        dx = -speed * delta\n    if Input.is_button_down(\"right\"):\n        dx = speed * delta\n    if Input.is_button_down(\"up\"):\n        dz = -speed * delta\n    if Input.is_button_down(\"down\"):\n        dz = speed * delta\n\n    if is_on_floor():\n        vy = 0.0\n        if Input.is_button_pressed(\"a\"):\n            vy = 9.0\n    vy -= 22.0 * delta\n    move_and_collide(dx, vy * delta, dz)\n\n    if not won:\n        time += delta\n        $Time.value = int(time)\n        if score >= 6:\n            won = true\n            $Message.visible = true\n            var seconds = int(time)\n            if best == 0 or seconds < best:\n                best = seconds\n                $Best.value = best\n                save_game()\n    elif Input.is_button_pressed(\"start\"):\n        change_scene(\"Main\")\n"
+    },
+    {
+      "id": "coin",
+      "name": "Coin",
+      "source": "# A coin: spins, and is taken when the player touches it.\nglobal var score = 0\n\nfunc _process(delta):\n    rotation.y += 180.0 * delta\n    if visible and $CoinShape.overlaps($PlayerShape):\n        visible = false\n        score += 1\n        $Coins.value = score\n"
+    },
+    {
+      "id": "chaser",
+      "name": "Chaser",
+      "source": "# Walks toward the player; if it catches the player, the player goes back to the start and the chaser to a random place along the far wall.\nfunc _process(delta):\n    var dx = $Player.position.x - position.x\n    var dz = $Player.position.z - position.z\n    var a = atan2(dz, dx)\n    move_and_collide(cos(a) * 2.5 * delta, -20.0 * delta, sin(a) * 2.5 * delta)\n    rotation.y = -a\n    if $EnemyShape.overlaps($PlayerShape):\n        $Player.position.x = 0.0\n        $Player.position.y = 2.0\n        $Player.position.z = 0.0\n        position.x = randi(20) - 10\n        position.z = -10.0\n"
+    },
+    {
+      "id": "camera",
+      "name": "CameraFollow",
+      "source": "# Follows the player from a fixed distance.\nfunc _process(delta):\n    position.x = $Player.position.x\n    position.z = $Player.position.z + 9.0\n"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { getAnimationPlayer } from "../animation";
+import { getSpriteAnimations } from "../sprite-animation";
 import { flattenSceneTree, is3DNodeKind, type SceneNode, type SceneNodeKind } from "../scene-node";
 import { BUTTON_NAMES, type ScriptSceneContext } from "./checker";
 
@@ -43,8 +44,15 @@ const BUILTIN_FUNCTIONS: ScriptCompletion[] = [
   fn("sqrt", "(x) -> float", "The square root."),
   fn("sin", "(degrees) -> float", "The sine of an angle in degrees, from -1 to 1."),
   fn("cos", "(degrees) -> float", "The cosine of an angle in degrees, from -1 to 1."),
+  fn("randi", "(n) -> int", "A random whole number from 0 up to n - 1: randi(6) is 0, 1, 2, 3, 4 or 5.", "randi()"),
+  fn("randf", "() -> float", "A random number from 0 up to (not including) 1."),
+  fn("atan2", "(y, x) -> float", "The angle, in degrees from -180 to 180, of the direction x, y: atan2(1, 1) is 45. Handy to turn toward something.", "atan2(, )", 3),
   fn("int", "(x) -> int", "A whole number: drops the fraction of a float."),
-  fn("float", "(x) -> float", "A number with a fraction.")
+  fn("float", "(x) -> float", "A number with a fraction."),
+  fn("change_scene", '("name")', "Switches to another scene of the project when this frame ends. The scene's name goes in quotes.", 'change_scene("")', 2),
+  fn("save_game", "() -> bool", "Writes every global variable to the game's save file. True when it was saved."),
+  fn("load_game", "() -> bool", "Reads the save file back into the global variables. True when there was a save to load."),
+  fn("has_save", "() -> bool", "Whether there is a save file with a game in it.")
 ];
 
 const WORDS: ScriptCompletion[] = [
@@ -63,6 +71,7 @@ const STATEMENTS: ScriptCompletion[] = [
   { label: "func _process(delta):", kind: "keyword", detail: "runs every frame", info: "The function that runs every frame; delta is the seconds since the last one.", insert: "func _process(delta):\n    " },
   { label: "func _ready():", kind: "keyword", detail: "runs once", info: "Runs once, when the game starts.", insert: "func _ready():\n    " },
   { label: "func", kind: "keyword", detail: "a new function", info: "A function of your own: func jump(power: float):", insert: "func " },
+  { label: "global", kind: "keyword", detail: "a variable for the whole game", info: "global var score = 0 makes a variable every script can use, in every scene; it keeps its value when the scene changes, and save_game() stores it.", insert: "global var " },
   { label: "var", kind: "keyword", detail: "a variable", info: "A variable: var speed = 2.0. At the top of the script it keeps its value between frames.", insert: "var " },
   { label: "if", kind: "keyword", insert: "if " },
   { label: "elif", kind: "keyword", insert: "elif " },
@@ -87,6 +96,8 @@ const INPUT_FUNCTIONS: ScriptCompletion[] = [
   { label: "is_button_released", kind: "function", detail: '("button") -> bool', info: "True only on the frame the button comes up.", insert: 'is_button_released("")', caretBack: 2, reopen: true },
   { label: "is_touching", kind: "function", detail: "() -> bool", info: "True while the touch screen is being touched.", insert: "is_touching()" },
   { label: "touch_x", kind: "function", detail: "() -> int", info: "Where the touch is, across the screen (0 to 255).", insert: "touch_x()" },
+  { label: "touch_ground_x", kind: "function", detail: "(height) -> float", info: "The world X where the stylus points on the flat plane at that height (0 when not touching). Needs the 3D scene on the touch screen.", insert: "touch_ground_x()" },
+  { label: "touch_ground_z", kind: "function", detail: "(height) -> float", info: "The world Z where the stylus points on the flat plane at that height (0 when not touching). Needs the 3D scene on the touch screen.", insert: "touch_ground_z()" },
   { label: "touch_y", kind: "function", detail: "() -> int", info: "Where the touch is, down the screen (0 to 191).", insert: "touch_y()" }
 ];
 
@@ -100,10 +111,17 @@ const VECTORS = new Set(["position", "rotation", "scale"]);
 
 interface Capabilities {
   transform: boolean;
+  /** A Sprite2D: position and scale with .x and .y, rotation as one number, and visible. */
+  sprite: boolean;
   audio: boolean;
   animation: boolean;
+  /** `speed_scale` (an AnimationPlayer only). */
+  speed: boolean;
   shape: boolean;
   body: boolean;
+  touch: boolean;
+  /** A Label: `visible`, `value` and `text`. */
+  label: boolean;
   /** The animation names to offer in `play("`. */
   animations: readonly string[];
 }
@@ -122,6 +140,10 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
     list.push(prop("position", "vector", "Where it is: position.x, position.y, position.z."), prop("rotation", "vector", "Its angle in degrees around each axis."));
     list.push(prop("scale", "vector", "Its size on each axis (1 is normal)."), prop("visible", "bool", "Whether it is shown (and, for a collision shape, whether it counts)."));
   }
+  if (c.sprite) {
+    list.push(prop("position", "vector", "Where its center is on the screen, in pixels: position.x and position.y."), prop("rotation", "float", "Its angle in degrees, clockwise."));
+    list.push(prop("scale", "vector", "Its size on each axis (1 is normal, negative flips it): scale.x and scale.y."), prop("visible", "bool", "Whether it is shown."));
+  }
   if (c.audio) {
     list.push(prop("volume", "float", "How loud, from 0 to 100."), prop("pitch", "float", "How high the sound plays (1 is normal)."));
     list.push(method("play", "()", "Starts the sound from the beginning.", "play()"), method("stop", "()", "Stops the sound.", "stop()"));
@@ -129,11 +151,22 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
   if (c.animation) {
     list.push(method("play", '("name")', "Starts one of its animations from its beginning.", 'play("")', 2, true));
     list.push(method("stop", "()", "Stops the animation where it is.", "stop()"), method("is_playing", "() -> bool", "Whether an animation is running.", "is_playing()"));
-    list.push(prop("speed_scale", "float", "How fast animations play (1 is normal, 2 is double)."));
+  }
+  if (c.label) {
+    list.push(prop("visible", "bool", "Whether it is shown."), prop("value", "int", "The whole number shown where its text has {}."));
+    list.push(prop("text", "text", 'Its text; set it to text in quotes: text = "Game Over".'));
+  }
+  if (c.speed) list.push(prop("speed_scale", "float", "How fast animations play (1 is normal, 2 is double)."));
+  if (c.touch) {
+    list.push(method("is_touched", "() -> bool", "Whether the stylus is touching it right now.", "is_touched()"));
+    list.push(method("is_touch_pressed", "() -> bool", "Whether the stylus went down on it this frame.", "is_touch_pressed()"));
+    list.push(method("is_touch_released", "() -> bool", "Whether the stylus was lifted this frame after touching it.", "is_touch_released()"));
   }
   if (c.shape) list.push(method("overlaps", "(other) -> bool", "Whether it touches another collision shape.", "overlaps()", 1, true));
   if (c.body) {
     list.push(method("move_and_collide", "(dx, dy, dz) -> bool", "Moves it by that much, stopped by solid collision shapes. True when it was stopped.", "move_and_collide(, , )", 5));
+    list.push(method("probe_solid", "(y, x0, x1, x2) -> int", "Which of three points (x0, x1, x2 along the longer side of the body's collision shape, y up from the shape's center) are inside a solid shape, as a number: 1 for the first, 2 the second, 4 the third, added up.", "probe_solid(, , , )", 7));
+    list.push(method("ray_cast", "(ox, oy, oz, dx, dy, dz, max) -> float", "How far along a ray (starting at ox, oy, oz and going toward dx, dy, dz) the nearest solid shape is, not counting the body's own, or -1 when nothing is within max.", "ray_cast(, , , , , , )", 13));
     list.push(method("is_on_floor", "() -> bool", "Whether the last move landed on something.", "is_on_floor()"));
     list.push(method("is_on_wall", "() -> bool", "Whether the last move ran into a wall.", "is_on_wall()"));
     list.push(method("is_on_ceiling", "() -> bool", "Whether the last move bumped a ceiling.", "is_on_ceiling()"));
@@ -143,10 +176,10 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
 
 function capabilitiesOfKind(kind: SceneNodeKind, hasShape: boolean, animations: readonly string[]): Capabilities {
   const shape = kind === "CollisionShape3D";
-  return { transform: is3DNodeKind(kind), audio: kind === "AudioStreamPlayer", animation: kind === "AnimationPlayer", shape, body: shape || hasShape, animations };
+  return { transform: is3DNodeKind(kind), sprite: kind === "Sprite2D" || kind === "AnimatedSprite2D", audio: kind === "AudioStreamPlayer", animation: kind === "AnimationPlayer" || kind === "AnimatedSprite2D" || (kind === "MeshInstance3D" && animations.length > 0), speed: kind === "AnimationPlayer", shape, body: shape || hasShape, touch: kind === "TouchArea2D" || kind === "TouchArea3D", label: kind === "Label", animations };
 }
 
-const EVERYTHING: Capabilities = { transform: true, audio: true, animation: true, shape: true, body: true, animations: [] };
+const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, body: true, touch: true, label: false, animations: [] };
 
 /** What `self` can do: what every node the script is attached to can do (everything when it is attached to none yet). */
 function selfCapabilities(context: ScriptSceneContext): Capabilities {
@@ -154,10 +187,14 @@ function selfCapabilities(context: ScriptSceneContext): Capabilities {
   const each = context.attached.map((a) => capabilitiesOfKind(a.kind, a.hasShape ?? false, a.animations ?? []));
   return {
     transform: each.every((c) => c.transform),
+    sprite: each.every((c) => c.sprite),
     audio: each.every((c) => c.audio),
     animation: each.every((c) => c.animation),
+    speed: each.every((c) => c.speed),
     shape: each.every((c) => c.shape),
     body: each.every((c) => c.body),
+    touch: each.every((c) => c.touch),
+    label: each.every((c) => c.label),
     animations: [...new Set(each.flatMap((c) => c.animations))]
   };
 }
@@ -167,7 +204,7 @@ function findNode(context: ScriptSceneContext, name: string): SceneNode | undefi
 }
 
 function nodeCapabilities(node: SceneNode): Capabilities {
-  const animations = node.kind === "AnimationPlayer" ? getAnimationPlayer(node).animations.map((a) => a.name) : [];
+  const animations = node.kind === "AnimationPlayer" ? getAnimationPlayer(node).animations.map((a) => a.name) : node.kind === "MeshInstance3D" ? getSpriteAnimations(node).animations.map((a) => a.name) : [];
   return capabilitiesOfKind(node.kind, flattenSceneTree(node).some((n) => n.kind === "CollisionShape3D"), animations);
 }
 
@@ -217,11 +254,13 @@ const withoutComment = (line: string): string => {
 };
 
 /** The script's own names, read from the text without parsing it (it is usually half written while completing). */
-function scopeAt(lines: string[], lineIndex: number): ScopeNames {
+function scopeAt(lines: string[], lineIndex: number, globals: ScriptSceneContext["globals"]): ScopeNames {
   const scope: ScopeNames = { variables: new Map(), functions: new Map(), locals: new Map() };
+  // The project's global variables, which every script can use.
+  for (const global of globals ?? []) scope.variables.set(global.name, global.type);
   for (const raw of lines) {
     const line = withoutComment(raw);
-    const variable = new RegExp(String.raw`^var\s+(${IDENT})\s*(?::\s*(\w+))?\s*(?:=\s*(.*))?$`).exec(line);
+    const variable = new RegExp(String.raw`^(?:global\s+)?var\s+(${IDENT})\s*(?::\s*(\w+))?\s*(?:=\s*(.*))?$`).exec(line);
     if (variable) {
       const initial = variable[3]?.trim() ?? "";
       scope.variables.set(variable[1], variable[2] ?? (/^-?\d+\.\d/.test(initial) ? "float" : /^(true|false)$/.test(initial) ? "bool" : "int"));
@@ -318,7 +357,7 @@ export function completeScript(source: string, offset: number, context: ScriptSc
   if (new RegExp(String.raw`\b(?:func|var)\s+$|\bfor\s+$`).test(ahead)) return null; // naming something new
   if (/(?:\bvar\s+\w+\s*:|[(,]\s*\w+\s*:|->)\s*$/.test(ahead)) return { from: start, options: TYPES };
 
-  const scope = scopeAt(lines, lineIndex);
+  const scope = scopeAt(lines, lineIndex, context.globals);
   // The script's own names first (the likeliest), then the language's.
   const options: ScriptCompletion[] = [];
   for (const [name, type] of scope.locals) options.push({ label: name, kind: "variable", detail: type || "local" });

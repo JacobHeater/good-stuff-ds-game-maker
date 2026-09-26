@@ -1,15 +1,30 @@
 import { DS_HARDWARE_PROFILE } from "./hardware";
 import type { ImportedMesh } from "./imported-mesh";
 import { getSoundByteSize, type ImportedSound } from "./imported-sound";
+import { getSpriteByteSize, type ImportedSprite } from "./imported-sprite";
 import { getTextureByteSize, type ImportedTexture } from "./imported-texture";
 import { resolveMeshGeometry } from "./mesh-geometry";
 import { flattenSceneTree, OAM_CONSUMING_KINDS, type SceneNode } from "./scene-node";
 import type { ScreenId } from "./index";
 
+/**
+ * The texture memory a 3D project has. The 3D engine can use all four 128 KB VRAM banks (512 KB); when the 2D screen has sprites, one bank holds their tiles
+ * and textures get the other three (384 KB). See requirements/scene-designer/STORY.sprites-on-the-2d-screen-of-a-3d-project.md.
+ */
+export function textureMemoryLimit(twoDScreenHasSprites: boolean): number {
+  return DS_HARDWARE_PROFILE.memory.textureMemoryBytes - (twoDScreenHasSprites ? DS_HARDWARE_PROFILE.graphics2D.spriteMemoryBytesPerScreen : 0);
+}
+
 export interface ScreenBudget {
   screen: ScreenId;
   spritesUsed: number;
   spritesLimit: number;
+  /** Bytes of this screen's sprite memory taken by the distinct images its Sprite2D nodes draw. */
+  spriteBytesUsed: number;
+  spriteBytesLimit: number;
+  /** The distinct images on this screen; each takes one of the engine's extended palettes. */
+  spritePalettesUsed: number;
+  spritePalettesLimit: number;
 }
 
 export interface SceneBudgetReport {
@@ -36,15 +51,27 @@ export function computeSceneBudget(
   root: SceneNode,
   importedMeshes?: readonly ImportedMesh[],
   textures?: readonly ImportedTexture[],
-  sounds?: readonly ImportedSound[]
+  sounds?: readonly ImportedSound[],
+  sprites?: readonly ImportedSprite[]
 ): SceneBudgetReport {
   const nodes = flattenSceneTree(root);
 
-  const perScreen: ScreenBudget[] = (["top", "bottom"] as ScreenId[]).map((screen) => ({
-    screen,
-    spritesUsed: nodes.filter((node) => node.screen === screen && OAM_CONSUMING_KINDS.has(node.kind)).length,
-    spritesLimit: DS_HARDWARE_PROFILE.graphics2D.oamSpritesPerScreen
-  }));
+  // Each 2D engine has its own sprite memory, so an image drawn on both screens is counted (and stored) once on each. An image a
+  // node names that the project lacks counts nothing here; the compiler reports it as an error.
+  const perScreen: ScreenBudget[] = (["top", "bottom"] as ScreenId[]).map((screen) => {
+    const onScreen = nodes.filter((node) => node.screen === screen);
+    const usedSpriteIds = new Set(onScreen.flatMap((node) => (node.spriteId ? [node.spriteId] : [])));
+    const images = (sprites ?? []).filter((sprite) => usedSpriteIds.has(sprite.id));
+    return {
+      screen,
+      spritesUsed: onScreen.filter((node) => OAM_CONSUMING_KINDS.has(node.kind)).length,
+      spritesLimit: DS_HARDWARE_PROFILE.graphics2D.oamSpritesPerScreen,
+      spriteBytesUsed: images.reduce((sum, sprite) => sum + getSpriteByteSize(sprite), 0),
+      spriteBytesLimit: DS_HARDWARE_PROFILE.graphics2D.spriteMemoryBytesPerScreen,
+      spritePalettesUsed: images.length,
+      spritePalettesLimit: DS_HARDWARE_PROFILE.graphics2D.spritePalettesPerScreen
+    };
+  });
 
   // Recomputed from the geometry, not read from the node's stored count (which may predate a re-tessellation).
   // A mesh naming a model the project lacks counts nothing here; the compiler reports it as an error.
@@ -62,6 +89,10 @@ export function computeSceneBudget(
   const usedSoundIds = new Set(nodes.flatMap((node) => (node.audio?.soundId ? [node.audio.soundId] : [])));
   const soundBytesUsed = (sounds ?? []).filter((s) => usedSoundIds.has(s.id)).reduce((sum, s) => sum + getSoundByteSize(s), 0);
 
+  // In a 3D project (its root is a Node3D) a sprite that is drawn on the 2D screen takes a VRAM bank from the textures.
+  const spriteIds = new Set((sprites ?? []).map((sprite) => sprite.id));
+  const twoDHasSprites = root.kind === "Node3D" && nodes.some((node) => (node.kind === "Sprite2D" || node.kind === "AnimatedSprite2D") && node.visible && node.spriteId !== undefined && spriteIds.has(node.spriteId));
+
   return {
     perScreen,
     totalNodes: nodes.length,
@@ -70,7 +101,7 @@ export function computeSceneBudget(
     trianglesUsed,
     trianglesLimit: DS_HARDWARE_PROFILE.graphics3D.approxTrianglesPerFrame,
     textureBytesUsed,
-    textureBytesLimit: DS_HARDWARE_PROFILE.memory.textureMemoryBytes,
+    textureBytesLimit: textureMemoryLimit(twoDHasSprites),
     soundBytesUsed,
     soundBytesLimit: DS_HARDWARE_PROFILE.audio.soundMemoryBytes
   };

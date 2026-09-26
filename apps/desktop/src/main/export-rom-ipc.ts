@@ -1,7 +1,7 @@
 import { dialog, ipcMain } from "electron";
 import { dirname, join } from "node:path";
 import type { ExportRomResult, ProjectSnapshot } from "@goodstuff/core";
-import { compileProject, describeCompileResult, hasErrors, translateScene3D } from "@goodstuff/compiler";
+import { checkProject, compileProject, describeCompileResult, hasErrors } from "@goodstuff/compiler";
 
 import { PROJECT_IPC_CHANNELS } from "../shared/project-ipc-channels";
 import { createRomBuilder } from "./rom-builder-factory";
@@ -32,7 +32,7 @@ export function registerExportRomIpcHandler(): void {
         // Check the project before asking for a location, so a project that can't be built never
         // prompts for a place to put a ROM that won't exist.
         const builder = createRomBuilder();
-        if (hasErrors(translateScene3D(snapshot).diagnostics)) {
+        if (hasErrors(checkProject(snapshot))) {
           // compileProject stops on these same errors before any build, and words them for the log.
           return { outcome: "error", lines: describeCompileResult(await compileProject(snapshot, "", builder)) };
         }

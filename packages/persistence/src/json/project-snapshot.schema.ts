@@ -33,9 +33,27 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
     createdAt: { type: "string" },
     updatedAt: { type: "string" },
     scene: { $ref: "#/definitions/sceneNode" },
+    // The starting scene's id and name when they aren't the defaults, and the project's other scenes (see core's project-scenes.ts). That ids and names are unique and
+    // every scene's nodes are valid aren't expressible here; JsonSchemaProjectSnapshotValidator checks them.
+    sceneId: { type: "string", minLength: 1 },
+    sceneName: { type: "string", minLength: 1 },
+    scenes: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name", "scene"],
+        properties: {
+          id: { type: "string", minLength: 1 },
+          name: { type: "string", minLength: 1 },
+          scene: { $ref: "#/definitions/sceneNode" }
+        }
+      }
+    },
     meshes: { type: "array", items: { $ref: "#/definitions/importedMesh" } },
     textures: { type: "array", items: { $ref: "#/definitions/importedTexture" } },
     sounds: { type: "array", items: { $ref: "#/definitions/importedSound" } },
+    sprites: { type: "array", items: { $ref: "#/definitions/importedSprite" } },
     scripts: { type: "array", items: { $ref: "#/definitions/projectScript" } }
   },
   definitions: {
@@ -86,6 +104,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         primitive: { enum: ["cube", "sphere", "plane", "cylinder"] },
         importedMeshId: { type: "string", minLength: 1 },
         textureId: { type: "string", minLength: 1 },
+        color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
         triangleCount: { type: "number", minimum: 0 }
       },
       oneOf: [{ required: ["primitive"] }, { required: ["importedMeshId"] }]
@@ -102,7 +121,16 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         positions: { type: "array", items: { type: "number" } },
         normals: { type: "array", items: { type: "number" } },
         uvs: { type: "array", items: { type: "number" } },
-        indices: { type: "array", items: { type: "integer", minimum: 0 } }
+        indices: { type: "array", items: { type: "integer", minimum: 0 } },
+        frames: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["positions", "normals"],
+            properties: { positions: { type: "array", items: { type: "number" } }, normals: { type: "array", items: { type: "number" } } }
+          }
+        }
       }
     },
     // The texels are the picture already converted to the DS's 16-bit format (see core's imported-texture.ts).
@@ -132,6 +160,58 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         name: { type: "string" },
         sampleRate: { type: "integer", minimum: 1 },
         samples: { type: "string" }
+      }
+    },
+    // A sprite image: a 256-color paletted picture (see core's imported-sprite.ts). That the size is one the DS has a sprite for, that
+    // both strings are valid base64, that the pixel data is exactly width * height bytes, that the palette has 1..256 entries and every
+    // pixel's index is inside it, and that every Sprite2D's spriteId exists aren't expressible here; JsonSchemaProjectSnapshotValidator
+    // checks them.
+    importedSprite: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name", "width", "height", "palette", "pixels"],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        name: { type: "string" },
+        width: { type: "integer", minimum: 1 },
+        height: { type: "integer", minimum: 1 },
+        palette: { type: "string" },
+        pixels: { type: "string" },
+        // Present on a sprite sheet: the size of one frame (both, or neither; see core's imported-sprite.ts).
+        frameWidth: { type: "integer", minimum: 1 },
+        frameHeight: { type: "integer", minimum: 1 }
+      }
+    },
+    // A Label's text and color (see core's label.ts); a missing field is its default.
+    labelData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        text: { type: "string", maxLength: 96 },
+        color: { type: "integer", minimum: 0, maximum: 7 }
+      }
+    },
+    // The animations of an AnimatedSprite2D (see core's sprite-animation.ts). That names are unique and that every frame is in the sheet aren't expressible here;
+    // JsonSchemaProjectSnapshotValidator checks them.
+    spriteAnimationsData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        animations: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "frames", "fps", "loop"],
+            properties: {
+              name: { type: "string", minLength: 1 },
+              frames: { type: "array", minItems: 1, items: { type: "integer", minimum: 0 } },
+              fps: { type: "number", minimum: 1, maximum: 60 },
+              loop: { type: "boolean" }
+            }
+          }
+        },
+        start: { type: "string", minLength: 1 }
       }
     },
     // A script's source text (see core's project-script.ts). That ids are unique, names are non-empty and every
@@ -177,6 +257,48 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         radius: { type: "number", minimum: 0.01, maximum: 1000 },
         height: { type: "number", minimum: 0.01, maximum: 1000 },
         solid: { type: "boolean" }
+      }
+    },
+    // A Sprite2D's rotation (degrees) and scale (see core's sprite-transform.ts); a missing field is its default.
+    transform2D: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        rotation: { type: "number" },
+        scale: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            x: { type: "number", minimum: -8, maximum: 8 },
+            y: { type: "number", minimum: -8, maximum: 8 }
+          }
+        }
+      }
+    },
+    // A TouchArea2D's size in pixels, and a TouchArea3D's shape and size (see core's touch-area.ts); a missing field is its default.
+    touchArea2DData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        width: { type: "number", minimum: 1, maximum: 256 },
+        height: { type: "number", minimum: 1, maximum: 192 }
+      }
+    },
+    touchArea3DData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        shape: { enum: ["box", "sphere"] },
+        size: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            x: { type: "number", minimum: 0.01, maximum: 1000 },
+            y: { type: "number", minimum: 0.01, maximum: 1000 },
+            z: { type: "number", minimum: 0.01, maximum: 1000 }
+          }
+        },
+        radius: { type: "number", minimum: 0.01, maximum: 1000 }
       }
     },
     // An AnimationPlayer's animations (see core's animation.ts). That keys are in order and inside the length, that each value suits its property, that
@@ -240,6 +362,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
             "Label",
             "CollisionShape2D",
             "Area2D",
+            "TouchArea2D",
             "AudioStreamPlayer",
             "Node3D",
             "MeshInstance3D",
@@ -247,6 +370,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
             "DirectionalLight3D",
             "OmniLight3D",
             "CollisionShape3D",
+            "TouchArea3D",
             "AnimationPlayer"
           ]
         },
@@ -259,8 +383,15 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         light: { $ref: "#/definitions/lightData" },
         audio: { $ref: "#/definitions/audioPlayerData" },
         collision: { $ref: "#/definitions/collisionShapeData" },
+        touchArea2D: { $ref: "#/definitions/touchArea2DData" },
+        touchArea3D: { $ref: "#/definitions/touchArea3DData" },
         animation: { $ref: "#/definitions/animationPlayerData" },
-        scriptId: { type: "string", minLength: 1 }
+        scriptId: { type: "string", minLength: 1 },
+        spriteId: { type: "string", minLength: 1 },
+        instanceOf: { type: "string", minLength: 1 },
+        label: { $ref: "#/definitions/labelData" },
+        spriteAnimations: { $ref: "#/definitions/spriteAnimationsData" },
+        transform2D: { $ref: "#/definitions/transform2D" }
       }
     }
   }

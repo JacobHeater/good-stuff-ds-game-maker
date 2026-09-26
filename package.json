@@ -9,6 +9,7 @@
   },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "initialize": "pnpm install && powershell -ExecutionPolicy Bypass -File tools/ds-toolchain/setup-windows.ps1",
     "dev": "pnpm --filter @goodstuff/desktop dev",
     "build": "pnpm -r --filter=./packages/* build && pnpm --filter @goodstuff/desktop build",
     "typecheck": "pnpm -r typecheck",

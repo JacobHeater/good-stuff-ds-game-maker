@@ -2,13 +2,22 @@ import {
   animatableProperties,
   flattenSceneTree,
   isValueForProperty,
+  allSceneTrees,
+  getSpriteByteSize,
+  listScenes,
+  getSpriteFrames,
+  getSpritePixels,
   getTextureByteSize,
   isSoundSampleRate,
+  isSpriteSize,
   isTextureSize,
   MAX_SOUND_SAMPLE_RATE,
   MIN_SOUND_SAMPLE_RATE,
+  SPRITE_PALETTE_ENTRIES,
+  SPRITE_SIZE_LIST,
   type ImportedMesh,
   type ImportedSound,
+  type ImportedSprite,
   type ImportedTexture,
   type ProjectScript,
   type ProjectSnapshot,
@@ -77,6 +86,9 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     const vertexCount = Math.floor(model.positions.length / 3);
     if (model.uvs && model.uvs.length !== vertexCount * 2) issues.push(`${where}/uvs must have two numbers for every vertex`);
     if (model.indices.some((index) => index >= vertexCount)) issues.push(`${where}/indices refers to a vertex the model doesn't have`);
+    (model.frames ?? []).forEach((frame, f) => {
+      if (frame.positions.length !== model.positions.length || frame.normals.length !== model.positions.length) issues.push(`${where}/frames/${f} must have as many vertices and normals as the model`);
+    });
   });
   // Textures: a size the DS supports, texel data of exactly the right length, unique ids.
   const textures: ImportedTexture[] = project.textures ?? [];
@@ -121,6 +133,54 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     }
   });
 
+  // Sprite images: an exact DS sprite size, valid base64, one byte a pixel, a palette of 1..256 colors that every pixel's index fits in, unique ids.
+  const sprites: ImportedSprite[] = project.sprites ?? [];
+  const spriteIds = new Set<string>();
+  sprites.forEach((sprite, i) => {
+    const where = `/sprites/${i}`;
+    if (spriteIds.has(sprite.id)) issues.push(`${where} has the id "${sprite.id}", which another sprite image already uses`);
+    spriteIds.add(sprite.id);
+    if ((sprite.frameWidth === undefined) !== (sprite.frameHeight === undefined)) {
+      issues.push(`${where} has only one of frameWidth and frameHeight; a sprite sheet has both`);
+      return;
+    }
+    if (sprite.frameWidth !== undefined && sprite.frameHeight !== undefined) {
+      if (!isSpriteSize(sprite.frameWidth, sprite.frameHeight)) {
+        issues.push(`${where} has frames of ${sprite.frameWidth} x ${sprite.frameHeight}, but a frame must be one of ${SPRITE_SIZE_LIST}`);
+        return;
+      }
+      if (sprite.width % sprite.frameWidth !== 0 || sprite.height % sprite.frameHeight !== 0) {
+        issues.push(`${where} is ${sprite.width} x ${sprite.height}, which isn't a whole number of ${sprite.frameWidth} x ${sprite.frameHeight} frames`);
+        return;
+      }
+    } else if (!isSpriteSize(sprite.width, sprite.height)) {
+      issues.push(`${where} is ${sprite.width} x ${sprite.height}, but a sprite must be one of ${SPRITE_SIZE_LIST}`);
+      return;
+    }
+    const base64Bytes = (text: string): number | undefined => {
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(text) || text.length % 4 !== 0) return undefined;
+      const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+      return (text.length / 4) * 3 - padding;
+    };
+    const pixelBytes = base64Bytes(sprite.pixels);
+    const paletteBytes = base64Bytes(sprite.palette);
+    if (pixelBytes === undefined) issues.push(`${where}/pixels isn't valid base64`);
+    if (paletteBytes === undefined) issues.push(`${where}/palette isn't valid base64`);
+    if (pixelBytes === undefined || paletteBytes === undefined) return;
+    if (pixelBytes !== getSpriteByteSize(sprite)) {
+      issues.push(`${where}/pixels holds ${pixelBytes} bytes, but a ${sprite.width} x ${sprite.height} sprite needs ${getSpriteByteSize(sprite)}`);
+      return;
+    }
+    if (paletteBytes === 0 || paletteBytes % 2 !== 0 || paletteBytes / 2 > SPRITE_PALETTE_ENTRIES) {
+      issues.push(`${where}/palette holds ${paletteBytes} bytes, but it must hold 1 to ${SPRITE_PALETTE_ENTRIES} colors of two bytes each`);
+      return;
+    }
+    const entries = paletteBytes / 2;
+    if (getSpritePixels(sprite).some((index) => index >= entries)) {
+      issues.push(`${where}/pixels uses a palette index past the palette's ${entries} colors`);
+    }
+  });
+
   // Scripts: unique ids and non-empty names; every attachment names a script in the file.
   const scripts: ProjectScript[] = project.scripts ?? [];
   const scriptIds = new Set<string>();
@@ -139,6 +199,22 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     if (soundId !== undefined && !soundIds.has(soundId)) {
       issues.push(`Audio player "${node.name}" uses the sound "${soundId}", which isn't in the project file`);
     }
+    if (node.spriteId !== undefined && !spriteIds.has(node.spriteId)) {
+      issues.push(`Sprite "${node.name}" uses the image "${node.spriteId}", which isn't in the project file`);
+    }
+    if (node.spriteAnimations) {
+      const sheet = node.spriteId === undefined ? undefined : sprites.find((sprite) => sprite.id === node.spriteId);
+      const frameCount = sheet ? getSpriteFrames(sheet).count : undefined;
+      const names = new Set<string>();
+      for (const animation of node.spriteAnimations.animations ?? []) {
+        if (names.has(animation.name)) issues.push(`Animated sprite "${node.name}" has two animations called "${animation.name}"`);
+        names.add(animation.name);
+        const bad = frameCount === undefined ? undefined : animation.frames.find((frame) => frame >= frameCount);
+        if (bad !== undefined) issues.push(`Animation "${animation.name}" of "${node.name}" shows frame ${bad}, but the sheet has ${frameCount} frames`);
+      }
+      const start = node.spriteAnimations.start;
+      if (start !== undefined && !names.has(start)) issues.push(`Animated sprite "${node.name}" starts with the animation "${start}", which it doesn't have`);
+    }
     const id = node.mesh?.importedMeshId;
     if (id !== undefined && !ids.has(id)) issues.push(`Mesh "${node.name}" uses the imported model "${id}", which isn't in the project file`);
     const textureId = node.mesh?.textureId;
@@ -146,8 +222,27 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
       issues.push(`Mesh "${node.name}" uses the texture "${textureId}", which isn't in the project file`);
     }
   };
-  flattenSceneTree(project.scene).forEach(visit);
-  issues.push(...checkAnimations(project));
+  for (const tree of allSceneTrees(project)) {
+    flattenSceneTree(tree).forEach(visit);
+    // A track animates a node of its own scene, so each scene is checked on its own.
+    issues.push(...checkAnimations({ ...project, scene: tree }));
+  }
+  issues.push(...checkScenes(project));
+  return issues;
+}
+
+/** Scenes (requirements/scene-designer/STORY.multiple-scenes.md): every scene has a name a script can call it by, and names and ids are unique. */
+function checkScenes(project: ProjectSnapshot): string[] {
+  const issues: string[] = [];
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  for (const entry of listScenes(project)) {
+    if (entry.name.trim() === "") issues.push("A scene has no name");
+    else if (names.has(entry.name)) issues.push(`Two scenes are called "${entry.name}"`);
+    names.add(entry.name);
+    if (ids.has(entry.id)) issues.push(`Two scenes have the id "${entry.id}"`);
+    ids.add(entry.id);
+  }
   return issues;
 }
 

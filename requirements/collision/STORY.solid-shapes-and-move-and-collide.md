@@ -29,8 +29,8 @@ Choices I made without asking (say if any is wrong):
 - **The body stops a hair short of what it hits** (0.01 units) so it does not sit exactly touching, which the overlap test counts as overlapping.
 - **`move_and_collide` returns true if anything blocked it.** `is_on_floor()`, `is_on_wall()` and `is_on_ceiling()` report what the body's **last** move ran
   into: moving down into a solid is the floor, up is the ceiling, sideways is a wall. They stay set until the next move.
-- **A body that starts inside a solid shape is not stopped by what it is already in:** it moves freely until it is out (and then collides as usual), so it can
-  always get out. Start a player above the ground.
+- **A body that starts inside a solid shape can get out but not go deeper:** a move **up**, or any move that ends clear of every solid, is allowed; a move down or
+  sideways that would stay inside is refused like any blocked move (letting it through let a body pushed a little way into a floor sink through it). Start a player above the ground.
 - **Cost:** a move costs about one overlap check (about half a millisecond on the DS) for each of the body's shapes and each nearby solid shape, per axis,
   and about eight more per axis when it hits something. A few bodies against a level of a few dozen solid shapes is fine; the tests measure it.
 
@@ -81,6 +81,7 @@ Scenario: A body that starts inside a solid shape can get out
   Given a body overlapping a solid shape
   When it is moved by a step big enough to end clear of it
   Then it moves there (it is not held by what it is already in)
+  And a move up is allowed too, while a move down or sideways that stays inside is refused
 
 Scenario: What is not solid, hidden or the body's own does not stop it
   Given a shape that is not Solid, a hidden solid shape, and a body's own solid shape
@@ -118,6 +119,10 @@ Scenario: A whole game
 - **Through the editor:** `tests/prototypes/e2e/platformer.mjs` (4 checks) builds a level with a solid floor and wall, a player and the example script through the UI, and
   `GSDS_PLATFORMER_ROM_PROJECT=<path> pnpm test:rom` runs it in melonDS: the player falls onto the floor and stands (silhouette overlap 0.958 with the right picture against 0.854
   for still floating) and with Right held stops at the wall (0.967 against 0.908 for passing through it).
+- **`probe_solid(y, x0, x1, x2)`** (added for the Jenga script): asks which of three points under a body (given in the frame of its first collision shape, along the shape's longer horizontal side) lie inside a solid shape, as 1 + 2 + 4. Verified on the DS
+  (`collision-body.rom.test.ts`, 7 cases: floor, air, either end over an edge, a quarter turn, a Z-long lifted shape, a probe that stays inside the body) and in the checker and code generator (`solid.test.ts`).
+  Lets a script tell resting from balancing on one end; `tests/prototypes/scripts/jenga-block.gsscript` builds tipping on it.
+- **Speed work for many bodies** (Jenga): `compose_node` skips a node whose inputs haven't changed, `gs_shapes_overlap` tests two boxes with an exact separating-axis test instead of the search (agrees with the oracle on the random pairs), `angle_of` no longer divides 64-bit numbers. A move in a 30-block tower went from 7 ms to about 2 ms; a block mid-collapse from 60-100 ms to 0-22 ms. See `prompts/context.md` (Jenga collapse, round 2).
 - **Known limits:** near-touching is decided as for `overlaps()` (within a hair), plus the 0.01 skin; a body that is pushed into a solid by a *moving* solid shape is not pushed out
   (no moving platforms carry the player either); movement is in the body's own `position` axes (with a rotated parent it is that node's local axes); at most as many bodies per
   frame as the frame's time allows (about 0.6 to 0.9 ms each); no slopes or stairs step-up; no `is_on_*` for `overlaps()` shapes.

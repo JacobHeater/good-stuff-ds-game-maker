@@ -1,4 +1,4 @@
-import { createBlankSceneTree, createProjectSnapshot, findSceneNode, getAnimationPlayer, type AnimationProperty } from "@goodstuff/core";
+import { createBlankSceneTree, createProjectSnapshot, findSceneNode, getAnimationPlayer, listScenes, type AnimationProperty } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { createInitialState, editorReducer, hasUnsavedChanges, type Action, type EditorState } from "./editor-store";
@@ -245,7 +245,8 @@ describe("the Animation panel's own state", () => {
     const w = world();
     const s = run(w.state, create(w.player, "a1"), addTrack(w, "a1", "t1"), addKey(w, "a1", "t1", 0));
     const steps = s.history.past.length;
-    const saved = { ...s, project: { ...s.project!, scene: s.sceneRoot }, savedScripts: s.project!.scripts };
+    const savedProject = { ...s.project!, scene: s.sceneRoot };
+    const saved = { ...s, project: savedProject, savedScripts: s.project!.scripts, savedScenes: listScenes(savedProject) };
     const previewing = run(saved, { type: "ANIM_UI", change: { previewTime: 0.5 } }, { type: "ANIM_UI", change: { keyTime: 0, previewPlaying: true } });
     expect(previewing.history.past).toHaveLength(steps);
     expect(hasUnsavedChanges(previewing)).toBe(false);

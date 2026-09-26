@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 
-import type { DsScene3D } from "../ds-scene";
-import { writeSceneDataC, writeScriptCodeC } from "../scene-data-writer";
+import type { DsScene2D, DsScene3D } from "../ds-scene";
+import { writeScene2DDataC, writeSceneDataC, writeSceneTableC, writeScriptCodeFileC } from "../scene-data-writer";
 import type { BuildFileSystem, BuildRunner, ToolchainLocator } from "./ports";
 
 /**
@@ -20,6 +20,8 @@ export interface RomBuilderDeps {
   fs: BuildFileSystem;
   /** The checked-in C runtime (packages/compiler/runtime). Never modified: builds work on a copy. */
   runtimeDir: string;
+  /** The checked-in 2D runtime (packages/compiler/runtime2d). Defaults to the folder called `runtime2d` next to `runtimeDir`. */
+  runtimeDir2D?: string;
 }
 
 export interface BuildOptions {
@@ -62,8 +64,32 @@ function firstErrorLine(output: string): string | undefined {
 export class RomBuilder {
   constructor(private readonly deps: RomBuilderDeps) {}
 
-  async build(scene: DsScene3D, outputPath: string, options: BuildOptions = {}): Promise<RomBuildResult> {
-    const { locator, runner, fs, runtimeDir } = this.deps;
+  /** Builds a translated 3D scene (the 3D runtime and the files of a project with that one scene). */
+  build(scene: DsScene3D, outputPath: string, options: BuildOptions = {}): Promise<RomBuildResult> {
+    return this.buildScenes([scene], outputPath, options);
+  }
+
+  /**
+   * Builds the scenes of a 3D project (the starting scene first): each scene's data is a file of its own (`scene_data.c`, `scene_data_1.c`, ...), `scene_table.c` lists them and `script_code.c`
+   * holds every scene's scripts. The runtime starts in the first scene and a script's `change_scene` switches to another.
+   */
+  buildScenes(scenes: readonly DsScene3D[], outputPath: string, options: BuildOptions = {}): Promise<RomBuildResult> {
+    const files: Record<string, string> = { "scene_table.c": writeSceneTableC(scenes.length), "script_code.c": writeScriptCodeFileC(scenes) };
+    scenes.forEach((scene, index) => {
+      files[index === 0 ? "scene_data.c" : `scene_data_${index}.c`] = writeSceneDataC(scene, index);
+    });
+    return this.buildFrom(this.deps.runtimeDir, files, outputPath, options);
+  }
+
+  /** Builds a translated 2D scene (the 2D runtime and `scene2d_data.c`). */
+  build2D(scene: DsScene2D, outputPath: string, options: BuildOptions = {}): Promise<RomBuildResult> {
+    const runtimeDir2D = this.deps.runtimeDir2D ?? join(dirname(this.deps.runtimeDir), "runtime2d");
+    return this.buildFrom(runtimeDir2D, { "scene2d_data.c": writeScene2DDataC(scene) }, outputPath, options);
+  }
+
+  /** `sourceFiles` are written into the copy's `source` folder, by file name. */
+  private async buildFrom(runtimeDir: string, sourceFiles: Record<string, string>, outputPath: string, options: BuildOptions): Promise<RomBuildResult> {
+    const { locator, runner, fs } = this.deps;
 
     const lookup = await locator.locate();
     if (!lookup.found) {
@@ -74,8 +100,7 @@ export class RomBuilder {
     try {
       buildDir = await fs.makeTempDir("gsds-build-");
       await fs.copyDir(runtimeDir, buildDir);
-      await fs.writeText(join(buildDir, "source", "scene_data.c"), writeSceneDataC(scene));
-      await fs.writeText(join(buildDir, "source", "script_code.c"), writeScriptCodeC(scene));
+      for (const [name, contents] of Object.entries(sourceFiles)) await fs.writeText(join(buildDir, "source", name), contents);
 
       const result = await runner.run(
         { executable: lookup.toolchain.bashPath, args: ["-l", "-c", makeScript(toMsysPath(buildDir))] },

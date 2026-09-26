@@ -1,11 +1,17 @@
-import type { ImportedTexture, MeshInstance3DData, MeshPrimitive, SceneNode, ScreenId, Vector3 } from "@goodstuff/core";
+import { listScenes, withSceneTree } from "@goodstuff/core";
+import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type Vector3 } from "@goodstuff/core";
 import { findSceneNode, flattenSceneTree, getImportedTriangleCount, getLightIntensity, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry } from "@goodstuff/core";
 import { useEditorStore, type Transform3DField } from "../state/editor-store";
 import { AnimationPlayerField } from "./AnimationPlayerField";
 import { AudioPlayerField } from "./AudioPlayerField";
 import { CollisionShapeField } from "./CollisionShapeField";
+import { SpriteAnimationsField, SpriteSheetField } from "./AnimatedSpriteFields";
+import { SpriteTransformField } from "./SpriteTransformField";
+import { TouchArea2DField, TouchArea3DField } from "./TouchAreaFields";
+import { LabelField } from "./LabelFields";
 import { NameField } from "./NameField";
 import { ScriptField } from "./ScriptField";
+import { spriteDataUrl } from "../viewport/sprite-image";
 import { buttonClasses, Field, inputClasses } from "./inspector-fields";
 
 function Vector3Field({
@@ -128,6 +134,58 @@ function TextureField({
   );
 }
 
+/**
+ * A Sprite2D's picture: none, or one of the project's imported sprite images (256 colors, one of the DS's sprite sizes), plus a button
+ * that imports a PNG and puts it on this sprite. Shows the picture as the DS draws it.
+ */
+function SpriteImageField({
+  node,
+  sprites,
+  onChoose,
+  onImport
+}: {
+  node: SceneNode;
+  sprites: readonly ImportedSprite[];
+  onChoose: (spriteId: string | null) => void;
+  onImport: () => void;
+}): JSX.Element {
+  const current = node.spriteId;
+  const image = sprites.find((sprite) => sprite.id === current);
+  const missing = current !== undefined && image === undefined;
+  const url = image ? spriteDataUrl(image) : null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Field label="Image">
+        <select value={current ?? ""} onChange={(event) => onChoose(event.target.value === "" ? null : event.target.value)} className={inputClasses}>
+          <option value="">None</option>
+          {sprites.map((sprite) => (
+            <option key={sprite.id} value={sprite.id}>
+              {sprite.name} ({sprite.width} x {sprite.height})
+            </option>
+          ))}
+          {missing && (
+            <option value={current} disabled>
+              (missing image)
+            </option>
+          )}
+        </select>
+      </Field>
+      <button type="button" onClick={onImport} className={buttonClasses}>
+        Import PNG...
+      </button>
+      {image && url && (
+        <div className="flex items-center gap-2 text-[11px] text-editor-text-muted">
+          <img src={url} alt="" data-testid="sprite-preview" className="max-h-16 max-w-16 border border-editor-border bg-black/60" style={{ imageRendering: "pixelated" }} />
+          <span>
+            {image.width} x {image.height}, {getSpriteByteSize(image)} bytes of sprite memory
+          </span>
+        </div>
+      )}
+      {!image && !missing && <div className="text-[11px] text-editor-text-muted">No image: nothing is drawn for this sprite in the ROM.</div>}
+    </div>
+  );
+}
+
 /** The Mesh select's values: a primitive's own name, or `imported:` followed by a model's id. */
 const IMPORTED_PREFIX = "imported:";
 
@@ -147,7 +205,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, importTexture, setAudioSound, setAudioPlayer, setCollisionShape, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -171,13 +229,24 @@ export function InspectorPanel(): JSX.Element {
         Inspector
       </div>
       <div className="flex flex-col gap-3 overflow-y-auto p-3">
+        {state.extraSelectedIds.length > 0 && (
+          <div className="rounded border border-editor-border bg-editor-panel-alt px-2 py-1 text-[11px] text-editor-text-muted" data-testid="multi-selection-note">
+            {state.extraSelectedIds.length + 1} nodes are selected. This shows the one you clicked last; Delete, Duplicate and dragging in the Scene tree act on all of them.
+          </div>
+        )}
         <div>
           <NameField key={node.id} node={node} sameNameCount={sameNameCount} onRename={(name) => renameNode(node.id, name)} />
           <div className="mt-1 text-[11px] text-editor-text-muted">{node.kind}</div>
         </div>
 
         <Field label="Screen">
-          <select value={node.screen} className={inputClasses} disabled>
+          {/* In a 2D project each node is on the screen it says (the scene root excepted); in a 3D project a node's screen follows from what draws it. */}
+          <select
+            value={node.screen}
+            className={`${inputClasses} disabled:opacity-50`}
+            disabled={state.project?.mode !== "2D" || node.id === state.sceneRoot.id}
+            onChange={(event) => setNodeScreen(node.id, event.target.value as ScreenId)}
+          >
             {(["top", "bottom"] as ScreenId[]).map((screen) => (
               <option key={screen} value={screen}>
                 {screen}
@@ -191,6 +260,23 @@ export function InspectorPanel(): JSX.Element {
             <Vector3Field label="Position" value={node.transform3D.position} onChange={setField("position")} />
             <Vector3Field label="Rotation (deg)" value={node.transform3D.rotation} onChange={setField("rotation")} />
             <Vector3Field label="Scale" value={node.transform3D.scale} onChange={setField("scale")} />
+            {node.mesh && (
+              <div className="flex items-center gap-2" data-testid="mesh-color">
+                <label className="flex items-center gap-2 text-xs text-editor-text-muted">
+                  Color
+                  <input
+                    type="color"
+                    aria-label="Color"
+                    value={node.mesh.color ?? "#c1c1c1"}
+                    onChange={(event) => setMeshColor(node.id, event.target.value)}
+                    className="h-6 w-10 cursor-pointer rounded border border-editor-border bg-editor-panel-alt"
+                  />
+                </label>
+                <button type="button" className={buttonClasses} disabled={node.mesh.color === undefined} onClick={() => setMeshColor(node.id, null)}>
+                  Default
+                </button>
+              </div>
+            )}
             {node.mesh && (
               <Field label="Mesh">
                 <select
@@ -220,6 +306,7 @@ export function InspectorPanel(): JSX.Element {
             {node.kind === "CollisionShape3D" && (
               <CollisionShapeField key={node.id} node={node} onChange={(change) => setCollisionShape(node.id, change)} />
             )}
+            {node.kind === "TouchArea3D" && <TouchArea3DField key={node.id} node={node} onChange={(change) => setTouchArea3D(node.id, change)} />}
             {node.kind === "DirectionalLight3D" && (
               <IntensityField
                 intensity={getLightIntensity(node)}
@@ -269,6 +356,74 @@ export function InspectorPanel(): JSX.Element {
                 className={inputClasses}
               />
             </Field>
+          </div>
+        )}
+
+        {node.kind === "Label" && <LabelField key={node.id} node={node} onChange={(change) => setLabel(node.id, change)} />}
+
+        {node.kind === "TouchArea2D" && <TouchArea2DField key={node.id} node={node} onChange={(change) => setTouchArea2D(node.id, change)} />}
+
+        {(node.kind === "Sprite2D" || node.kind === "AnimatedSprite2D") && <SpriteTransformField key={`transform-${node.id}`} node={node} onChange={(change) => setSpriteTransform(node.id, change)} />}
+
+        {node.kind === "MeshInstance3D" && node.mesh && getMeshFrameCount(node.mesh, state.project?.meshes) > 1 && (
+          <SpriteAnimationsField
+            key={`animations-${node.id}`}
+            node={node}
+            sheet={undefined}
+            poseCount={getMeshFrameCount(node.mesh, state.project?.meshes)}
+            onAdd={() => addSpriteAnimation(node.id)}
+            onChange={(index, change) => setSpriteAnimation(node.id, index, change)}
+            onRemove={(index) => removeSpriteAnimation(node.id, index)}
+            onStart={(name) => setSpriteStartAnimation(node.id, name)}
+          />
+        )}
+
+        {node.kind === "AnimatedSprite2D" && (
+          <>
+            <SpriteSheetField
+              node={node}
+              sprites={state.project?.sprites ?? []}
+              onChoose={(spriteId) => setSpriteImage(node.id, spriteId)}
+              onImport={(frame) => void importSprite(node.id, frame)}
+            />
+            <SpriteAnimationsField
+              key={`animations-${node.id}`}
+              node={node}
+              sheet={state.project?.sprites?.find((sprite) => sprite.id === node.spriteId)}
+              onAdd={() => addSpriteAnimation(node.id)}
+              onChange={(index, change) => setSpriteAnimation(node.id, index, change)}
+              onRemove={(index) => removeSpriteAnimation(node.id, index)}
+              onStart={(name) => setSpriteStartAnimation(node.id, name)}
+            />
+          </>
+        )}
+
+        {node.kind === "Sprite2D" && (
+          <SpriteImageField
+            node={node}
+            sprites={state.project?.sprites ?? []}
+            onChoose={(spriteId) => setSpriteImage(node.id, spriteId)}
+            onImport={() => void importSprite(node.id)}
+          />
+        )}
+
+        {node.instanceOf !== undefined && (
+          <div className="flex flex-col gap-1.5 rounded border border-editor-border p-2 text-[11px] text-editor-text-muted" data-testid="scene-instance-field">
+            {(() => {
+              const source = state.project ? listScenes(withSceneTree(state.project, state.activeSceneId, state.sceneRoot)).find((scene) => scene.id === node.instanceOf) : undefined;
+              return source ? (
+                <>
+                  <span>
+                    An instance of the scene <strong className="text-editor-text">{source.name}</strong>. Everything in it comes from that scene: change the scene and every instance changes. Move, turn or scale this node to place them all.
+                  </span>
+                  <button type="button" className={buttonClasses} data-testid="open-instance-scene" onClick={() => switchScene(source.id)}>
+                    Open scene "{source.name}"
+                  </button>
+                </>
+              ) : (
+                <span className="text-red-400">The scene this was an instance of isn't in the project any more, so nothing is shown or built for it.</span>
+              );
+            })()}
           </div>
         )}
 

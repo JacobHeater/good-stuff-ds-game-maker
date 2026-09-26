@@ -1,0 +1,392 @@
+# A Jenga block: it falls under gravity, rests on whatever holds it, goes over when it isn't held properly, and you can drag it with the stylus.
+#
+# Set-up in the editor (the way the Jenga project is built):
+#   1. A MeshInstance3D named JengaBlock, Scale 1, Rotation 0, with this script attached. Its origin can be anywhere (the block's underside is fine).
+#   2. A CollisionShape3D box named JengaCollision under it, Solid turned on, LONGER IN Z THAN IN X (0.6 x 0.3 x 1.8 here) and lifted so it sits on the block.
+#      To lay a layer across the one below, turn the JengaCollision 90 (or -90) about Y, not the block: the script reads that turn.
+#      Set shape_lift, half_length and half_height below to the shape's numbers (its Y position, half its length in Z, half its height).
+#   3. A TouchArea3D named JengaTouch under the block, a box a little bigger than the block so a fingertip finds it easily.
+#   4. Solid CollisionShape3D nodes (Solid turned on) for the table.
+#   5. One Node3D named Tower, anywhere in the scene. It is not a thing in the game: the blocks use it to talk to each other (they keep a count of how many blocks
+#      are moving in its position.y, and a "the tower is coming down" flag in its position.x). Leave it at 0, 0, 0.
+#   To have many blocks: build one, attach the script, then duplicate it (Ctrl+D). Each copy keeps its own children, and `$JengaTouch` and `$JengaCollision`
+#   mean the ones under THAT block.
+#   The 3D scene must be on the BOTTOM screen (the touch screen): in the project's toolbar set "2D screen" to Top.
+#
+#   Stylus  touch a block and drag it across the table. Only ONE block is picked up at a time. Let go and it drops.
+#   B       put the block back where it started.
+#
+# How it behaves. Every block starts by settling: it falls onto whatever is under it. Then it looks at what holds it (every check_interval seconds, each block at
+# its own moment): three points just below its underside (near each end, and the middle), taken along the shape's longer side.
+#   - Both ends are held, or the middle and an end: it stays put (asleep: it does nothing but count down to its next look).
+#   - Only one end is held: the centre is over nothing, so it goes over: it TIPS about the held end and the other end drops.
+#   - Only the middle is held: it is BALANCED on one block, and that is not stable: it goes over the edge of the block under it, toward the side that just
+#     lost its support (a hash of its height when that isn't known, so a whole layer goes the same way).
+#   - Nothing under it: it falls.
+#   Going over is a tip when nothing is on top of the block. A block with something resting on it can't tip (the side that rose would push up into what is on it),
+#   so it SLIDES out from under its load along its length instead.
+#   A tipping block that its far end doesn't catch (past tip_limit), a sliding block that comes off its support and one that loses its support LET GO: they carry the
+#   motion they had (drifting the way they were going, and turning end over end) and fall, skid and tumble across whatever is below. A turn is refused when it would push a
+#   corner into something, so a tumbling block bounces off what it hits instead of sinking into it. A block that has slowed down is looked at again like any other:
+#   still not held properly, it goes over some more; held, it sleeps.
+#   The load above a block that has gone loses its support and lets go in its turn: that is how a tower comes down.
+#   When collapse_count blocks are moving at once the tower is COMING DOWN: every block that is still at rest is thrown outward, popping up and spinning, all at
+#   once. Pulling one block out, or a block or two toppling, doesn't do this; several going together does.
+#
+# What it costs on the DS (measured): a look is one probe_solid call, about 0.5 to 0.8 ms with 50 solid blocks in the scene. A block that is moving also pays for
+# move_and_collide, about 0.6 to 1.6 ms, and a turn in the air a second one: a tower that is coming down is slower than one standing still.
+
+var gravity = -30.0         # units/s^2, downward
+var max_fall = 30.0         # the fastest it falls, so it can't skip through a floor
+var shape_lift = 0.2609     # how far up the collision shape's centre is from the block's origin
+var half_length = 0.9       # half of the shape's length (its Z)
+var half_height = 0.15      # half of the shape's height
+var balance_reach = 0.3     # half the width of the block under a block that is balanced on it: the edge it tips over
+var end_inset = 0.15        # the end probes sit this far in from each end: a block must rest on more than its very tip to count as held
+var look_below = 0.06       # how far under the underside to look for support (the physics body rests 0.01 above what holds it)
+var tip_start = 40.0        # degrees/s a tip starts at
+var tip_accel = 900.0       # degrees/s^2 it speeds up at (a long block pivoting on its end)
+var max_spin = 80.0         # the fastest a tip turns, degrees/s: about 3 degrees a frame, so the far end moves under 0.06 a frame and the next look sees it touch what it lands on (a tip is placed, not collision-tested)
+var tip_limit = 45.0        # tipped this far and still not caught: it lets go of the edge
+var slide_start = 1.0       # units/s a slide starts at
+var slide_accel = 5.0       # units/s^2 it speeds up at
+var max_slide = 2.5         # the fastest it slides: a block pulled out from under a tower is thrown out, but not off the table
+var calm = 1.0              # seconds after the scene starts during which blocks only settle (a block that decides what to do before the blocks above it have landed decides wrongly)
+var slide_look = 0.1        # seconds between the looks of a block that is sliding (it looks every frame while tipping)
+var launch_push = 1.2       # units/s a block that lets go of a tip drifts at, the way it is falling
+var launch_spin = 220.0     # degrees/s a block that lets go starts turning at
+var collapse_count = 4.0    # this many blocks moving at once (after the first calm second) and the whole tower comes down
+var blow_speed = 2.0        # how hard a resting block is thrown outward when the tower comes down (units/s, more the farther it is from the middle of the table)
+var blow_pop = 1.0          # units/s upward that goes with it
+var impact_speed = 2.5      # a block landing faster than this (units/s: a fall of about 0.1) is shaken by the impact
+var impact_kick = 1.4       # units/s of sideways speed, up to, that the impact gives it (in a direction that looks random), and some spin: what knocks a stack off its true
+var bounce = 0.3            # how much of its speed a block keeps when it hits a wall, or a turn is refused
+var ground_friction = 5.0   # 1/s: how fast a block skidding on something slows down
+var rest_speed = 0.35       # a block skidding slower than this (units/s) and turning slower than 25 degrees/s has stopped
+var settle_lift = 0.05      # a block that stops tipping is lifted this much and dropped again, so a corner that went a little into what it landed on comes out
+var check_interval = 0.2    # seconds between the looks of a block that is at rest: the shorter, the faster a collapse spreads, and the more it costs (a look is about 0.5 ms)
+var max_drag_step = 0.4     # the most the block follows the stylus in one frame: a fast flick can't teleport it through the tower
+
+var mode = 1                # 0 = at rest, 1 = falling / skidding / tumbling, 2 = tipping about a held end or an edge, 3 = sliding out from under a load
+var vx = 0.0                # the sideways speed it carries while it falls and skids (units/s, world X and Z)
+var vy = 0.0                # falling speed (units/s)
+var vz = 0.0
+var spin = 0.0              # how fast it is turning about its cross axis (degrees/s, with a sign), or, sliding, how fast it slides (units/s)
+var slide_side = 0.0        # sliding toward the shape's +Z end (+1) or its -Z end (-1)
+var pivot = 0.0             # where along the shape's length (from its centre) it is tipping about: an end that is held, or the edge of the one block it is balanced on
+var tilt_sign = 0.0         # which way it is tipping: +1 raises the shape's +Z end, -1 lowers it
+var last_held = 0           # what held it at its previous look (1 = the -Z end, 2 = middle, 4 = the +Z end, added up)
+var joined = false          # this block has been thrown by the collapse that is going on (it is thrown once per collapse)
+var gone = false            # this block has fallen off the table for good: it is out of the game and does nothing more
+var gone_depth = 20.0       # how far below where it started a block has to be to be gone
+var timer = 0.0             # counts down to the next look while at rest
+var age = 0.0               # seconds since the scene started
+var roof_timer = 0.0        # counts down to the next look at what is on top of a block that is tipping
+var start_x = 0.0
+var start_y = 0.0
+var start_z = 0.0
+
+# Which way the block lies, read from the turn of its collision shape: the horizontal direction of the shape's +Z end (dir_x, dir_z), and how a tilt of the
+# block (its +Z end going up) is written into rotation.x and rotation.z.
+var dir_x = 0.0
+var dir_z = 1.0
+var tilt_x_scale = -1.0
+var tilt_z_scale = 0.0
+var tilt = 0.0              # the block's tilt in degrees, and its sin and cos, kept so a frame doesn't work them out again
+var tilt_sin = 0.0
+var tilt_cos = 1.0
+
+var dragging = false        # the stylus is holding the block
+var drag_y = 0.0            # height of the flat plane the block is dragged along (its own height when it was picked up)
+var grab_dx = 0.0           # where on the block the stylus took hold, so the block doesn't jump to centre under the stylus
+var grab_dz = 0.0
+
+# Changes what the block is doing, keeping the count of moving blocks on the Tower node (position.y) and clearing the collapse flag (position.x) when nothing moves.
+func set_mode(m: int):
+    if mode == 0 and m != 0:
+        $Tower.position.y = $Tower.position.y + 1.0
+    elif mode != 0 and m == 0:
+        var left = $Tower.position.y - 1.0
+        if left < 0.0:
+            left = 0.0
+        $Tower.position.y = left
+        if left < 2.0:
+            $Tower.position.x = 0.0
+    mode = m
+
+# The tower is coming down and this block was at rest: it is thrown outward (away from the middle of the table, and a little at random) and upward, spinning.
+func blow():
+    joined = true
+    set_mode(1)
+    var a = sin(age * 53.0 + position.x * 83.0 + position.y * 19.0)
+    var b = cos(age * 67.0 + position.z * 71.0 + position.y * 29.0)
+    vx = (position.x * 1.5 + a * 0.6) * blow_speed
+    vz = (position.z * 1.5 + b * 0.6) * blow_speed
+    vy = blow_pop * (0.5 + 0.5 * a * b)
+    spin = a * b * launch_spin
+
+# Tips the block to `angle` degrees about its cross axis (and remembers the sin and cos).
+func set_tilt(angle: float):
+    tilt = angle
+    rotation.x = tilt_x_scale * angle
+    rotation.z = tilt_z_scale * angle
+    tilt_sin = sin(angle)
+    tilt_cos = cos(angle)
+
+func _ready():
+    start_x = position.x
+    start_y = position.y
+    start_z = position.z
+    var shape_yaw = $JengaCollision.rotation.y
+    if abs(shape_yaw) > 45.0:
+        # Laid along X.
+        dir_x = 1.0
+        if shape_yaw < 0.0:
+            dir_x = -1.0
+        dir_z = 0.0
+        tilt_x_scale = 0.0
+        tilt_z_scale = dir_x
+    $Tower.position.y = $Tower.position.y + 1.0   # it starts out settling, which is moving
+    # Blocks look at different moments, so a tower doesn't do all its looking in the same frame.
+    timer = check_interval * (0.5 + 0.5 * sin(position.x * 57.0 + position.y * 31.0 + position.z * 17.0))
+
+func reset_block():
+    position.x = start_x
+    position.y = start_y
+    position.z = start_z
+    set_tilt(0.0)
+    vx = 0.0
+    vy = 0.0
+    vz = 0.0
+    spin = 0.0
+    dragging = false
+    set_mode(1)
+
+# Turns the block to `new_tilt` degrees about the point of it that is `reach` along the shape's length and `rise` above the block's origin: that point stays put.
+func tilt_about(reach: float, rise: float, new_tilt: float):
+    var along = reach * tilt_cos - rise * tilt_sin
+    var up = reach * tilt_sin + rise * tilt_cos
+    var pivot_x = position.x + dir_x * along
+    var pivot_y = position.y + up
+    var pivot_z = position.z + dir_z * along
+    set_tilt(new_tilt)
+    along = reach * tilt_cos - rise * tilt_sin
+    up = reach * tilt_sin + rise * tilt_cos
+    position.x = pivot_x - dir_x * along
+    position.y = pivot_y - up
+    position.z = pivot_z - dir_z * along
+
+# The block lets go of whatever it was tipping or sliding on and falls, carrying the motion it had: a slide goes on the way it was going, a tip drifts the way the
+# block was falling and goes on turning the way it was tipping. A block that is falling already keeps what it has.
+func release():
+    if mode == 3:
+        vx = dir_x * slide_side * spin
+        vz = dir_z * slide_side * spin
+        spin = -slide_side * launch_spin * 0.5   # the end that is over nothing dips
+    elif mode == 2:
+        vx = -dir_x * tilt_sign * launch_push
+        vz = -dir_z * tilt_sign * launch_push
+        spin = tilt_sign * launch_spin
+    set_mode(1)
+
+# The block starts to go over. `side` is the way it goes (+1 toward the shape's +Z end, -1 toward its -Z end) and `edge` how far along its length (from its
+# centre, signed) it would tip about. Unloaded, it tips: the far end drops, the near end rises. With something on top of it the rising side would push up into
+# the load, so it slides out from under it instead. One that is already going keeps the speed it has built up.
+func go_over(side: float, edge: float):
+    if mode == 2 or mode == 3:
+        return
+    if age < calm:
+        # Still settling: the blocks above may not have landed yet. It sleeps and looks again.
+        set_mode(0)
+        vx = 0.0
+        vy = 0.0
+        vz = 0.0
+        spin = 0.0
+        return
+    var reach = half_length - end_inset
+    var roof = probe_solid(half_height + look_below, -reach, 0.0, reach)   # what is on top of it, at the same three places
+    if roof == 0:
+        set_mode(2)
+        spin = tip_start
+        tilt_sign = -side
+        pivot = edge
+        roof_timer = 0.12
+    else:
+        set_mode(3)
+        spin = slide_start
+        slide_side = side
+
+# Looks at what holds the block and picks what it does next.
+func look():
+    var reach = half_length - end_inset
+    var held = probe_solid(-(half_height + look_below), -reach, 0.0, reach)   # 1 = the -Z end, 2 = middle, 4 = the +Z end, added up
+    timer = check_interval
+    if held == 0:
+        release()   # nothing holds it: it falls (from a tip or a slide, carrying the motion it had)
+    elif held == 1:
+        go_over(1.0, -reach)          # held at the -Z end: that end stays and the +Z end drops
+    elif held == 4:
+        go_over(-1.0, reach)
+    elif held == 2:
+        if mode == 0 or mode == 1:
+            # Balanced on one block: it goes over the edge of that block on the side that lost its support most recently. Whichever end it had held before
+            # is the one that has gone; if it had neither (or both), a hash of its height decides, so blocks of one layer go the same way.
+            var toward = sin(position.y * 137.0)
+            if last_held == 4 or last_held == 6:
+                toward = 1.0
+            elif last_held == 1 or last_held == 3:
+                toward = -1.0
+            if toward >= 0.0:
+                go_over(1.0, balance_reach)
+            else:
+                go_over(-1.0, -balance_reach)
+    else:
+        # Both ends are held, or the middle and an end: it stays. A block that has been tipping may have gone a little way into what it landed on (a tip is
+        # placed, not collision-tested, and a body inside a solid shape can't go down or sideways): it is lifted a hair and dropped again onto its supports.
+        spin = 0.0
+        vx = 0.0
+        vy = 0.0
+        vz = 0.0
+        slide_side = 0.0
+        if mode == 2:
+            position.y += settle_lift
+            set_mode(1)
+        else:
+            set_mode(0)
+    if mode == 3:
+        timer = slide_look
+    last_held = held
+
+func _process(delta):
+    age += delta
+    if gone:
+        return
+    if Input.is_button_pressed("b"):
+        reset_block()
+
+    # Several blocks moving at once: the tower is coming down. Every block at rest is thrown, once.
+    if $Tower.position.x < 0.5:
+        joined = false
+    elif age > calm and mode == 0 and not dragging and not joined:
+        blow()
+    if age > calm and $Tower.position.x < 0.5 and $Tower.position.y >= collapse_count:
+        $Tower.position.x = 1.0
+
+    # Pick the block up: the stylus went down on its touch area. Remember where on the flat plane through the block the stylus points,
+    # relative to the block, so the block stays under the same spot of the stylus while it is dragged.
+    if $JengaTouch.is_touch_pressed():
+        dragging = true
+        drag_y = position.y
+        grab_dx = position.x - Input.touch_ground_x(drag_y)
+        grab_dz = position.z - Input.touch_ground_z(drag_y)
+        set_tilt(0.0)
+        vx = 0.0
+        vy = 0.0
+        vz = 0.0
+        spin = 0.0
+
+    # Let go when the stylus is lifted: it falls until something holds it.
+    if dragging and not Input.is_touching():
+        dragging = false
+        set_mode(1)
+
+    if dragging:
+        # Follow the stylus along the plane: move toward where it points (in steps of at most max_drag_step), stopped by solid shapes.
+        var step_x = clamp(Input.touch_ground_x(drag_y) + grab_dx - position.x, -max_drag_step, max_drag_step)
+        var step_z = clamp(Input.touch_ground_z(drag_y) + grab_dz - position.z, -max_drag_step, max_drag_step)
+        move_and_collide(step_x, 0.0, step_z)
+        return
+
+    if mode == 0:
+        # At rest: nothing moves and nothing is tested; every so often look again in case what held it has gone.
+        timer -= delta
+        if timer <= 0.0:
+            look()
+        return
+
+    if mode == 3:
+        # Sliding out from under its load along its length, faster and faster; every so often it looks to see whether it is held again or has come off.
+        spin = min(spin + slide_accel * delta, max_slide)
+        var travel = slide_side * spin * delta
+        move_and_collide(dir_x * travel, 0.0, dir_z * travel)
+        timer -= delta
+        if timer <= 0.0:
+            look()
+        return
+
+    if mode == 2:
+        # Tipping about a held end or an edge: it turns faster and faster, and the far end drops.
+        roof_timer -= delta
+        if roof_timer <= 0.0:
+            roof_timer = 0.12
+            var reach = half_length - end_inset
+            if probe_solid(half_height + look_below, -reach, 0.0, reach) != 0:
+                # Something has come to rest on top of it: a tip would push its rising side up into that. It goes back down and slides out from under it instead.
+                tilt_about(pivot, shape_lift - half_height, 0.0)
+                set_mode(3)
+                spin = slide_start
+                slide_side = -tilt_sign
+                return
+        spin = min(spin + tip_accel * delta, max_spin)
+        tilt_about(pivot, shape_lift - half_height, tilt + tilt_sign * spin * delta)
+        if abs(tilt) > tip_limit and tilt * tilt_sign > 0.0:
+            release()   # too far to be caught
+        else:
+            look()
+        return
+
+    # Falling, skidding or tumbling: gravity pulls it down, it goes on the way it was going, and it turns.
+    if position.y < start_y - gone_depth:
+        # Off the table and still falling: it is out of the game (it would count as a moving block for ever).
+        gone = true
+        set_mode(0)
+        return
+    vy = max(vy + gravity * delta, -max_fall)
+    move_and_collide(vx * delta, vy * delta, vz * delta)
+    var landed = is_on_floor()
+    if is_on_wall():
+        vx = -vx * bounce
+        vz = -vz * bounce
+    if spin != 0.0:
+        # A turn about its centre, refused when it would push a corner into something: a move down of a hair is refused exactly when the block touches or is
+        # inside something. Turned back, it bounces.
+        var before = tilt
+        tilt_about(0.0, shape_lift, tilt + spin * delta)
+        move_and_collide(0.0, -0.003, 0.0)
+        if is_on_floor():
+            tilt_about(0.0, shape_lift, before)
+            spin = -spin * bounce
+        else:
+            position.y += 0.003
+    if landed:
+        # On something: it stops falling and skids to a stop. A hard landing knocks it sideways and sets it turning a little, so blocks that land on one another
+        # end up out of true, some of them held badly, and a fall through a tower stirs it up instead of restacking it neatly.
+        if vy < -impact_speed:
+            var shake = sin(age * 97.0 + position.x * 41.0 + position.z * 29.0)
+            var shake2 = cos(age * 71.0 + position.z * 37.0 + position.y * 23.0)
+            vx += shake * impact_kick
+            vz += shake2 * impact_kick
+            spin += shake * shake2 * launch_spin * 0.3
+        vy = 0.0
+        var keep = max(1.0 - ground_friction * delta, 0.0)
+        vx *= keep
+        vz *= keep
+        spin *= keep
+        if abs(vx) + abs(vz) < rest_speed and abs(spin) < 25.0:
+            vx = 0.0
+            vz = 0.0
+            spin = 0.0
+            look()
+            if mode == 1:
+                # It has come to rest on something the three probes don't see: an edge under its very tip, or a corner of a tilted block. It goes over that
+                # edge: the way it was tilted, or the way it was sliding, or the way a hash of its height says.
+                var fall_side = slide_side
+                if tilt > 0.0:
+                    fall_side = 1.0
+                elif tilt < 0.0:
+                    fall_side = -1.0
+                elif fall_side == 0.0:
+                    fall_side = 1.0
+                    if sin(position.y * 137.0) < 0.0:
+                        fall_side = -1.0
+                go_over(fall_side, -fall_side * (half_length - 0.05))

@@ -20,10 +20,11 @@ the editor the way Godot surfaces target-platform limits.
 - `packages/persistence` (`@goodstuff/persistence`) — SOLID project
   persistence layer (serialization, validation, file I/O). No UI/Electron
   deps; consumed by `apps/desktop`'s main process (see below).
-- `packages/compiler` (`@goodstuff/compiler`) — compiles a saved 3D project into
+- `packages/compiler` (`@goodstuff/compiler`) — compiles a saved project into
   a Nintendo DS ROM: pure translation to DS-format scene data, diagnostics, a
   build driver that runs the devkitPro toolchain, a CLI, and the hand-written C
-  runtime under `runtime/`. Depends only on core. See the `compiler` entry below.
+  runtimes: `runtime/` (3D projects) and `runtime2d/` (2D projects, sprites only so far). Depends only on core.
+  See the `compiler` entry below.
 - `tools/ds-toolchain/` — Windows scripts to install and use devkitPro and melonDS.
 - `tests/prototypes/` — the kept, hand-rolled verification scripts (editor E2E incl. the sound player measured on real audio,
   recent-projects store, a UI-authored-scene generator). Not in the workspace.
@@ -126,6 +127,23 @@ SceneTreePanel + FileSystemPanel (left dock), a center viewport + BottomPanel
     fixed *internal* resolution via fractional dpr. If resolution work
     comes up again, don't reintroduce a second canvas/preview — the
     fractional-dpr technique is the right one.
+- **Keyboard shortcuts** (`packages/ui/src/editor/state/keyboard-shortcuts.ts`, pure `resolveShortcut(event, context)`, 10 unit tests; one window `keydown`
+  listener in `editor-store.tsx` reads the latest state from a ref and runs the command). **Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y** undo/redo/redo; **Ctrl+S** save (no dialog when the
+  project has a file), **Ctrl+Shift+S** save as, **Ctrl+O** open, **Ctrl+Shift+E** export ROM, **F5** play; **Ctrl+D** duplicate, **Delete/Backspace** delete, **F2** rename
+  (focuses the Inspector's Name field, text selected), **Escape** select the scene root, **Arrow keys** nudge the selected 2D node 1 px (**Shift** 8 px; a quick burst is
+  one undo step); **Ctrl+1/2/3** the viewport / Script / Game tab; Q/W/E/R (3D tools) stay in `WorkspaceToolbar.tsx`. Cmd counts as Ctrl. Rules: nothing with no project open or
+  behind the unsaved-changes prompt; the node shortcuts (duplicate, delete, rename, Escape, arrows) only on the 2D/3D workspaces and never on the scene root (rename excepted);
+  typing keys (Delete, Backspace, arrows, Escape, Ctrl+D) belong to an input/select/textarea/code editor when it has focus, while Ctrl+S/O/Shift+E/F5/1-3 still work there;
+  the code editor keeps its own Ctrl+Z/Y. Menu items show the hint: **`MenuItem`'s shortcut is drawn by CSS from `data-shortcut`** (plus `aria-keyshortcuts`), so a menu button's
+  text is just its label; the E2E scripts click buttons by exact text, which broke when the hint was ordinary text (tests read the hint from `data-shortcut`). The old separate Ctrl+Z
+  and Delete handlers were folded into this. Verified by `tests/prototypes/e2e/shortcuts.mjs` (9 checks) and `delete-key.mjs` (7), with `undo-redo`, `e2e`, `sprite-image`,
+  `texture-mesh`, `script-editor` and `transform-tools` re-run. Not built: copy/paste, cut, select-all, tree navigation with the arrow keys, F5 verified only by unit test.
+- **Node icons** (`packages/ui/src/editor/node-icons.ts`, `NodeIcon.tsx`): each node kind has an emoji glyph in `NODE_KIND_ICON`, and a kind
+  can have a drawn 32 x 32 PNG instead, listed in `NODE_KIND_ICON_IMAGE` (files in `editor/icons/`, named after the kind). `NodeIcon` shows the image
+  (16 px; 20 px on viewport markers) or falls back to the glyph, in the Scene Tree, the Scene menu and the 2D viewport. Only **Area2D** has a
+  drawn icon so far (the owner's `Area.png`; `Hand.png` became the TouchArea2D and TouchArea3D icon). **App logo** (`Logo.png`, 32 x 32):
+  shown left of the title in the menu bar (`editor/icons/Logo.png`, `MenuBar.tsx`) and set as the window/taskbar icon (`apps/desktop/resources/icon.png`, imported in
+  `main/index.ts` with electron-vite's `?asset`). Not done: the packaged `.exe`/installer icon, which needs `apps/desktop/build/icon.png` (512 x 512 or larger) or `.ico`.
 
 ## Domain model (`packages/core`)
 - `SceneNode` tree, Godot-Node-like, tagged 2D or 3D via `SceneNodeKind`
@@ -428,7 +446,7 @@ version — this is a summary, not a substitute):
   export shows flat grey (camera inside the cube) — not a compiler bug. Done: Spike, the IR/translation Task, the runtime Task, the build
   driver Task, `STORY.compile-3d-scene-to-nds-rom.md`,
   `STORY.compile-diagnostics-for-unsupported-content.md`, Export ROM. `proposed`: 2D
-  (`STORY.compile-2d-scene-to-nds-rom.md`, blocked on image assets).
+  (`STORY.compile-2d-scene-to-nds-rom.md`, now `in-progress`: sprites are built, see "2D sprites" below).
   **Conventions pinned by building and looking** (full list in the Spike):
   matrices are 16 x f32 (20.12) column-major; rotation is three.js Euler `XYZ`
   (`Rx·Ry·Rz`), node transform `T·R·S`; vertices v16 (4.12, ~±8) with unit-sized
@@ -534,6 +552,713 @@ version — this is a summary, not a substitute):
   the `textured` fixture is sampled for color at 8 quadrant centers (fails if the picture is wrong). Not built: palettes,
   keeping the original PNG, per-material textures, 2D sprites. Not verified: sampled colors on the sphere/cylinder,
   memory fragmentation near 512 KB.
+- **2D sprites** (`scene-designer/STORY.import-sprite-image.md`, done; tasks `persistence/TASK.embed-imported-sprites-in-project-file.md`,
+  `compiler/TASK.compile-2d-sprites.md`; the old `SPIKE.sprite-image-import.md` is `done`; `compiler/STORY.compile-2d-scene-to-nds-rom.md` is `in-progress`).
+  **This is the first slice of "2D making": a 2D project now compiles to a ROM that draws its `Sprite2D` images on both screens.**
+  Decisions with the owner: first slice = sprite images end to end; **256-color paletted** images (index 0 transparent, so 255 visible colors);
+  **only the DS's twelve sprite sizes** (8x8 ... 64x64 plus the wide and tall ones; a 64x16 is refused), never resized. I chose: more than 255
+  colors is **reduced (median cut) with a warning**, not refused; alpha >= 128 is opaque; **one of the sprite engine's 16 extended palettes per
+  distinct image per screen** (so at most 16 different images a screen, unlimited sprites up to 128 share them; 4-bit sprites not built);
+  128 KB of sprite memory a screen (`DS_HARDWARE_PROFILE.graphics2D.spriteMemoryBytesPerScreen`); embedded and already converted, like textures.
+  **Data:** `ImportedSprite { id, name, width, height, palette, pixels }` (`packages/core/src/imported-sprite.ts`, `createSpriteFromRgba`, pure),
+  `project.sprites`, `SceneNode.spriteId`; `formatVersion` still 1. **Semantics:** a sprite is drawn centered on its `position` at absolute screen
+  pixels (the 2D viewport never added parents' positions and the ROM matches it); **tree order is drawing order** (later = on top; `flattenSceneTreeInOrder`
+  in core, because `flattenSceneTree` makes no order promise); only the node's own `visible` counts. **Compiler:** `translateScene2D`
+  (`translate-scene-2d.ts`) -> `DsScene2D` (per screen: images with tile-ordered pixels, sprites in hardware order = reverse tree order) ->
+  `writeScene2DDataC` -> `RomBuilder.build2D` with the separate `packages/compiler/runtime2d` (own Makefile/`main.c`; top screen = main engine, bottom =
+  sub engine; sprite tiles in VRAM banks B/D, extended palettes in F/I mapped as LCD memory while written, then as palettes). `compileProject`
+  picks by mode; `checkProject` is the diagnostics-only entry (Export ROM's pre-check); Play works unchanged. Diagnostics: errors `missing-sprite`,
+  `too-many-sprites`, `too-many-sprite-palettes`, `sprite-memory`; warnings `sprite-without-image`, `sprite-off-screen`, `two-d-node-not-built`
+  (TileMap, Label, audio, animation; AnimatedSprite2D was added later, see "Animated sprites"), `two-d-scripts-not-built`. **Editor:** Inspector "Image" field + "Import PNG..." + preview
+  (`SpriteImageField`), Scene > "Import Sprite Image...", the 2D viewport draws the image (`viewport/sprite-image.ts` makes a data URL), Hardware
+  tab per-screen sprite memory and palettes, store actions `IMPORT_SPRITE`/`SET_SPRITE_IMAGE` (undoable; `sprites` is part of `EditState`),
+  main-process `assets.importSprite()`. **Also new: `SET_NODE_SCREEN`** — a node of a *2D* project can be put on either screen from the Inspector's
+  Screen select (it used to be disabled, so a 2D project could only use the top screen); it stays disabled in 3D projects and for the scene root.
+  **Gotcha found by the E2E test:** the renderer's CSP (`default-src 'self'`) blocked `data:` images; it now has `img-src 'self' data:`.
+  **Verified:** `sprites-2d.rom.test.ts` runs the ROM in melonDS and compares both screens *pixel by pixel* with a reference painted from the
+  images (`captureBothScreens` in `emulator-capture.ts`; backdrops are dark blue top / brown bottom so the capture finds the screens; match
+  1.0000 top, 0.9993 bottom, incl. draw order swapped and a project authored through the real UI), `tests/prototypes/e2e/sprite-image.mjs`
+  (11 checks; prints `GSDS_SPRITES_ROM_PROJECT=` for the ROM test), plus unit tests in core, persistence, ui and compiler. The 3D ROM suite still
+  passes after the builder refactor (`RomBuilder.build` and `build2D` share `buildFrom`). **Not built:** tile maps, Label text,
+  sprite rotation/scale, 16-color images, scripts/sound/animation in 2D ROMs, dragging a sprite between screens, and drawing the
+  2D nodes of a *3D* project's 2D screen (still `two-d-node-not-built`). **Packaged path** for `runtime2d` (`compiler-runtime-2d`) is untried.
+- **Scene instances** (owner: "make a player scene then drag it into the level scene like Godot"; story `scene-designer/STORY.scene-instances.md`, done). `SceneNode.instanceOf` = a scene id: the node stands for that whole scene, live (edit the scene, every instance changes). `expandSceneInstances(project, tree)` (core `project-scenes.ts`) replaces instances with the scene's tree (ids `<instance>/<node>`, 2D positions shifted by the instance's position minus the scene root's because 2D positions are absolute, nested instances, missing/cyclic = empty node); the compiler (`translateProject3D`, `translateScene2D`) and both viewports (`useShownSceneRoot`) use it, so the runtime is unchanged. Add by dragging a scene tab onto the Scene tree or Scene > Instantiate Scene (`SCENE_INSTANTIATE`; cycles refused). A non-start scene with no camera gets a default one when built. Inspector shows the source scene with an Open button; selecting inside an instance selects the instance (`outerNodeId`). **Verified:** unit tests (974 pass). **Not verified:** drag and drop and viewport drawing in the real app; no overrides inside an instance.
+- **Labels / text** (first step of the owner's "make the engine good enough for a full 3D game" roadmap: labels/HUD, then game state + save, then physics (ray casts, trigger areas, layers), then animated 3D characters, then a small coin-collecting demo game to find blockers; story `scene-designer/STORY.labels-and-text.md`, done). A `Label` node (core `label.ts`: `LabelData {text, color 0-7}`, `getLabel`, `labelCell` = position rounded to the 8 x 8 grid, `labelDisplayText`) is text in the DS's 8 x 8 font on libnds's console (sub engine bank H in 3D projects; both engines, bank A / H, in 2D projects). `{}` in the text is replaced by the label's `value`. Scripts (3D projects only): `$Score.value = 5` (int), `$Msg.text = "Game Over"` (string literal only), `$Label.visible`; a label can't be moved or rotated by scripts. Compiler: `collectLabels` in `translate-scene-2d.ts` -> `DsScreen2D.labels`, `label-text.ts` (`fontSafeText`, `cString`), C `GsLabel` + `labelCount/labels` at the end of `GsScreen2D` (scene.h and scene2d.h), runtime `gs_labels.h` (identical in runtime/ and runtime2d/: console, redraw-all-when-dirty) + `runtime/source/gs_labels.c` (`gs_label_set_value/get_value/set_text`, follows the node's visibility). Gotchas: `consoleInit` overwrites BG palette entry 0 (= backdrop), so the 2D runtime sets the backdrops again after; console cursor `[row;colH` is 0-based; text past the last row is cut, not scrolled. Editor: `SET_LABEL` (`LabelChange`), `LabelFields.tsx` (text + 8 color swatches), viewport draws each character in its cell (`data-testid="label-text"`), drag snaps to the grid. **Verified:** unit tests (993 fast + 302 ui/persistence), emulator test `testing/labels.rom.test.ts` (cell, color, screen, script value/text/hide, in 2D and 3D ROMs). **Not verified:** the editor viewport/Inspector in the real app (no E2E); labels on the 3D screen (only the 2D screen has them); non-ASCII text (shown as ?).
+- **Game state + save** (roadmap step 2; story `scripting/STORY.game-state-and-save.md`, done). `global var score = 0` (parsed as `VarDecl.global`) in any script makes a project-wide variable every script can use by bare name, in every scene, kept across `change_scene`. `collectProjectGlobals(scripts)` (core `script/globals.ts`) = the sorted union of all declarations (same name must agree on type + literal start value; max 64); passed to the checker as `ScriptSceneContext.globals` (`checkScriptOnNodes(..., sceneNames, globals)`); res `{kind:"global"}`; compiler puts them in `DsScene3D.globals` and `writeScriptCodeFileC` writes ONE `int32_t gs_global[]` (+ `gs_global_initial`, `gs_global_count`, `gs_global_signature` = FNV hash of names+types, `globalSignature()`); codegen uses `gs_global[i]`, not the per-node state struct. Save: `save_game()`, `load_game()`, `has_save()` (bools; `saveCall` res) -> runtime `gs_save.c`: header (magic, signature, count, checksum) + values, written by libfat to `gsds-<signature>.sav` on the SD card (homebrew has no cartridge save chip; melonDS/ndstool ROMs are "homebrew" so melonDS gives them no cart save), falling back to cartridge EEPROM/flash. The 3D Makefile now links `-lfat`. Editor: the script workspace passes project globals to the checker and completion (`global` keyword, `save_game` etc.). **Verified:** unit tests (1020 fast pass) and `testing/game-state.rom.test.ts` in melonDS: a global set in scene 1 is read in scene 2, and save then load through an SD image works (the test turns melonDS's DLDI setting on with a new image file and restores `melonDS.toml` after; melonDS only does an SD card with that on, and a plain Play in melonDS has none, so saving there says false). **Not verified:** the cartridge EEPROM fallback, real flash-card hardware, saving in 2D projects (they run no scripts); no delete_save, one save slot, only ints/floats/bools.
+- **Ray casts** (roadmap step 3, reduced; story `collision/STORY.ray-casts.md`, done). `body.ray_cast(ox,oy,oz,dx,dy,dz,max) -> float` (or bare `ray_cast(...)` on self): distance along the ray to the nearest visible solid shape not under the body, -1.0 if none, 0 if it starts inside; exact for boxes (slab test in the box frame), marched with a 0.03 sphere via `gs_shapes_overlap` for other shapes; broad-phase reject by centre-vs-ray. Checker `rayCall` (marks `selfMoves` like `probe_solid` so the solids get built), codegen `gs_ray_cast`, runtime `gs_collision.c`. Verified on the DS by 13 cases in `collision-body.rom.test.ts` (0.8 ms vs 60 shapes). **Deliberately not built:** collision layers/masks, enter/exit events (poll `overlaps()` and keep a variable), which-shape-was-hit.
+- **Animated 3D models (poses)** (roadmap step 4; story `scene-designer/STORY.animated-3d-models.md`, done). Only .obj import exists and the DS can't skin, so an animated model = several .obj files with identical triangles imported together (Scene > Import Animated Model, multi-select; main-process `importPoses` + core `mergeMeshFrames`) into one `ImportedMesh` with `frames[]` (extra poses; pose 0 = positions/normals). A MeshInstance3D whose model has poses uses the same `spriteAnimations` field and Animations UI as AnimatedSprite2D (frames = poses; `SpriteAnimationsField poseCount`); scripts `$Hero.play("walk")`/stop/is_playing (`animCall.mesh`; only when the mesh has animations). Compiler: a primitive per pose (`indexOfPrimitive(mesh, frame)`), `DsMesh.frameStart/frameCount/animation*`, `DsScene3D.meshFrames/meshAnimations`, `GsMesh` grew 5 fields and `GsScene` 3 (appended after sprites2D). Runtime `gs_mesh_anim.c` + `gs_mesh_primitive(i)` in `draw_mesh`. Rigid-part characters (child nodes + AnimationPlayer) already worked and remain the way to move parts. **Verified:** unit tests (1043) + `testing/animated-meshes.rom.test.ts` on melonDS. **Not verified:** the import dialog/Inspector in the real app. **Not built:** blending, viewport preview, skeleton baking/glTF.
+- **Coin collector example + what it found** (roadmap step 5; stories `scene-designer/STORY.coin-collector-example.md`, `STORY.mesh-colors.md`, done). `createCoinGameProject()` (core `examples/coin-game.ts`) is a small game (player, coins, chaser, follow camera, HUD labels, best time saved); `examples/coin-collector.gsds` is generated from it (`GSDS_WRITE_EXAMPLES=1` with `persistence/src/json/example-projects.test.ts`); `fixture` builds go through `node packages/compiler/dist/cli.mjs compile examples/coin-collector.gsds out.nds`. Building it found: all meshes were one grey -> per-mesh **color** (`MeshInstance3DData.color` "#rrggbb", `mesh-color.ts`, Inspector picker, `SET_MESH_COLOR`, compiler diffuse, viewport); no randomness/angles -> `randi(n)`, `randf()`, `atan2(y,x)` builtins. Played on the DS CPU by `testing/coin-game.rom.test.ts` (20 cases, scripted button presses via `gs_keys_held`; each case resets nodes/scripts/globals/collision state first). **Still missing for a full game (see the story):** joining text and numbers, shared functions between scripts, arrays, collision layers, enter/exit events, pause, animated preview in the editor, per-scene music.
+- **Rigged models (glTF/GLB)** (owner: import skeletal models; chose glTF, rigid skinning, clips, and bones animatable in the AnimationPlayer; story `scene-designer/STORY.rigged-models.md`, done). NB the DS *can* animate bones (matrix stack, Mario Kart DS) -- the earlier pose import exists only because .obj has no bones. core `gltf-import.ts`: `importGltf(input,name)` turns a glTF into a scene subtree: bones = plain `Node3D` nodes with the file rest pose, each triangle goes to its strongest bone as a `MeshInstance3D` under it (vertices in bone space via the inverse bind matrix), clips become an AnimationPlayer (sampled at 15/s, RDP-thinned, quaternion -> XYZ Euler continuous). No runtime changes: bones are ordinary animated nodes. Renderer does the parse (node ids come from its counter); main `pickRiggedModel` only reads bytes + external .bin files. Menu: Scene > Import Rigged Model. Test fixture `buildArm()` (core `gltf-test-fixture.ts`). **Verified:** unit tests + `testing/rigged-models.rom.test.ts` (arm swings on melonDS). **Not verified:** real Mixamo/Blender files, the dialog. **Not built:** FBX, textures, smooth skinning, retargeting.
+- **Multiple scenes** (owner's request; story `scene-designer/STORY.multiple-scenes.md`, done). `project.scene` is the *starting* scene's tree and `project.scenes` (`{ id, name, scene }`) the others, with `sceneId`/`sceneName` naming the start (absent for a one-scene project, so old files are unchanged); helpers in core `project-scenes.ts`. Scenes share the project's mode and assets/scripts; limits are checked per scene. **Scripts:** `change_scene("name")` (3D projects; a 2D ROM runs no scripts and holds only the start scene, warning `extra-scenes-not-built`). **Compiler:** `translateProject3D`, per-scene script names (`sc1_`), `gs_scene_scripts` + reset functions, `scene_data_<n>.c` + `scene_table.c`, `RomBuilder.buildScenes` (fallback `scene_data.c`/`scene_table.c`/`script_code.c` regenerated with the CLI: `scene-data`, `scene-table`, `script-code`). **Runtime:** `gs_scene` is `(*gs_scene_current)`; `main.c` `enter_scene(index, first)` sets a scene up, `gs_leave_scene()` puts the old one away (sounds, node/touch/collision/animation/sprite memory, textures), every init frees its old allocation, the switch is made when the frame ends. **Editor:** `activeSceneId` + `savedScenes` (unsaved compares every scene's tree by reference), `SCENE_*` actions (undoable; switching is not), `savedProjectOf(state)` for Save/Export/Play, `SceneTabs` above the viewport. **Verified:** unit tests (954 pass) and `scenes.rom.test.ts` (three scenes, two script-driven switches, only the last scene's sprite left, match 0.9993). **Not verified:** the tab strip in the real app (no E2E yet), switching back to an earlier scene on the DS, sounds across a switch.
+- **Animated sprites from sprite sheets** (owner: "Animated sprites that allow sprite sheets"; story `scene-designer/STORY.animated-sprites.md`, done). **Data:** a sheet is an ordinary `ImportedSprite` with
+  optional `frameWidth`/`frameHeight` (`width` x `height` are the whole sheet; frames numbered left to right, top to bottom; one shared 256-color palette, so a sheet costs one of a screen's 16
+  palettes; the whole sheet counts against the 128 KB); `createSpriteFromRgba(..., { frame })` imports one (frame must be a DS sprite size and divide the sheet); `getSpriteFrames`,
+  `getSpriteFramePixels`, `spriteToRgba(sprite, frame)`. Animations are on the node: `SceneNode.spriteAnimations = { animations: [{ name, frames, fps 1-60, loop }], start? }`
+  (`core/src/sprite-animation.ts`: `parseFrameList` reads "0-3, 5, 3-1"). Schema + validator check the frame size, unique names, frames inside the sheet and the start. **Scripts** (3D projects):
+  `play("name")`, `stop()`, `is_playing()` on an AnimatedSprite2D (`animCall` with `sprite: true`, name resolved to the node's own list, `gs_sprite_play/stop/is_playing(node)`), and the Sprite2D
+  members (position, rotation, scale, visible); `speed_scale` is AnimationPlayer-only (new `speed` capability). **Compiler:** `collectSprites(project, screenOf, used, diagnostics, fps, live?)` (fps is new):
+  `DsSpriteImage` has `frames` (width/height = one frame, tiles = frames one after another), `DsScreen2D.animations` (frames, `step` = animation frames per game frame in 20.12, loop), `DsSprite` has
+  `animation` (starting animation, -1 none), `animationFirst`, `animationCount`; errors `animation-frame-out-of-range`, warning `animated-sprite-without-animations`; the two `scene.h`/`scene2d.h`
+  structs and the writer gained `frameCount`, `GsSpriteAnimation`, the sprite fields and `animationCount/animations` on `GsScreen2D` (the fallback `scene_data.c` was regenerated). **Runtimes:** one block of
+  sprite memory per frame, `gs_sprite_anim.h` (identical copy in `runtime/include` and `runtime2d/include`, a test checks it; no libnds in it) steps animations each game frame and the runtime
+  points the hardware sprite at the frame with `oamSetGfx`. **Editor:** Inspector `SpriteSheetField` (sheet picker, Frame size select, "Import sheet PNG...", the sheet drawn with numbered frames) and
+  `SpriteAnimationsField` (add, rename, frames as text, speed, loop, remove, Preview, "Plays at the start"); store actions `SPRITE_ANIM_ADD/SET/REMOVE/START`, `IMPORT_SPRITE`/`SET_SPRITE_IMAGE`/`SET_SPRITE_TRANSFORM`
+  now accept an AnimatedSprite2D (a sheet arriving with nothing selected makes an AnimatedSprite2D playing all frames as "default"; a smaller sheet drops the frames it lacks); IPC `importSprite(frame?)`;
+  the 2D viewport draws the starting frame. **Verified:** unit tests in core, persistence, compiler and ui; emulator `animated-sprites.rom.test.ts` (2D project top 1.0000 / bottom 0.9993 against a
+  reference painted from the sheet, with a sprite that must have run 1-2-3 to end on 3; a 3D project whose script calls `play("go")` 0.9993) and the older `sprites-2d.rom`/`sprites-3d.rom` still pass;
+  real app `tests/prototypes/e2e/animated-sprite.mjs` (9 checks; found a rejected name staying in its field and a preview that restarted every tick). **Bug found by a unit test:** sprite centering used the
+  sheet's width, not one frame's. **Not built:** per-frame durations, playing backwards (write "3-0"), animation events, sheets with spacing, a live animated preview in the 2D viewport.
+- **Duplicating and `$Name`** (owner's request: several Jenga blocks, each a duplicate with its own touch area). **Duplicate** (Ctrl+D or Scene > Duplicate Node) gives the copy its own name
+  among its siblings with `copyName` in core: "JengaBlock" -> "JengaBlock2", then "JengaBlock3"; a name already ending in a number counts on from it ("JengaBlock2" -> "JengaBlock3", never
+  "JengaBlock22"). **What is under the copy keeps its names** (as in Godot, names only have to differ within one parent), with new ids. **`$Name` in a script is now relative to the node the
+  script is attached to, as in Godot:** `ScriptSceneContext.scope` (the node being checked as); the name is looked for **under that node first**, and only then anywhere in the scene (a
+  name several nodes share under the node is ambiguous). `checkScriptOnNodes` (core, `script/check-on-nodes.ts`) checks a script once per attached node with that node as scope and reports
+  a shared mistake once; the editor's Script tab diagnostics and the compiler both use it. In the compiler, attached nodes whose checks name the same nodes share one compiled script
+  (one copy of the code, one set of variables per node, as before); a node that finds different nodes for its `$Name`s is compiled as a script of its own (so in the C a `$Name` is always
+  one fixed node). Effect: the same `jenga-block.gsscript` on every copy of a block, each copy asking its own `JengaTouch` child. Not built: auto-complete of `# Good Stuff DS Game Maker — Project Context
+
+## What this is
+A Nintendo DS–flavored video game maker: an Electron + React desktop app
+modeled on the Godot editor's UX, for building *actual DS games* — not
+modern games. Every system constraint (frame rate, polygon budget, sprite
+counts, VRAM, etc.) is meant to reflect real DS hardware limits, surfaced in
+the editor the way Godot surfaces target-platform limits.
+
+## Repo layout (pnpm workspace monorepo)
+- `apps/desktop` — the Electron shell (main, preload, renderer composition
+  root). Intentionally thin: wires up the main process and renders `<App />`
+  from `@goodstuff/ui`.
+- `packages/core` (`@goodstuff/core`) — domain models: scene node tree, DS
+  hardware profile, hardware budget math. No UI/Electron deps.
+- `packages/ui` (`@goodstuff/ui`) — shared React components; the actual
+  designer UI lives here.
+- `packages/build-config` (`@goodstuff/build-config`) — shared electron-vite
+  build configuration.
+- `packages/persistence` (`@goodstuff/persistence`) — SOLID project
+  persistence layer (serialization, validation, file I/O). No UI/Electron
+  deps; consumed by `apps/desktop`'s main process (see below).
+- `packages/compiler` (`@goodstuff/compiler`) — compiles a saved project into
+  a Nintendo DS ROM: pure translation to DS-format scene data, diagnostics, a
+  build driver that runs the devkitPro toolchain, a CLI, and the hand-written C
+  runtimes: `runtime/` (3D projects) and `runtime2d/` (2D projects, sprites only so far). Depends only on core.
+  See the `compiler` entry below.
+- `tools/ds-toolchain/` — Windows scripts to install and use devkitPro and melonDS.
+- `tests/prototypes/` — the kept, hand-rolled verification scripts (editor E2E incl. the sound player measured on real audio,
+  recent-projects store, a UI-authored-scene generator). Not in the workspace.
+- Root: `pnpm test` (fast tests), `pnpm test:rom` (emulator tests), `vitest*.config.ts`.
+
+## Stack decisions
+- **Electron + Vite, not Next.js.** Next.js was considered (to "simplify
+  React conventions") but rejected: this is an Electron desktop app, and
+  Next.js doesn't drop cleanly into an Electron renderer without static
+  export mode, which throws away most of what Next offers. Vite + React
+  stays.
+- **Tailwind v4**, not plain CSS. This was already corrected once before
+  (prompt history: an earlier plain-CSS attempt was explicitly rejected as
+  "hardly modern"). Tailwind v4 is wired via `@tailwindcss/vite`, with a
+  dark, Godot-editor-inspired theme (`--color-editor-*` tokens) in
+  `apps/desktop/src/renderer/src/styles.css`.
+- **React 18**, not 19. `@react-three/fiber`/`@react-three/drei` are pinned
+  to the v8/v9 majors (not v9/v10, which require React 19) to match.
+
+## Editor UI (Godot-inspired dock layout)
+`EditorShell` (`packages/ui/src/editor/EditorShell.tsx`) lays out: MenuBar,
+WorkspaceToolbar (workspace tabs + screen filter + FPS target + Play),
+SceneTreePanel + FileSystemPanel (left dock), a center viewport + BottomPanel
+(Output/Debugger/Hardware tabs), and InspectorPanel (right dock).
+
+- **Startup view** (`packages/ui/src/startup/`): with no project open
+  (`state.project === null`, including after Close Project) `EditorShell`
+  renders `StartupView` instead of the editor: exactly "New Project" and
+  "Open Existing Project". New Project (`NewProjectPanel`) requires a
+  name and an explicit 2D/3D choice (nothing preselected), then opens the
+  native Save As dialog for the location. Open Existing Project
+  (`OpenProjectPanel`) lists the recent projects — name, mode badge, path,
+  last opened, a remove ✕ per row, "Clear list", missing files shown
+  flagged and disabled — plus "Browse…" for the native open dialog (which
+  is only opened by Browse, never by merely showing the panel). Rows open a
+  project by path with no dialog, always in its stored mode.
+- **Workspace tabs**: a project shows only its own viewport tab (`2D` for
+  a 2D project, `3D` for a 3D project, never both) plus `Script` and
+  `Game`. Script is the script editor (see "Scripting" below); Game shows a "not built yet" placeholder (tabs used to
+  fall through to the 2D viewport, which would leak into 3D projects).
+- **Scene menu vs. Project menu** — a deliberate split, written down in
+  `requirements/project-menu/EPIC.project-menu.md`. A menu is named for
+  what its actions operate on, and an action lives in exactly one menu.
+  The **Scene menu** (`layout/SceneMenu.tsx`) edits the *contents* of the
+  open scene: a single "Add {mode} Node" list (2D kinds for a 2D project,
+  3D kinds plus `AudioStreamPlayer` for a 3D project — audio isn't drawn
+  by either pipeline, so it's offered in both), Import Model (.obj)... (3D
+  only) and Import Sound... (both modes), Undo/Redo, Duplicate Node and
+  Delete Node (disabled on the scene root). The **Project menu**
+  (`layout/ProjectMenu.tsx`) owns the project *file's* lifecycle: Open
+  Project..., Save Project, Save Project As..., Export ROM..., Close Project (all real,
+  via the persistence layer — see "Save/Save As/Open/Close" below). They
+  used to all sit in the Scene menu under names like "Save Scene" /
+  "Close Scene" because it was the only real menu; that conflated scene
+  and project management and was fixed. **"New Scene" was removed
+  outright** (with one scene per project it only meant "discard
+  everything", destructive with no undo; it returns if multi-scene is
+  ever designed) and so were the store's `NEW_SCENE`/`newScene`. Both
+  menus share `layout/menu-primitives.tsx`. The other menu bar items
+  (Debug, Editor, Help) are still inert placeholders.
+- **Unsaved-changes guard** (`project-menu/STORY.unsaved-changes-guard.md`,
+  done). "Unsaved" = `state.sceneRoot !== state.project.scene` (reference
+  comparison; `hasUnsavedChanges` in `editor-store.tsx`) — no per-action
+  flag, at the cost of a false positive for a hand-reverted edit. One
+  `guardUnsavedChanges` in the store wraps `closeProject`,
+  `openProject(filePath?)` and the window close; it shows
+  `UnsavedChangesDialog` (Save / Don't Save / Cancel; Escape = Cancel).
+  The prompt comes *before* the native open dialog. `saveProject` /
+  `saveProjectAs` resolve `true` only if a file was written; a Save that
+  is canceled or fails abandons the guarded action. The status bar shows
+  "● Unsaved changes" and the window title gets a "● " prefix. Window
+  close: the renderer pushes its dirty flag to main
+  (`app.setUnsavedChanges`); `main/unsaved-changes-guard.ts` holds the
+  `close` event while set and asks the renderer, which calls
+  `app.confirmClose` once the user decides.
+- **2D viewport** (`DualScreenViewport.tsx`): renders the DS's two physical
+  screens side by side at a fixed pixel scale, draggable sprite markers.
+- **3D viewport** (`Viewport3D.tsx`): the newer addition. Renders whichever
+  single screen currently "owns" the 3D engine (the DS can only drive 3D
+  output to one screen at a time — screen filter drops "Both" while in 3D
+  mode). One canvas, sized to **fill the available panel space** (up to the
+  DS's 4:3 aspect ratio, via a `ResizeObserver`-backed `useContainedSize`
+  hook — never a small fixed box), but the actual WebGL drawing buffer
+  stays locked to the DS's true native 256×192 via a **fractional `dpr`**
+  (`DS_WIDTH / displayedWidth`, `gl={{ antialias: false }}`,
+  `image-rendering: pixelated`), so it reads as authentically blocky no
+  matter how large the working rectangle is on screen. Free `OrbitControls`
+  and click-to-select work directly on this one canvas.
+  - Meshes are built from the **shared primitive geometry** in
+    `@goodstuff/core` (`primitive-geometry.ts`); the scene is drawn as a
+    **hierarchy** (`SceneNodeView` recurses; a parent's transform and visibility
+    apply to its subtree); a directional light **shines along its node's local
+    -Z**, as in Godot and in the compiler. The viewport is still an orbit camera
+    with fixed ambient light: `Camera3D` is a gizmo and there's no view through it.
+  - History here: v1 rendered the *whole* canvas tiny at a fixed native
+    size — rejected as unusable ("how can I build a game there?"). v2 split
+    it into a large smooth edit canvas + a separate small pixelated preview
+    inset — rejected too (user wants ONE working area, not a separate
+    preview). v3 (current) is the fix: single canvas, full available size,
+    fixed *internal* resolution via fractional dpr. If resolution work
+    comes up again, don't reintroduce a second canvas/preview — the
+    fractional-dpr technique is the right one.
+- **Keyboard shortcuts** (`packages/ui/src/editor/state/keyboard-shortcuts.ts`, pure `resolveShortcut(event, context)`, 10 unit tests; one window `keydown`
+  listener in `editor-store.tsx` reads the latest state from a ref and runs the command). **Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y** undo/redo/redo; **Ctrl+S** save (no dialog when the
+  project has a file), **Ctrl+Shift+S** save as, **Ctrl+O** open, **Ctrl+Shift+E** export ROM, **F5** play; **Ctrl+D** duplicate, **Delete/Backspace** delete, **F2** rename
+  (focuses the Inspector's Name field, text selected), **Escape** select the scene root, **Arrow keys** nudge the selected 2D node 1 px (**Shift** 8 px; a quick burst is
+  one undo step); **Ctrl+1/2/3** the viewport / Script / Game tab; Q/W/E/R (3D tools) stay in `WorkspaceToolbar.tsx`. Cmd counts as Ctrl. Rules: nothing with no project open or
+  behind the unsaved-changes prompt; the node shortcuts (duplicate, delete, rename, Escape, arrows) only on the 2D/3D workspaces and never on the scene root (rename excepted);
+  typing keys (Delete, Backspace, arrows, Escape, Ctrl+D) belong to an input/select/textarea/code editor when it has focus, while Ctrl+S/O/Shift+E/F5/1-3 still work there;
+  the code editor keeps its own Ctrl+Z/Y. Menu items show the hint: **`MenuItem`'s shortcut is drawn by CSS from `data-shortcut`** (plus `aria-keyshortcuts`), so a menu button's
+  text is just its label; the E2E scripts click buttons by exact text, which broke when the hint was ordinary text (tests read the hint from `data-shortcut`). The old separate Ctrl+Z
+  and Delete handlers were folded into this. Verified by `tests/prototypes/e2e/shortcuts.mjs` (9 checks) and `delete-key.mjs` (7), with `undo-redo`, `e2e`, `sprite-image`,
+  `texture-mesh`, `script-editor` and `transform-tools` re-run. Not built: copy/paste, cut, select-all, tree navigation with the arrow keys, F5 verified only by unit test.
+- **Node icons** (`packages/ui/src/editor/node-icons.ts`, `NodeIcon.tsx`): each node kind has an emoji glyph in `NODE_KIND_ICON`, and a kind
+  can have a drawn 32 x 32 PNG instead, listed in `NODE_KIND_ICON_IMAGE` (files in `editor/icons/`, named after the kind). `NodeIcon` shows the image
+  (16 px; 20 px on viewport markers) or falls back to the glyph, in the Scene Tree, the Scene menu and the 2D viewport. Only **Area2D** has a
+  drawn icon so far (the owner's `Area.png`; `Hand.png` became the TouchArea2D and TouchArea3D icon). **App logo** (`Logo.png`, 32 x 32):
+  shown left of the title in the menu bar (`editor/icons/Logo.png`, `MenuBar.tsx`) and set as the window/taskbar icon (`apps/desktop/resources/icon.png`, imported in
+  `main/index.ts` with electron-vite's `?asset`). Not done: the packaged `.exe`/installer icon, which needs `apps/desktop/build/icon.png` (512 x 512 or larger) or `.ico`.
+
+## Domain model (`packages/core`)
+- `SceneNode` tree, Godot-Node-like, tagged 2D or 3D via `SceneNodeKind`
+  (`SceneNodeKind2D` / `SceneNodeKind3D`). 3D nodes carry a `transform3D`
+  (position/rotation-degrees/scale as `Vector3`) and, for `MeshInstance3D`,
+  a `mesh: { primitive, triangleCount }`. A `CollisionShape3D` carries `collision?: { shape, size, radius, height }` (`collision-shape.ts`,
+  see "Collision" below); `audio?` and `scriptId?` are described under "Sound" and "Scripting".
+- `primitive-geometry.ts`: the **one definition** of each built-in primitive
+  (cube 12 triangles, plane 2, cylinder 48, sphere 168), as a non-indexed
+  triangle list with per-vertex normals. The viewport draws it, the budget counts
+  from it (never from a node's stored `triangleCount`, which may predate a
+  re-tessellation), the compiler emits it. Nothing else carries a per-primitive count.
+- Tree helpers: `flattenSceneTree`, `findSceneNode`, `updateSceneNode`,
+  `removeSceneNode`, `duplicateSceneNode` (fresh ids throughout),
+  `insertNodeAfterSibling`, `uniqueNodeName`, `createSampleSceneTree`
+  (demo data mixing 2D and 3D; **nothing in the app uses it any more**).
+- `project-mode.ts`: `ProjectMode` (`"2D" | "3D"`), `PROJECT_MODES`,
+  `getNodeKindsForMode`, `isNodeKindAllowedInMode`, and
+  `createBlankSceneTree(mode)` (root is `Node2D` or `Node3D`). It moved
+  here from `scene-node.ts`, which no longer has a blank-tree factory.
+- `DS_HARDWARE_PROFILE` (`hardware.ts`): real DS specs — CPU, RAM/VRAM,
+  256×192 dual screens, 2D OAM sprite budget (128/screen), 3D budget
+  (~2048 triangles/frame, exclusive to one screen at a time), audio
+  channels (16), fps targets (30/60).
+- `computeSceneBudget` (`budget.ts`): live budget report against the
+  profile above — sprite usage per screen, audio channel usage, and now
+  triangle usage vs. the 3D budget. Shown in the Hardware tab of
+  `BottomPanel`.
+- `ProjectSnapshot` (`project-snapshot.ts`): the persisted-project shape
+  — `formatVersion`, `id`, `name`, permanent `mode: "2D"|"3D"`,
+  `createdAt`/`updatedAt`, and a real `scene: SceneNode` tree embedded
+  directly. Replaced the old, entirely unused `GameProject`/`GameScene`/
+  `createEmptyProject`/`DS_SCREEN_RESOLUTION` scaffold outright (a
+  repo-wide search confirmed zero consumers of any of them) rather than
+  keeping two competing "project" concepts side by side. Factories:
+  `createProjectSnapshot`, `withUpdatedScene`.
+
+## Persistence layer (`packages/persistence`, new)
+A SOLID-designed persistence layer now exists, built specifically with
+Interface Segregation and Liskov Substitution as the priorities (an
+explicit user requirement — don't casually merge these interfaces back
+together for convenience):
+- **Segregated ports**, one concern each: `ProjectFileReader`,
+  `ProjectFileWriter`, `ProjectFileLister`, `ProjectSerializer`,
+  `ProjectSnapshotValidator`. No fat "file system" interface — a
+  consumer that only reads never has to depend on write/list methods it
+  won't call.
+- **Two substitutable implementations** of the file-access ports:
+  `NodeProjectFileReader`/`Writer`/`Lister` (real `node:fs/promises`,
+  for the Electron main process) and `InMemoryProjectFileStore` (a
+  `Map`-backed all-three-in-one, for tests/dev). Both throw the exact
+  same error types (`ProjectFileNotFoundError`, `ProjectFileReadError`,
+  `ProjectFileWriteError` — see `errors.ts`) for the same failure
+  modes, which is what makes them genuine Liskov substitutes rather
+  than just same-shaped classes. **Verified**, not just typechecked: a
+  manual smoke test ran the identical save/load/error-handling
+  assertions against both, real disk and in-memory, and all passed
+  identically (no test framework is set up in this repo yet, so this
+  was a one-off script, deleted after use — worth setting up `vitest`
+  properly if this pattern needs to recur).
+- **`JsonProjectSerializer`** (JSON, the chosen wire format) and
+  **`JsonSchemaProjectSnapshotValidator`** (ajv-backed, validates
+  against `PROJECT_SNAPSHOT_JSON_SCHEMA` — currently **hand-authored**,
+  explicitly marked as interim in its own file comment;
+  `requirements/persistence/TASK.generate-json-schema-from-interfaces.md`
+  still needs to swap this for a schema generated from the TS
+  interfaces, which is designed to be a drop-in replacement).
+- **`FileSystemProjectRepository`** composes all of the above via
+  constructor-injected interfaces (Dependency Inversion) into the
+  `ProjectRepository` façade (`save`/`load`).
+
+## Save/Save As/Open/Close — wired end-to-end
+`apps/desktop/src/main/project-ipc.ts` composes a `FileSystemProjectRepository`
+(Node-backed) and registers `ipcMain.handle` for `project:save`,
+`project:save-as`, `project:open`, `project:list-directory` (channel
+names shared from `apps/desktop/src/shared/project-ipc-channels.ts` so
+main/preload can't drift). Errors are caught and returned as plain
+`{ outcome: "ok"|"canceled"|"error", message?, issues? }` results, never
+thrown across the IPC boundary — thrown errors lose their prototype
+chain there, so `instanceof` checks against `@goodstuff/persistence`'s
+error types only happen main-process-side.
+
+`window.goodstuff.project.{save,saveAs,open,listDirectory}` (preload)
+is typed against a new shared `GoodStuffWindowApi` contract in
+`@goodstuff/core` (`project-ipc-contract.ts`) — the preload
+implementation, the desktop app's `env.d.ts` global, and
+`packages/ui/src/global.d.ts`'s own global declaration all reference
+this one type, so they can't silently diverge.
+
+`editor-store.tsx` gained `project`/`projectFilePath` state and
+`saveProject`/`saveProjectAs`/`openProject`/`closeProject` actions.
+`ProjectMenu` wires these in (originally they were wired into
+`SceneMenu`, since moved — see the menu split above; that's also where
+"Open Project..." first appeared, as there was previously no UI path to
+Open at all).
+`FileSystemPanel` now calls `listDirectory` against the open project's
+folder instead of a hardcoded list, with no-project/loading/error
+states.
+
+There is no "default mode" any more. The old temporary 2D default is
+gone: every project is created through the New Project flow with an
+explicit mode, and `saveProject`/`saveProjectAs` only refresh the open
+project's scene (they do nothing with no project open). `createProject`
+and `openProject` return a `ProjectActionResult` so the startup view —
+which has no Output log — can show failures inline.
+
+**Recent projects** (`packages/persistence/src/recents/`, built): ports
+`RecentProjectsReader` (`list`) / `RecentProjectsWriter` (`record`,
+`remove`, `clear`) plus a tiny `PathExistenceChecker`;
+`JsonFileRecentProjectsStore` (built on the existing file reader/writer
+ports, so it also runs over `InMemoryProjectFileStore`) and
+`InMemoryRecentProjects`, both using the shared rules in
+`recent-projects-list.ts`; hand-authored `RECENT_PROJECTS_JSON_SCHEMA`.
+Composed in `apps/desktop/src/main/recent-projects-ipc.ts` at
+`userData/recent-projects.json`; `project-ipc.ts` receives only the
+*writer* and records on every successful open and save-as. The renderer's
+`window.goodstuff.recents` has `list`/`remove`/`clear` (the last two return
+the updated list) and no `record`. The design decisions are in
+`requirements/project-list/SPIKE.recent-projects-storage.md`.
+
+**How this was verified.** Beyond typecheck/build and the persistence
+smoke test, the whole startup + mode-lock + save/open flow was driven
+against the real built Electron app: launch `electron.exe apps/desktop
+--remote-debugging-port=… --inspect=…`, drive the renderer with
+`puppeteer-core` over CDP, and stub only `dialog.showSaveDialog` /
+`showOpenDialog` from the main-process inspector (via
+`Runtime.evaluate` with `includeCommandLineAPI: true` to get
+`require("electron")`). Real IPC, real persistence layer, real files.
+28 checks pass now (landing/empty Open panel, mode-locked creation, the
+two menus' contents, save/save as/close/reopen, recording and
+re-recording, open-from-list, invalid file, missing/remove/clear, the
+unsaved-changes guard on Close/Open, and a real `BrowserWindow.close()`).
+The recent-projects store also has a separate 16-check smoke run against
+the in-memory, JSON-over-memory and JSON-over-disk implementations
+(bundled with the repo's own `esbuild` via `--alias` to the two packages'
+`src/index.ts`, since there's no TS runner). **Both scripts are kept in
+the repo, on the owner's instruction, in `tests/prototypes/`** (with a
+README giving the exact commands; re-verified from there — 28/28 and
+16/16). They're prototypes, not a suite: no test framework exists in the
+repo, so none of it runs in CI. Turning them into one is specified in
+`requirements/testing/` (`EPIC.automated-testing.md`,
+`TASK.e2e-tests-for-editor-flows.md`, `TASK.persistence-contract-tests.md`,
+`TASK.compiler-and-rom-regression-tests.md`). Don't delete the prototypes
+until those tasks record where each check went.
+Gotchas if you redo it: pass `--user-data-dir=<temp>` to Electron so the
+recents file is isolated; `innerText` applies CSS `uppercase` (section
+labels come back as "ADD 3D NODE"); the toolbar `<select>` adds "Top
+Screen" to `innerText`; the Output log persists across projects within a
+session; and a click that closes the window (Don't Save on a window
+close) races the page target vanishing, so catch that one.
+
+## Known environment gotchas (already fixed — don't re-break these)
+- **`apps/desktop` main/preload must stay CommonJS.** An earlier attempt
+  used `"type": "module"` + `import.meta.url` so main/preload built as ESM;
+  this crashes on launch because Node's ESM/CJS interop chokes on
+  Electron's dynamically-patched `electron` module
+  (`cjsPreparseModuleExports` / `Cannot read properties of undefined
+  (reading 'exports')`). Fixed by removing `"type": "module"` and using
+  plain `import { app, BrowserWindow } from "electron"` + native
+  `__dirname` in `src/main/index.ts` and `src/preload/index.ts`.
+- **`ELECTRON_RUN_AS_NODE=1` leaks into `pnpm dev` from this terminal**
+  (this workspace's terminal is hosted inside an Electron app — e.g. VS
+  Code — and that env var propagates to spawned children, making
+  `electron.exe` run as plain Node instead of a real Electron app).
+  `apps/desktop/scripts/dev.mjs` strips it before spawning `electron-vite
+  dev`; `apps/desktop/package.json`'s `dev` script calls that wrapper. If
+  `pnpm dev` ever mysteriously fails with `electron.app` being undefined,
+  check this first.
+- **Windows `.bin` shims can go missing** after certain installs (`tsc`
+  etc. exist as POSIX shell scripts but no `.CMD`/`.ps1`). Fix: `CI=true
+  pnpm install` to force a clean, non-interactive reinstall.
+- A stray `@tailwindcss/oxide-linux-x64-gnu` root devDependency (leftover
+  from an earlier WSL/Linux dev attempt — `pnpm dev` originally failed on
+  WSL over a missing `libnss3.so`) was removed; the project runs on native
+  Windows now, not WSL.
+
+## Requirements / ticket tracking (`requirements/`)
+A Jira-like ticket system lives in `requirements/`, one folder per
+component, with `STORY`/`TASK`/`BUG`/`EPIC`/`SPIKE` markdown tickets
+inside. **Every component folder now has at least one ticket** — this
+was a deliberate full backfill pass, not partial coverage. Read
+`requirements/README.md` for conventions before writing new ones.
+
+**Status convention:** status/component/related live in YAML
+frontmatter at the top of each ticket file (`status: proposed |
+in-progress | done`), never in the filename, and a ticket is never
+moved to a "done" folder. This was an explicit decision: renaming/
+moving a file relies on git's rename-detection heuristic and breaks
+plain `git log <path>` (no `--follow`); editing status in place with a
+stable path has none of that fragility. Don't reintroduce filename- or
+folder-based status tracking.
+
+**Process rule:** when shipping functionality that touches a
+component, write or update its ticket as part of the same change —
+this is a process requirement from the user, not optional
+documentation. If shipped functionality has no matching component
+folder, create one (`file-browser` was created this way, for the
+previously-homeless `FileSystemPanel`).
+
+**Projects permanently commit to 2D or 3D at creation — now implemented.**
+This is a deliberate constraint, not a gap: a new project must choose
+"2D" or "3D" up front (`startup-view/STORY.new-project-flow-with-mode-commitment.md`),
+the choice is stored in the project, and **nothing in the app can ever
+change it** — converting means starting a new project. The editor is
+locked accordingly (`scene-designer/TASK.lock-workspace-to-project-mode.md`):
+a 2D project never shows a "3D" tab and vice versa, the Add Node list
+is the mode's own, a 3D project never offers "Both Screens", and the
+reducer itself refuses `SET_WORKSPACE` / `SET_SCREEN_FILTER` /
+`ADD_NODE` requests that would break the lock (it isn't only hidden UI).
+Don't build a feature that assumes a project can hold both 2D and 3D
+content, and don't add any control that changes `project.mode`.
+
+**Current coverage** (see each folder for the authoritative, detailed
+version — this is a summary, not a substitute):
+- `scene-designer` — deepest coverage: an Epic, four retroactive
+  Stories (2D viewport, 3D viewport — **read
+  `STORY.3d-editing-viewport-native-resolution.md` before touching 3D
+  viewport resolution/sizing again**, its three-iteration history is
+  recorded there — Scene menu node CRUD (now node-editing only; project
+  actions moved to `project-menu`), workspace tabs), the now-done
+  mode-lock Task, and forward Task/Spike (undo/redo, asset import). The
+  workspace-tabs and scene-menu stories were rewritten to match the
+  mode-locked, persistence-backed behavior (they used to document free
+  2D/3D switching and stubbed Save/Close). Real
+  project persistence used to be scoped here but was refactored out
+  into its own `persistence` component (see below) once it became
+  clear it's a shared foundation, not a scene-editing feature.
+- `persistence` — an Epic (`EPIC.project-persistence.md`, `in-progress`)
+  plus three ordered Tasks. See the "Persistence layer" section above
+  for what's actually implemented (`@goodstuff/persistence` package,
+  `ProjectSnapshot` in core): `TASK.define-project-snapshot-interfaces.md`
+  is `done`; `TASK.generate-json-schema-from-interfaces.md` is
+  `in-progress` (validator wired and working, schema still
+  hand-authored rather than generated); `TASK.persist-scene-to-project-file.md`
+  is `done` (Save/Save As/Open/Close wired end-to-end; native dialogs not
+  click-tested by the agent). The Epic stays `in-progress` only because
+  of the schema-generation task. It unblocks `startup-view`,
+  `project-list`, `scene-designer`'s mode-lock and mesh-import Spike,
+  and `audio`'s asset Task.
+- `node-list`, `properties-panel` — one retroactive Story each (Scene
+  Tree panel, Inspector panel), both fully built and Done.
+- `debugger` — three retroactive Stories (Output tab, Debugger
+  placeholder, Hardware budget report — moved here from
+  `scene-designer` since it's the same `BottomPanel` dock) plus a
+  forward Task blocked on a real runtime existing.
+- `run-games-locally` — the Play-button stub Story, the runtime Spike
+  (`done`: the owner decided the first milestone is a compiled ROM run in
+  an emulator; in-editor interpreted preview is undecided and deferred),
+  the emulator-selection Spike (`done`: melonDS, found via env var / winget / Program Files)
+  and `STORY.play-runs-rom-in-emulator.md` (`done`; the stub Story is now superseded).
+- `collision` — **first slice built and verified** (all `done`): `EPIC.collision-shapes.md`, `STORY.collision-shapes-and-overlap-checks.md` and four tasks
+  (model and persistence, Inspector and viewport, `overlaps()` in the language, compile and run on the DS). See "Collision" below. Also
+  `properties-panel/STORY.rename-a-node.md` (`done`): the Inspector's Name field. Nodes could not be renamed before, and scripts name nodes.
+- `collision` (continued) — `STORY.solid-shapes-and-move-and-collide.md` (`done`): solid shapes are the ground. `animation` — **first slice built and verified**
+  (all `done`): `EPIC.animation-player.md`, `STORY.animation-player-node.md` and four tasks (model and persistence, timeline editor, script control, compile and run).
+  See "Solid shapes" and "Animation" below.
+- `scripting` — **first slice built and verified** (all `done`): the Spike (decisions below), the Epic, the Story
+  `STORY.write-and-run-scripts.md` and tasks `TASK.script-language-front-end.md`, `TASK.script-editor-and-attachment.md`, plus
+  `persistence/TASK.embed-scripts-in-project-file.md`, `compiler/TASK.compile-scripts-to-c.md`,
+  `compiler/TASK.runtime-node-table-and-script-services.md`. See "Scripting" below.
+- `audio` — **built.** `STORY.import-sound-and-audio-player.md` (done) plus `TASK.sound-import-conversion.md`,
+  `persistence/TASK.embed-imported-sounds-in-project-file.md`, `compiler/TASK.compile-sounds.md` (all done); the old
+  `TASK.audio-asset-playback.md` is done (delivered by those) and `STORY.audio-node-in-hardware-budget.md` is the retroactive
+  budget-counting story. See "Sound" below.
+- `compiler` — **built for 3D; the first milestone is done and verified.**
+  (Owner's instruction: validate the editor by compiling scenes to a real
+  `.nds` and running it in an emulator.) A saved 3D project compiles to a real
+  ROM that runs in melonDS at 60/60 FPS and draws what the project says.
+  Design: shell out to devkitPro (devkitARM + libnds), **detected not
+  bundled**, with a **data-driven runtime** — `@goodstuff/compiler`
+  (`packages/compiler`, depends only on core) translates the project to a
+  constant `scene_data.c` (baked world matrices, DS fixed-point, shared vertex
+  tables, camera, lights), and a hand-written checked-in C runtime
+  (`packages/compiler/runtime`, no scene logic) draws it. Pipeline: diagnose ->
+  translate (`translate-scene-3d.ts`) -> write C (`scene-data-writer.ts`) ->
+  `RomBuilder` (`build/`, ports `ToolchainLocator`/`BuildRunner`/`BuildFileSystem`,
+  tested with fakes) runs `make` inside MSYS2 -> `.nds`. Use it from a terminal:
+  `pnpm --filter @goodstuff/compiler cli:build` then
+  `node packages/compiler/dist/cli.mjs compile <project.gsds | fixture:cube|primitives|nested> <out.nds>`
+  (about 4 s; exit 3 = toolchain missing). **The app now calls it:** Project >
+  "Export ROM..." (`STORY.export-rom-from-project-menu.md`, done) compiles the
+  project as the editor has it (unsaved edits included, the file never written),
+  checks it first (an error project reports to the Output log without asking for a
+  location), writes the `.nds`, and logs diagnostics and the outcome. Code:
+  `apps/desktop/src/main/export-rom-ipc.ts` (one export at a time; runtime dir is
+  `packages/compiler/runtime` from the repo, `resources/compiler-runtime` when
+  packaged via `extraResources` — **packaged path untried**), `describeCompileResult`
+  in `packages/compiler/src/compile-report.ts`, `exportRom`/`exporting` in the
+  editor store, `ExportRomResult` and `project.exportRom` in core's IPC contract.
+  Verified by `tests/prototypes/e2e/export-rom.mjs` (8 checks, needs the toolchain).
+  **Play is built too** (`run-games-locally/STORY.play-runs-rom-in-emulator.md`, done):
+  the toolbar button builds to `%TEMP%\gsds-play\play-*.nds` and opens melonDS
+  (`main/play-ipc.ts`, `PlaySession` in `packages/compiler/src/run/`, ports
+  `EmulatorLocator`/`EmulatorLauncher`, `NodeEmulatorLocator` finds it via
+  `GSDS_MELONDS_PATH` > winget folder > Program Files). A new run replaces the old one only
+  after its build succeeds; the game closes when the editor quits. Both handlers share
+  `main/rom-builder-factory.ts`. Verified by `tests/prototypes/e2e/play.mjs` (6 checks;
+  kills melonDS.exe before/after). No emulator-path setting UI yet — env var only.
+  **Gotcha:** a new Camera3D and mesh both start at the origin, so an untouched
+  export shows flat grey (camera inside the cube) — not a compiler bug. Done: Spike, the IR/translation Task, the runtime Task, the build
+  driver Task, `STORY.compile-3d-scene-to-nds-rom.md`,
+  `STORY.compile-diagnostics-for-unsupported-content.md`, Export ROM. `proposed`: 2D
+  (`STORY.compile-2d-scene-to-nds-rom.md`, now `in-progress`: sprites are built, see "2D sprites" below).
+  **Conventions pinned by building and looking** (full list in the Spike):
+  matrices are 16 x f32 (20.12) column-major; rotation is three.js Euler `XYZ`
+  (`Rx·Ry·Rz`), node transform `T·R·S`; vertices v16 (4.12, ~±8) with unit-sized
+  primitives; lights are parallel only, 4 max, direction = the way the light
+  *travels* (local -Z) and set while only the view matrix is loaded; culling off;
+  the 3D backdrop is deliberately dark blue (so a screenshot can find the screen).
+  **How it's verified** (all real, against melonDS): `pnpm test` — 343 fast tests
+  (shared geometry, matrix math checked against three.js itself, fixed point,
+  translation, diagnostics, build driver with fakes); `pnpm test:rom` — 9
+  emulator tests that build each fixture, run it, capture the top screen and
+  compare its silhouette with an independent three.js render (IoU >= 0.85),
+  including a project **authored through the real editor UI**
+  (`node tests/prototypes/e2e/ui-to-rom.mjs`, then
+  `GSDS_ROM_PROJECT=<saved path> pnpm test:rom`; scores 0.91), the bottom
+  screen, and a full-budget scene (2028 triangles). Deliberately breaking the
+  rotation order fails six tests. **Not verified:** 30 FPS pacing (melonDS's title
+  shows emulator speed, not presentation rate). (Lighting was "checked by eye" until it was measured; see the lighting note below,
+  which found a real bug.)
+  **What compiling turned up in the editor** (all ticketed): three defects,
+  now **fixed** — the hardware budget's triangle counts didn't match what the
+  viewport drew (sphere 480 vs 720, cylinder 40 vs 64; now one shared geometry in
+  `packages/core/src/primitive-geometry.ts`, sphere 168 / cylinder 48, used by the
+  viewport, budget and compiler), the viewport ignored a parent's transform and
+  visibility (it drew a flat list; now `SceneNodeView` recurses), and a
+  directional light's rotation did nothing in the editor (now it shines along its
+  local -Z, as in Godot and the compiler). The UI **can now choose a mesh's primitive**
+  (Inspector "Mesh" select, `scene-designer/STORY.choose-mesh-primitive.md`, done; "Add
+  MeshInstance3D" still adds a cube; `MESH_PRIMITIVES` in core is the one list; verified by
+  `tests/prototypes/e2e/mesh-primitive.mjs`, 6 checks, whose saved project also passes the
+  emulator test). Still **open**: the FPS target isn't saved in
+  the project (`scene-designer/TASK.save-fps-target-in-project.md`, so the compiler
+  takes it as an option, default 60); and cameras/lights/meshes have no
+  fov/active-camera/colors and the editor never shows the view through a
+  `Camera3D` (`scene-designer/STORY.camera-light-and-material-properties.md`).
+- **Custom 3D models (`.obj` import) are built** (`scene-designer/STORY.import-obj-model.md`, done; tasks
+  `scene-designer/TASK.obj-parser.md`, `persistence/TASK.embed-imported-meshes-in-project-file.md` and
+  `compiler/TASK.compile-imported-meshes.md`, all done; the old `SPIKE.custom-mesh-and-sprite-import.md` is
+  `done` for meshes, and the sprite half moved to `SPIKE.sprite-image-import.md`, `proposed`). Decisions made with
+  the owner: format `.obj`; **embedded in the `.gsds`** (a `meshes` array, `formatVersion` stays 1 because it's
+  additive; nothing is copied to an assets folder); **refused at import** if any used vertex is outside about
+  ±8 (the DS's `v16` range, `MAX_IMPORTED_COORDINATE`) or the model has more than one frame's triangles (2048),
+  with no automatic rescaling; **geometry only, one color per mesh** (mtllib/usemtl/vt are ignored with a
+  warning). How it fits: `parseObj` (`packages/core/src/obj-import.ts`, pure) is called by the Electron main
+  process (`main/assets-ipc.ts`, `window.goodstuff.assets.importMesh()`) after it reads the file; the renderer
+  gets an `ImportedMesh` (indexed vertices + normals + indices) and the `IMPORT_MESH` reducer action adds it to
+  `state.project.meshes` and a `MeshInstance3D` (with `mesh.importedMeshId`, no `primitive`) to the scene in one
+  step. **Everything gets a mesh's geometry from `resolveMeshGeometry(mesh, project.meshes)`** in
+  `packages/core/src/mesh-geometry.ts` (viewport, `computeSceneBudget(root, meshes)`, translator, reference
+  render), and shared vertex tables are keyed by `meshSourceKey`. `withUpdatedScene` drops models no mesh uses.
+  The persistence validator additionally cross-checks references (a mesh naming a missing model is refused on
+  open; `missing-model` is a compile error). UI: **Scene > "Import Model (.obj)..."** (3D projects only) and the
+  Inspector's Mesh select lists imported models after the four primitives. Imported meshes are drawn
+  double-sided in the viewport because the runtime draws with culling off. Verified by
+  `tests/prototypes/e2e/import-obj.mjs` (10 checks) and the emulator (`imported` fixture; a UI-authored
+  two-houses-and-a-cube project at IoU 0.941). `tests/prototypes/e2e/models/house.obj` equals `HOUSE_OBJ` in
+  `packages/compiler/src/fixtures.ts` (drift-tested). Known limits: shading only checked by eye, no winding
+  repair, no rescaling, concave polygons not repaired, a build from before this change rejects a project that
+  contains a model.
+- **Transform tools** (`scene-designer/STORY.transform-tools-on-toolbar.md`, done): the workspace toolbar (3D
+  projects only) has **Select (Q) / Move (W) / Rotate (E) / Scale (R)**; `activeTool` is editor state
+  (`EditorTool` in `editor-store.tsx`, not saved, not an edit); keys are handled in `WorkspaceToolbar.tsx` and
+  ignored in inputs/selects. In `Viewport3D.tsx`, `SelectionGizmo` wraps drei's `TransformControls` and is
+  rendered **at the scene root** (never inside the node's group — that recurses forever); each drawn node
+  registers its group in a `Map` (`objects`), and the gizmo finds the selected one each frame. It writes the
+  active field back through `setTransform3D` while dragging (rounded to 4 decimals); no gizmo on the scene
+  root, a hidden node, or the other screen, and no *scale* gizmo on cameras/lights. Move is world-axis,
+  Rotate/Scale local. The canvas ignores "missed" clicks for 400 ms after a gizmo press (`lastGizmoInteractionAt`),
+  otherwise releasing a handle deselects the node. Verified with real mouse drags:
+  `tests/prototypes/e2e/transform-tools.mjs` (10 checks). Not built: snapping, world/local toggle, multi-select, undo.
+- **Undo/redo** (`scene-designer/TASK.undo-redo-for-scene-edits.md`, done): **Ctrl+Z** undoes, **Ctrl+Shift+Z**
+  redoes (also Cmd), plus Undo/Redo entries at the top of the Scene menu (they show the edit's label and shortcut).
+  `editorReducer` in `editor-store.tsx` wraps the old reducer (now `applyAction`); `edit-history.ts` is the pure
+  bookkeeping. A step holds *references* to the scene tree, the project's imported models and the selection (never
+  copies), which is why undoing back to the saved tree reads as "no unsaved changes"; saving keeps history,
+  opening/creating/closing a project resets it; it's capped at 200 and not saved in the project file. **One step per
+  gesture**: edits of the same property of the same node less than 1 s apart merge (sliding window), and a released
+  gizmo handle or 2D marker calls `endEditGesture` so two quick drags are two steps. Only the actions in
+  `describeEdit` are recorded (add/delete/duplicate, move/rotate/scale, visibility, mesh source, model import); tool,
+  screen filter, FPS target, tab and selection alone are not. A no-op edit (same value) is no longer an edit at all.
+  The shortcut works with an Inspector field focused, and is ignored on the startup view and behind the
+  unsaved-changes prompt. Verified by 27 unit tests and `tests/prototypes/e2e/undo-redo.mjs` (13 checks, real keys
+  and drags). Not built: Ctrl+Y, a history panel; Cmd+Z untested.
+- **Textures on 3D meshes** (`scene-designer/STORY.mesh-textures.md`, done; tasks `TASK.texture-uv-coordinates.md`,
+  `persistence/TASK.embed-imported-textures-in-project-file.md`, `compiler/TASK.compile-textures.md`, all done).
+  Decisions made with the owner: **3D mesh textures only** (2D sprites stay in `SPIKE.sprite-image-import.md`);
+  **a size the DS can't use is refused**, never resized (each side a power of two from 8 to 1024, and it must fit
+  512 KB); **16-bit direct color** (5 bits per channel + 1-bit alpha, 2 bytes a pixel). I chose without asking:
+  PNG only, decoded in the main process with **pngjs** (`main/assets-ipc.ts`, `window.goodstuff.assets.importTexture()`);
+  **stored embedded and already converted** (`ImportedTexture { id, name, width, height, texels }`, `texels` = base64 of
+  little-endian uint16, red in the low 5 bits, opaque flag in bit 15, row 0 on top; `project.textures`, `mesh.textureId`,
+  `formatVersion` still 1, one-way for older builds), so the editor shows exactly what the ROM shows; one texture per
+  mesh instance; alpha >= 128 is opaque (partly transparent pixels warn). Conversion and every rule live in
+  `createTextureFromRgba` (`packages/core/src/imported-texture.ts`, pure). **UVs are in image space** (u right, v DOWN,
+  row 0 = v 0; `PrimitiveGeometry.uvs`, `ImportedMesh.uvs`; the OBJ importer reads `vt` and flips v; primitives are
+  upright seen from outside — orientation is tested geometrically in `uv-coordinates.test.ts`). Compiler: tables are
+  keyed by geometry **and** texture (`primitive:cube|texture:<id>`) because `t16` texture coordinates are in texels and
+  depend on the texture's size (`toT16`); a textured mesh is drawn white; errors `missing-texture`, `texture-needs-uvs`,
+  `texture-memory`, and out-of-range UVs; runtime (`scene.h`/`main.c`) maps all four VRAM banks as texture memory, uploads
+  each texture once (`glTexImage2D` takes the size *class* 0..7), binds one per mesh (`glBindTexture(0, 0)` = none). UI:
+  Inspector "Texture" select + "Import PNG..." on meshes (disabled with an explanation when the model has no UVs);
+  viewport uses a `DataTexture` (nearest, repeat, sRGB); Hardware tab has a texture-memory bar; texture edits are undoable
+  (`textures` is part of `EditState`). Verified by `tests/prototypes/e2e/texture-mesh.mjs` (13 checks) and by the emulator:
+  the `textured` fixture is sampled for color at 8 quadrant centers (fails if the picture is wrong). Not built: palettes,
+  keeping the original PNG, per-material textures, 2D sprites. Not verified: sampled colors on the sphere/cylinder,
+  memory fragmentation near 512 KB.
+- **2D sprites** (`scene-designer/STORY.import-sprite-image.md`, done; tasks `persistence/TASK.embed-imported-sprites-in-project-file.md`,
+  `compiler/TASK.compile-2d-sprites.md`; the old `SPIKE.sprite-image-import.md` is `done`; `compiler/STORY.compile-2d-scene-to-nds-rom.md` is `in-progress`).
+  **This is the first slice of "2D making": a 2D project now compiles to a ROM that draws its `Sprite2D` images on both screens.**
+  Decisions with the owner: first slice = sprite images end to end; **256-color paletted** images (index 0 transparent, so 255 visible colors);
+  **only the DS's twelve sprite sizes** (8x8 ... 64x64 plus the wide and tall ones; a 64x16 is refused), never resized. I chose: more than 255
+  colors is **reduced (median cut) with a warning**, not refused; alpha >= 128 is opaque; **one of the sprite engine's 16 extended palettes per
+  distinct image per screen** (so at most 16 different images a screen, unlimited sprites up to 128 share them; 4-bit sprites not built);
+  128 KB of sprite memory a screen (`DS_HARDWARE_PROFILE.graphics2D.spriteMemoryBytesPerScreen`); embedded and already converted, like textures.
+  **Data:** `ImportedSprite { id, name, width, height, palette, pixels }` (`packages/core/src/imported-sprite.ts`, `createSpriteFromRgba`, pure),
+  `project.sprites`, `SceneNode.spriteId`; `formatVersion` still 1. **Semantics:** a sprite is drawn centered on its `position` at absolute screen
+  pixels (the 2D viewport never added parents' positions and the ROM matches it); **tree order is drawing order** (later = on top; `flattenSceneTreeInOrder`
+  in core, because `flattenSceneTree` makes no order promise); only the node's own `visible` counts. **Compiler:** `translateScene2D`
+  (`translate-scene-2d.ts`) -> `DsScene2D` (per screen: images with tile-ordered pixels, sprites in hardware order = reverse tree order) ->
+  `writeScene2DDataC` -> `RomBuilder.build2D` with the separate `packages/compiler/runtime2d` (own Makefile/`main.c`; top screen = main engine, bottom =
+  sub engine; sprite tiles in VRAM banks B/D, extended palettes in F/I mapped as LCD memory while written, then as palettes). `compileProject`
+  picks by mode; `checkProject` is the diagnostics-only entry (Export ROM's pre-check); Play works unchanged. Diagnostics: errors `missing-sprite`,
+  `too-many-sprites`, `too-many-sprite-palettes`, `sprite-memory`; warnings `sprite-without-image`, `sprite-off-screen`, `two-d-node-not-built`
+  (TileMap, Label, audio, animation; AnimatedSprite2D was added later, see "Animated sprites"), `two-d-scripts-not-built`. **Editor:** Inspector "Image" field + "Import PNG..." + preview
+  (`SpriteImageField`), Scene > "Import Sprite Image...", the 2D viewport draws the image (`viewport/sprite-image.ts` makes a data URL), Hardware
+  tab per-screen sprite memory and palettes, store actions `IMPORT_SPRITE`/`SET_SPRITE_IMAGE` (undoable; `sprites` is part of `EditState`),
+  main-process `assets.importSprite()`. **Also new: `SET_NODE_SCREEN`** — a node of a *2D* project can be put on either screen from the Inspector's
+  Screen select (it used to be disabled, so a 2D project could only use the top screen); it stays disabled in 3D projects and for the scene root.
+  **Gotcha found by the E2E test:** the renderer's CSP (`default-src 'self'`) blocked `data:` images; it now has `img-src 'self' data:`.
+  **Verified:** `sprites-2d.rom.test.ts` runs the ROM in melonDS and compares both screens *pixel by pixel* with a reference painted from the
+  images (`captureBothScreens` in `emulator-capture.ts`; backdrops are dark blue top / brown bottom so the capture finds the screens; match
+  1.0000 top, 0.9993 bottom, incl. draw order swapped and a project authored through the real UI), `tests/prototypes/e2e/sprite-image.mjs`
+  (11 checks; prints `GSDS_SPRITES_ROM_PROJECT=` for the ROM test), plus unit tests in core, persistence, ui and compiler. The 3D ROM suite still
+  passes after the builder refactor (`RomBuilder.build` and `build2D` share `buildFrom`). **Not built:** tile maps, Label text,
+  sprite rotation/scale, 16-color images, scripts/sound/animation in 2D ROMs, dragging a sprite between screens, and drawing the
+  2D nodes of a *3D* project's 2D screen (still `two-d-node-not-built`). **Packaged path** for `runtime2d` (`compiler-runtime-2d`) is untried.
+ still lists the whole scene,
+  and there are no paths (`$Child/Grandchild`). Tests: `copyName` and scoped-lookup unit tests in core, `touch-areas.test.ts` (three blocks compile with no warnings, each asking a different touch
+  area), `duplicate-names.test.ts` (store). Not run as a whole ROM on the emulator. The E2E scripts `shortcuts.mjs` and `sound-player.mjs` were updated for the new copy names.
+- **Touch areas** (`touch/STORY.touch-areas.md`, `in-progress`; tasks `TASK.touch-area-editor.md`, `TASK.script-touch-area-queries.md`, `TASK.compile-touch-areas.md`, all done). New
+  node kinds **TouchArea2D** and **TouchArea3D** that scripts ask whether the stylus is on them. Decisions with the owner: TouchArea2D = a **rectangle on the touch (bottom)
+  screen** (`touchArea2D: { width, height }` pixels, default 64 x 64, max 256 x 192, centered on the node's position like a sprite); TouchArea3D = a **ray-picked volume**
+  (`touchArea3D: { shape: box|sphere, size, radius }`; a ray from the camera through the touched pixel is tested against it, so the 3D scene must be on the bottom screen);
+  scope = editor + scripts + ROM. **Script API** (by `$Name.` or bare on the node): `is_touched()`, `is_touch_pressed()` (one frame per press), `is_touch_released()` (lifted this
+  frame after being on it; dragging out is not a release); the names are reserved. Model `core/src/touch-area.ts`; the kinds are in the per-mode kind lists (2D kind in every
+  project, 3D kind in 3D projects only; `TouchArea2D` is a 2D visual kind, so it lives on a 3D project's 2D screen). **Compiler:** `DsTouchArea` (rect in pixels or box/sphere
+  params in 20.12), `DsNode.touch`, `camera.tanHalfFov`; scene data gained `touchAreas[]`, a count and `tanHalfFov` (existing exact-output tests were updated); diagnostics
+  `touch-area-unused`, `touch-area-not-touchable`. **Runtime** (`gs_runtime.c`): `gs_update_touch()` each frame after `gs_read_input()`; a volume is a soft-float ray test in the shape's
+  own space (transpose of view x world, divided by the node's scale; slab test / discriminant; half line), only while the stylus is down. **Where it works:** a 3D project with 3D on
+  top -> TouchArea2D works (2D screen = bottom); 3D on the bottom -> TouchArea3D works; a **2D project's ROM ignores scripts, so a TouchArea2D there does nothing**
+  (`two-d-node-not-built`). **Editor:** Inspector fields (`TouchAreaFields.tsx`), a dashed teal rectangle in the 2D viewport, a teal wireframe in the 3D viewport, store actions
+  `SET_TOUCH_AREA_2D/3D` (merged typing, undoable), the owner's `Hand.png` as the icon of both kinds (`editor/icons/TouchArea2D.png` and `TouchArea3D.png`). **Verified:** unit tests (core 16, persistence 3, compiler 13, store 8) and
+  `testing/touch-areas.rom.test.ts` (a real stylus click in melonDS: inside/outside a rectangle, one press counted once while held 2 s, a box picked by a ray through the pixel where
+  three.js says its origin is, a box stretched by its scale, a sphere). **One touch, one area (owner's request: grab one block at a time):** in `gs_update_touch`, a touch that goes down is owned by the nearest volume under it (rectangles: the last in the tree) until the stylus is lifted; only the owner reports `is_touched()`, and `is_touch_pressed()` is now true only on the touch's first frame; a touch that goes down on nothing owns nothing (areas it slides over report held, as before). Uses the ray depth from `ray_distance` and a Newton `soft_sqrt`. Emulator-verified with two overlapping volumes (`touch-areas.rom.test.ts`, 'one area'); the older touch emulator tests were not re-run. **Dragging:** `Input.touch_ground_x(h)` / `touch_ground_z(h)` (script built-ins; the world point where the stylus ray meets the plane y = h; checker `touchGround`, `gs_touch_ground`) plus vector copying (`$A.position = $B.position`) support `tests/prototypes/scripts/jenga-block.gsscript` (pick up on `$JengaTouch.is_touch_pressed()`, follow the stylus with `move_and_collide` in steps of at most `max_drag_step`, the touch area a child of the block, 3D scene on the bottom screen); the ground mapping is emulator-tested against three.js's projection, the script itself is only compile-checked (`touch-areas.test.ts`). **That emulator file is timing-sensitive**: the click sometimes lands before the window settles and is lost, so
+  hits are retried (`touchSeen`, fresh geometry each time, up to 3) and a miss is only believed after a hit on the same ROM. **Not verified:** `is_touch_released()` on the
+  emulator (the input tool holds a touch until the picture is taken). Not built: touch in 2D projects, occlusion between areas, touch position inside the area, other 3D shapes.
+- **Sprites on the 2D screen of a 3D project** (`scene-designer/STORY.sprites-on-the-2d-screen-of-a-3d-project.md`, `in-progress`): the first slice of the 2D screen in a 3D ROM is built —
+  **`Sprite2D` nodes are drawn** (before this the ROM left that screen blank and warned `two-d-node-not-built`). Decisions with the owner: first slice = sprites only; **VRAM split only when
+  needed**: a 3D project keeps 512 KB of textures until a sprite is drawn on its 2D screen, then bank D holds the sprite tiles and textures get banks A-C (**384 KB**;
+  `textureMemoryLimit` in core, used by the compiler's `texture-memory` check and the Hardware tab). **How:** `collectSprites` (`translate-scene-2d.ts`, shared with 2D projects) collects the
+  sprites of the project's 2D screen into `DsScene3D.sprites2D` (same rules as a 2D project: centered on position, tree order, own visibility, 128 sprites / 16 images / 128 KB); the writer's
+  `writeScreen2DC` writes them for both runtimes; `scene.h` has `GsScreen2D sprites2D` as the last `GsScene` field; the runtime's `gs_sprites.c` (`gs_init_sprites`, `gs_update_sprites` right after
+  the vertical blank) uses the **sub engine** (3D is the main engine, so the 2D screen is always the sub engine's; tiles in bank D, palettes in bank I) and `main.c` maps bank D as sprite memory
+  instead of texture memory when there are sprites. Which screen a sprite is on follows from the project (its 2D screen), not the node's `screen`. The 2D screen's backdrop is black.
+  **Verified:** `sprites-on-3d.test.ts` (9), `testing/sprites-3d.rom.test.ts` (3D on top, 3D on the bottom, and a textured mesh next to sprites: sprites match the painted reference at 0.9993-1.0,
+  cube silhouette 0.93-0.98; shared helpers in `testing/sprite-reference.ts`, and `captureBothScreens` takes which physical screen has the bluish 3D backdrop), `e2e/sprites-3d-project.mjs` (5). The
+  other 2D kinds still warn `two-d-node-not-built` ("only draws Sprite2D there so far"). **Not built:** scripts reading/moving 2D nodes (`position`/`visible` of a Sprite2D), Label text, tile maps,
+  animated sprites. Also fixed two stale E2E expectations (`export-rom.mjs` still expected 2D export to be unsupported; `two-d-screen.mjs` the old warning text).
+- **Scripting and rotating 2D nodes** (`scene-designer/STORY.script-and-rotate-2d-nodes.md`, done). Decisions with the owner: **scope = the 2D screen of a 3D project** (the only place scripts run;
+  2D projects' ROMs still run none); properties **position, rotation, scale and visible**, with Inspector fields. A Sprite2D has `transform2D?: { rotation?, scale? }` (`core/src/sprite-transform.ts`;
+  degrees **clockwise**, scale per axis 1/16..8 with the sign a flip). **Script members on a Sprite2D:** `position.x/.y` (pixels), `rotation` (one number), `scale.x/.y`, `visible`; the checker's
+  `isSpriteTarget`/`spriteMember` resolve rotation to `nodeAxis` axis 2, so the C is `gs_node_state[n].rotation[2]`; `.z` and `rotation.x` are errors; vector copies stay within 2D or within 3D;
+  a member of a number is now an error. **Hardware:** a sprite that starts rotated/scaled or that a script writes gets one of the sub engine's **32 rotation matrices** (`too-many-rotating-sprites`) and is
+  drawn in a box twice its size (corner = center minus a whole picture size); the compiler can't tell a move from a turn, so a moved sprite gets a matrix too. `collectSprites` takes a
+  `SpriteLiveness` (node index, "a script reaches it", "needs a matrix"); `DsSprite` gained `node`, `dynamic`, `affine`, `rotation`, `scaleX/Y`; the 3D form of `GsSprite` carries them; `gs_sprites.c`
+  `follow()` updates a dynamic sprite from `gs_node_state` each frame (`oamRotateScale`, `oamSetXY`, `oamSetHidden`) before `oamUpdate`; a hidden sprite a script names is kept (starts hidden), an off-screen one
+  is kept if it can turn or be moved. **Editor:** `SpriteTransformField`, `SET_SPRITE_TRANSFORM` (typing merges), the 2D viewport uses CSS `rotate`/`scale` on the picture, auto-complete offers the members.
+  **Verified:** 826 fast tests, and one emulator test (rotated 90 and 30 degrees, stretched, mirrored: 0.9855 against a painted reference, which confirmed the direction). **Not run:** a script moving a sprite on the
+  emulator, the real-app Inspector, and the older ROM/E2E suites after these runtime changes. Not built: 2D-project scripts, animating sprite rotation, other pivots.
+- **Selecting and reordering nodes in the Scene tree** (`node-list/STORY.select-and-reorder-nodes.md`, done). **Ctrl+click** (Cmd) toggles a row in the selection, **Shift+click** selects the range from the
+  anchor (the row last clicked without Shift) to the row, in tree order, replacing the rest; a plain click selects one. State: `selectedNodeId` is the **primary** (Inspector and viewports), `extraSelectedIds` the
+  others, `selectionAnchorId`; `selectedNodeIdsOf(state)`; `normalizeSelection` (wraps the reducer) drops gone nodes and clears the extras when the primary changes by anything but a modified click or a duplicate;
+  the Inspector shows a note ("N nodes are selected"). **Delete/Backspace, Ctrl+D, Scene > Duplicate/Delete Node act on the whole selection** (actions `DELETE_NODES`/`DUPLICATE_NODES`, one undo step; the
+  shortcut "selectedIsRoot" now means nothing but the root is selected; the old `DELETE_NODE`/`DUPLICATE_NODE` by id remain). **Reordering is drag and drop** in `SceneTreePanel`: top quarter of a row = before, bottom
+  quarter = after, middle = inside (last child; the root only takes children); dragging a selected row moves the whole selection (tree order kept), an unselected row moves alone; `MOVE_NODES`, pure core
+  `moveSceneNodes`/`topMostNodes` (`scene-node.ts`), `canMoveNodes` lets the tree show only valid drops. Refused: into itself or its subtree, beside the root, no change; **in a 3D project a 2D node isn't nested under a 3D node
+  or the reverse** (same rule as ADD_NODE; players and the root take anything). Local transforms are kept on reparenting. Verified: `scene-move.test.ts` (10), `multi-select.test.ts` (12),
+  `e2e/tree-select-reorder.mjs` (4; the drag is played as DOM drag events since CDP can't drive a real one, so a real mouse drag is untried). Not built: Ctrl+A, Alt+arrow reordering, collapsing, multi-node Inspector.
+  **Editing gotcha:** a heredoc containing backticks or apostrophes breaks on this machine, and a `sed` with `\`` in its pattern means start-of-line and corrupted `scene-node.ts` once (fixed): use the Write/Edit tools for
+  code with backticks.
+- **Folding nodes in the Scene tree** (`node-list/STORY.collapse-nodes-in-the-tree.md`, done). Every row with children has an arrow (▼/▶) that folds its children away; a folded row shows a count of the nodes hidden
+  inside; the tree header has **Collapse all** (▶▶; the scene root stays open) and **Expand all** (▼▼). `EditorState.collapsedNodeIds`, actions `TOGGLE_COLLAPSED`/`COLLAPSE_ALL`/`EXPAND_ALL`, helpers
+  `visibleNodeIds`/`ancestorIds`/`nearestVisibleId`. **Only a look:** not saved, not an edit (no undo step, not "unsaved"), reset when a project opens. **Selection follows what is shown:** folding takes the selected
+  nodes inside out of the selection (the folded node becomes primary if the primary was inside); a Shift+click range runs over shown rows (a hidden anchor counts as its folded ancestor); selecting a node inside a fold
+  from elsewhere (new node, viewport, undo) unfolds only the way to it (`normalizeSelection`); dropping into a folded node opens it; deleted ids are forgotten. Verified: `state/collapse.test.ts` (12) and a
+  folding check in `e2e/tree-select-reorder.mjs` (now 5 checks). Not built: keyboard folding (arrow keys nudge the selected node), remembering folds, double-click.
 - **Sound** (`audio/STORY.import-sound-and-audio-player.md`, done). Decisions with the owner: **WAV, MP3 and OGG**; **convert
   automatically** (mix to mono, resample down to at most 32 kHz, never up, store 16-bit; **a sound over the 2 MB budget is resampled
   lower to fit instead of refused**, floor 8 kHz = about 131 s, `MIN_FITTED_SAMPLE_RATE`, with a "will sound duller" warning); **Autoplay off = silent in the ROM** (before
@@ -563,7 +1288,7 @@ version — this is a summary, not a substitute):
   save/reopen/undo, and a UI-authored ROM run in melonDS at 40% volume and 1.5x pitch reading 0.1001 for 1.05 s). Deliberately breaking
   volume and pitch in the compiler fails those tests. MP3 verified once with a real 44.1 kHz file (`GSDS_TEST_MP3`); **OGG not exercised**
   (header sniffing only unit-tested). Playing a sound from a script is built (see "Scripting"). Not built: loop points, panning/stereo, ADPCM, streaming.
-  Gotcha: DUPLICATE_NODE keeps the node's name (two rows named alike); the meter needs a sound output device.
+  Gotcha: the meter needs a sound output device. (DUPLICATE_NODE used to keep the node's name; it now numbers the copy, see "Duplicating and `$Name`" below.)
 - **Collision** (`collision/EPIC.collision-shapes.md`, done for the first slice). Decisions with the owner: shapes plus **overlap checks only, no physics** (the DS has
   no physics library); shapes **box, sphere, capsule, cylinder**; scripts **ask each frame** (`a.overlaps(b)`, no events); the editor **draws the shapes** as wireframes.
   I chose (Godot's meanings): a box's `size` is its full extents (default 1 x 1 x 1), radius 0.5, capsule/cylinder height 2 (a capsule's is the total, ends included, and
@@ -587,9 +1312,9 @@ version — this is a summary, not a substitute):
 - **Solid shapes** (`collision/STORY.solid-shapes-and-move-and-collide.md`, done). Decision with the owner: **solid shapes plus a move call** (floors, walls and
   ceilings; no moving platforms, slopes or step-up). **Data:** `collision.solid` (default false; the Inspector's **Solid** checkbox; solid shapes draw warm orange in
   the viewport). **Language:** `move_and_collide(dx, dy, dz)` (moves the node's `position`, returns whether it was stopped), `is_on_floor()`, `is_on_wall()`,
-  `is_on_ceiling()` (as of the last move). A **body** is a node with collision shapes under it; the solid shapes it can hit are the visible `solid` ones not under it.
+  `is_on_ceiling()` (as of the last move), and **`probe_solid(y, x0, x1, x2)`** (owner's Jenga request: a block must know what holds it): which of three points, given in the frame of the body's **first collision shape** (its centre, turn and scale apply, so a shape lifted off the node's origin or turned a quarter about Y is probed the way it sits; y up from the shape's centre; x along the shape's **longer horizontal side**: its Z for a box longer in Z than in X, its X otherwise), are inside a visible solid shape that is not under the body; the answer is an int, 1 for the first point, 2 the second, 4 the third, added up. Checker `probeCall` (counts as using the solids like a move, writes nothing), `gs_probe_solid` in `gs_collision.c` (one pass over the solids for all three points, each a tiny sphere through `gs_shapes_overlap`), a completion entry. Emulator-verified (`collision-body.rom.test.ts`: on a floor 7, in the air 0, over a platform's edge 3 / 6, rotated a quarter turn 6, a Z-long lifted shape 3). **The first version probed in the node's own frame along its X, which did not match the owner's real Jenga project** (`Jenga.gsds` in their OneDrive Documents: blocks 0.6 x 0.3 x 1.8, long side along the shape's Z, the JengaCollision shape lifted 0.2609 above the block's origin, cross layers made by turning the *shape* 90 degrees): the probes sampled the wrong points, so blocks were judged held or loose at random and the tower looked broken (a screenshot showed layers hovering apart). Lesson: **read the owner's actual project file** (path in `%APPDATA%/@goodstuff/desktop/recent-projects.json`) before tuning a script to it. The example script now reads its shape's turn (`$JengaCollision.rotation.y`, 0 or +-90) to know which way the block lies and tilts with `rotation.x` or `rotation.z` to match. **Checked on the DS with the owner's real project** (a temporary emulator test that swapped the example script into a copy of the project's scene and stepped all scripts 30 frames a second; not kept, it depends on a file outside the repo): the 24-block tower settles into a compact stack (the authored 0.05 to 0.08 gaps between layers close, nothing tips), and with two of the three supports pulled from under the top layer its three blocks tip about the held end and lean at about 10 degrees on the layer below. **Jenga collapse, round 2** (owner, with a picture of a tower that only shuffled into a stable lean: "does not feel like Jenga at all"): the example script (`jenga-block.gsscript`) now needs a **`Node3D` named `Tower`** in the scene (blocks talk through it: `position.y` = how many blocks are moving, `position.x` = the tower-is-coming-down flag). Blocks that **let go** (a tip past `tip_limit`, a slide that comes off its support, a block that loses its support) keep their motion: they drift, spin and tumble (`vx/vz`, `spin`), a turn in the air is refused if it would push a corner into something (a hair-sized move down is refused exactly when the body touches or is inside a solid), a hard landing (`impact_speed`) kicks a block sideways and sets it turning so stacks end up out of true, blocks look every 0.2 s (`check_interval`), a block that has slid out from under a load goes at up to 2.5 units/s, nothing decides what to do in the first second (`calm`: the blocks above haven't landed), and a tipping block re-checks for a load every 0.12 s (a load arriving turns the tip into a slide). When `collapse_count` (4) blocks move at once, every block at rest is thrown outward once (`blow`), and a block that falls 20 units below its start is retired (`gone`). Watched in real emulator screenshots (a project copy with the outer two blocks of the bottom layer hidden, built with the CLI and captured with `capture-melonds.ps1`): the tower on one block comes down into a scattered pile, **but far too slowly**: **the real cost was the runtime, not the rules** (per script instance in the owner's 30-block tower: 7 ms for a settling block, 60 to 100 ms mid-collapse; a frame took 0.2 to 1.4 s). Runtime fixes, all in `packages/compiler/runtime`: (1) `compose_node` remembers what each node was composed from (its 9 numbers and its parent's version) and skips it when nothing changed: a move refreshed every nearby solid and in a tower that is all of them (7 to 2 ms per block); (2) `gs_shapes_overlap` has an exact box-box separating-axis test (`obb_overlap`, 15 axes, 32-bit multiplies) so turned boxes no longer go through the search (mid-collapse 60 to 100 ms down to 0 to 22 ms per block); (3) `angle_of` divided a 64-bit number by a constant, a library call of about 700 cycles six times per node composed: it is `degrees / 45`. Verified after (1) and (2): all four collision emulator suites (`collision.rom` 102 including the random pairs against the oracle, `collision-scene.rom` 21, `collision-body.rom` 38, `player-script.rom` 22). **Not re-measured after (3), and the real game's frame rate was not re-checked**: at last measure the script cost was about 46 ms a frame settling and 181 ms mid-collapse (33 ms is a 30 fps frame), so a collapse still runs in slow motion; next steps would be fewer composes per move (`place_body` composes the body for every try and bisection round), skipping the turn check on alternate frames, and fewer blocks awake at once. **Jenga tower rules** (owner: a tower balanced on one block never collapsed; picture of a tower standing on the middle block of its bottom layer): the example script now treats a block held **only at its middle** as *balanced*, which is unstable: it goes over the edge of the block under it (`balance_reach`), toward the side that lost support last (a hash of its height if unknown, so a layer goes the same way). Going over is a **tip** (about an edge, in steps of at most 3 degrees a frame so the next look sees it touch what it lands on) when nothing is on top of the block, and a **slide** out from under its load along its length otherwise (a tip lifts one side, and that side pushed up into the load and then the body, being inside a solid, fell through everything). A block that lands where the probes see nothing (an edge under its very tip, the corner of a tilted block) goes over that edge. Blocks don't turn in the air. Checked on the emulator with the owner's project and the outer two blocks of the bottom layer pulled: the layer above slides out, everything above it comes down, blocks scatter and some fall off the table; a few blocks end up tilted into the table's edge (a tip is placed, not collision-tested). **Broad phase (owner said the Jenga physics were slow):** measured first with a 50-block solid tower in that test: a probe cost 4 ms and a move 1.7 ms, because each call brought up to date and tested *every* solid. Now `gs_move_and_collide` and `gs_probe_solid` keep a compact list of solid nodes (`solid_nodes`) and only refresh/test the solids near them (a cheap per-axis box test on last frame's transforms, `node_near`; a probe takes solids as placed at the start of the frame and tests points against boxes directly, `point_in_box`, GJK only for other shapes). Now: probe 0.46 ms far / 0.67 ms over the tower, move in the air 0.53 ms, resting on the tower 1.55 ms. **Lessons:** the ARM9 has no fast 64-bit multiply or square root (a first culling test using them cost as much as it saved: keep such tests to 32-bit multiplies and per-axis compares), and its data cache is 4 KB (touch as little per node as possible). What is left is mostly a per-solid scan (~0.4 ms for 58 solids) and the 0.09 ms `compose_node` of the body itself. A **body** is a node with collision shapes under it; the solid shapes it can hit are the visible `solid` ones not under it.
   The checker errors (naming the node) when the script's node has no shape under it. **Runtime** (`gs_collision.c`): per-axis (Y, X, Z) moves in steps of at most 0.25
-  units, a blocked step is bisected 6 times and pulled back by a 0.01 skin; a body already inside a solid moves freely (so it can always get out). **Example:**
+  units, a blocked step is bisected 6 times and pulled back by a 0.01 skin; a body already inside a solid may move **up**, or make any move that ends clear, but a move down or sideways that would stay inside is **refused** (it used to move freely; that let a Jenga block that a tilt had pushed a little way into the table fall straight through a 12-unit-thick table). **Example:**
   `tests/prototypes/scripts/player-jump.gsscript`. **Lessons:** (1) measure on the DS: the first version cost 6.7 to 19 ms a call; an early return for a blocked step
   no longer than the skin, shifting the body's shapes instead of recomputing its subtree, and an exact test for two axis-aligned boxes brought it to 0.6 to 0.9 ms;
   (2) GJK in 20.12 needs an exact search direction (the normal of the simplex edge/face, not a rounded difference), a 15-bit working range with int64 products, and the
@@ -642,8 +1367,8 @@ version — this is a summary, not a substitute):
   config binds none), `script-sound.rom.test.ts` (audio meter), and `tests/prototypes/e2e/script-editor.mjs` (14 checks in the real app;
   its exported project run on the emulator with `GSDS_SCRIPT_ROM_PROJECT`, IoU 0.996). **Known limits:** non-uniform scale under a
   rotated parent has no shear; `soundKill` on a reused channel could cut off another sound; the dynamic-camera fix (`-fno-strict-aliasing`)
-  is a hypothesis that stopped the flake, not a proven cause; OGG never exercised; no signals, arrays, classes, vectors as values,
-  runtime node creation, or in-editor run; no Scene-tree marker for nodes with scripts; 2D projects can write scripts but cannot compile yet.
+  is a hypothesis that stopped the flake, not a proven cause; OGG never exercised; no signals, arrays, classes, vectors as values (except copying one node's `position`/`rotation`/`scale` to another's: `$Block.position = $Touch.position`, checked in `checkAssign`, three assignments in `script-codegen.ts`; not run on the emulator),
+  runtime node creation, or in-editor run; no Scene-tree marker for nodes with scripts; 2D projects can write scripts, but the 2D ROM ignores them (warning `two-d-scripts-not-built`).
   Gotchas: a script's node references are checked against node *names* (a name shared by two nodes is an "ambiguous" error); Bash heredocs with
   apostrophes and Python replacement strings break JS escapes on this machine, so use the Write/Edit tools for such text.
 - **Lighting** (reported by the owner: "the ROM is very dark and the editor doesn't match"; fixed and now measured).
@@ -714,13 +1439,21 @@ version — this is a summary, not a substitute):
   `STORY.open-recent-in-project-menu.md` is `proposed` (everything it
   needs now exists — only the menu section is left).
 
+## Known test-environment failures (not caused by the code; don't chase them)
+- `translate-scene-3d.test.ts` "the runtime's fallback scene": on this Windows checkout (`core.autocrlf=true`) the committed
+  `runtime/source/scene_data.c` is CRLF in the working tree while the generator writes LF, so the byte comparison fails. Everything else passes
+  (`pnpm test`: 722 tests as of the sprite work).
+- `pnpm -r typecheck` reports errors in `apps/desktop` about `ChildProcess.on/once` in the compiler's `node-adapters.ts` and `node-emulator.ts`
+  (the desktop app typechecks those sources with a different `@types/node`); the compiler's own typecheck passes.
+- `tests/prototypes/e2e` needs `npm install` there once (puppeteer-core) before its scripts run; see its README.
+
 ## Not built yet (known gaps — see `requirements/` tickets, above, for detail)
 - Project file I/O, the startup view, and project-mode locking all work.
   Recent projects and the unsaved-changes guard work too. Still
   missing: automated JSON Schema generation (both schemas are
-  hand-authored), the Project menu's Open Recent, 2D compilation and 2D
-  sprite images (Export ROM and Play are built, for 3D; models,
-  textures and sounds can be imported), and CI for any of the tests (`pnpm test` and
+  hand-authored), the Project menu's Open Recent, the rest of 2D (sprite images
+  compile and draw; tile maps and scripts/sound in 2D ROMs do not; Export ROM and Play are built for both
+  modes; models, textures, sounds and sprite images can be imported), and CI for any of the tests (`pnpm test` and
   `pnpm test:rom` run locally; the editor E2E prototypes are in `tests/prototypes/`). All tracked
   as real tickets rather than a prose list — this section intentionally
   stays short so it doesn't drift out of sync with them.

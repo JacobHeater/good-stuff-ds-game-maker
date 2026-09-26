@@ -1,4 +1,5 @@
 import type { ImportedMesh } from "./imported-mesh";
+import type { ImportedSprite } from "./imported-sprite";
 import type { ImportedTexture } from "./imported-texture";
 import type { ProjectSnapshot } from "./project-snapshot";
 import type { RecentProjectListing } from "./recent-projects";
@@ -72,6 +73,19 @@ export interface ImportTextureResult {
 }
 
 /**
+ * The outcome of importing a PNG as a sprite image. On "ok", `sprite` is the picture already converted to the DS's 256-color
+ * sprite format (with a fresh id) and `warnings` says what was changed. On "error", `errors` says why it was refused
+ * (typically a size the DS has no sprite for). On "canceled" both are empty.
+ */
+export interface ImportSpriteResult {
+  outcome: ProjectDialogOutcome;
+  sprite?: ImportedSprite;
+  fileName?: string;
+  warnings: string[];
+  errors: string[];
+}
+
+/**
  * The outcome of asking for a sound file. On "ok", `bytes` is the file's content, undecoded: decoding audio needs the editor
  * window's decoder (WAV, MP3 and OGG), so the main process only picks and reads. On "error", `errors` says why the file
  * couldn't be read. On "canceled" both are empty.
@@ -80,6 +94,18 @@ export interface PickSoundResult {
   outcome: ProjectDialogOutcome;
   fileName?: string;
   bytes?: Uint8Array;
+  errors: string[];
+}
+
+/**
+ * The outcome of choosing a rigged model file (.glb or .gltf): its bytes, and (for a .gltf) the files it refers to by their uri, for the renderer to read with core's `readGltfFile`. On "error", `errors` says
+ * why it couldn't be read. On "canceled" both are empty.
+ */
+export interface PickRiggedModelResult {
+  outcome: ProjectDialogOutcome;
+  fileName?: string;
+  bytes?: Uint8Array;
+  files?: Record<string, Uint8Array>;
   errors: string[];
 }
 
@@ -123,12 +149,20 @@ export interface GoodStuffWindowApi {
   };
   /** Bringing files into a project. Reading and parsing happen in the main process; the renderer gets the result. */
   assets: {
-    /** Asks the user for an .obj file and parses it. Never changes any project: the caller decides what to do with the model. */
-    importMesh(): Promise<ImportMeshResult>;
+    /**
+     * Asks the user for an .obj file and parses it. Never changes any project: the caller decides what to do with the model. With `poses` the user may pick several files, which are put
+     * together as the poses of one animated model (in the order of their names; they must have the same triangles).
+     */
+    importMesh(poses?: boolean): Promise<ImportMeshResult>;
     /** Asks the user for a .png file and converts it to a DS texture. Never changes any project. */
     importTexture(): Promise<ImportTextureResult>;
+    /** Asks the user for a .png file and converts it to a DS sprite image (256 colors, an exact sprite size). Never changes any project. */
+    /** Asks for a PNG. With `frame`, it is a sprite sheet of frames that size (each one of the DS's sprite sizes) instead of one picture. */
+    importSprite(frame?: { width: number; height: number }): Promise<ImportSpriteResult>;
     /** Asks the user for a .wav, .mp3 or .ogg file and returns its bytes, for the renderer to decode. Never changes any project. */
     pickSound(): Promise<PickSoundResult>;
+    /** Asks the user for a .glb or .gltf file and returns its bytes (and the files a .gltf refers to), for the renderer to import. Never changes any project. */
+    pickRiggedModel(): Promise<PickRiggedModelResult>;
   };
   /**
    * Recently opened projects. Recording is done by the main process itself on

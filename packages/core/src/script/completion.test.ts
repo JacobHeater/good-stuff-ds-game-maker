@@ -180,15 +180,15 @@ describe("script completion: after a dot", () => {
 
   it("offers Input's functions, the button ones reopening the list inside their quotes", () => {
     const { result } = at("func _process(delta):\n    if Input.|");
-    expect(result!.options.map((o) => o.label)).toEqual(["is_button_down", "is_button_pressed", "is_button_released", "is_touching", "touch_x", "touch_y"]);
+    expect(result!.options.map((o) => o.label)).toEqual(["is_button_down", "is_button_pressed", "is_button_released", "is_touching", "touch_x", "touch_ground_x", "touch_ground_z", "touch_y"]);
     expect(find(result?.options, "is_button_down")).toMatchObject({ insert: 'is_button_down("")', caretBack: 2, reopen: true });
   });
 
   it("follows the kind of node: a sound player, a mesh, a shape, a body, an animation player", () => {
     expect(labelsOf("func _process(delta):\n    $Music.|")).toEqual(["volume", "pitch", "play", "stop"]);
     expect(labelsOf("func _process(delta):\n    $Cube.|")).toEqual(["position", "rotation", "scale", "visible"]);
-    expect(labelsOf("func _process(delta):\n    $PlayerShape.|")).toEqual(["position", "rotation", "scale", "visible", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling"]);
-    expect(labelsOf("func _process(delta):\n    $Player.|")).toEqual(["position", "rotation", "scale", "visible", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling"]);
+    expect(labelsOf("func _process(delta):\n    $PlayerShape.|")).toEqual(["position", "rotation", "scale", "visible", "overlaps", "move_and_collide", "probe_solid", "ray_cast", "is_on_floor", "is_on_wall", "is_on_ceiling"]);
+    expect(labelsOf("func _process(delta):\n    $Player.|")).toEqual(["position", "rotation", "scale", "visible", "move_and_collide", "probe_solid", "ray_cast", "is_on_floor", "is_on_wall", "is_on_ceiling"]);
     expect(labelsOf("func _process(delta):\n    $Door.|")).toEqual(["play", "stop", "is_playing", "speed_scale"]);
   });
 

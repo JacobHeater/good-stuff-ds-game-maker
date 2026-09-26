@@ -189,14 +189,16 @@ describe("diagnostics", () => {
     expect(translateScene3D(p).scene!.screen).toBe("bottom");
   });
 
-  it("nodes for the 2D screen are saved but not built: a warning names each one (a plain Node2D group needs none), and the 3D still compiles", () => {
-    const label = createSceneNode({ name: "Score", kind: "Label", screen: "bottom" });
+  it("nodes for the 2D screen other than sprites are saved but not built: a warning names each one (a plain Node2D group needs none), and the 3D still compiles", () => {
+    const label = createSceneNode({ name: "Score", kind: "TileMap", screen: "bottom" });
     const sprite = createSceneNode({ name: "Hero", kind: "Sprite2D", screen: "bottom" });
     const group = createSceneNode({ name: "Hud", kind: "Node2D", screen: "bottom", children: [sprite] });
     const r = translateScene3D(withChildren(cubeProject(), label, group));
     expect(hasErrors(r.diagnostics)).toBe(false);
-    expect(r.diagnostics.filter((d) => d.code === "two-d-node-not-built").map((d) => d.nodeName)).toEqual(["Score", "Hero"]);
-    expect(r.diagnostics.find((d) => d.nodeName === "Score")!.message).toMatch(/bottom \(2D\) screen.*doesn't draw 2D nodes yet/);
+    // A Sprite2D is drawn (see sprites-on-3d.test.ts): the one here has no image, which is its own warning.
+    expect(r.diagnostics.filter((d) => d.code === "two-d-node-not-built").map((d) => d.nodeName)).toEqual(["Score"]);
+    expect(r.diagnostics.filter((d) => d.code === "sprite-without-image").map((d) => d.nodeName)).toEqual(["Hero"]);
+    expect(r.diagnostics.find((d) => d.nodeName === "Score")!.message).toMatch(/bottom \(2D\) screen.*only draws Sprite2D, AnimatedSprite2D and Label there so far/);
     expect(r.scene!.screen).toBe("top");
   });
 
@@ -246,7 +248,7 @@ describe("determinism and the generated C", () => {
     const p = cubeProject();
     p.scene.children = p.scene.children.filter((c) => c.kind === "Camera3D");
     const text = writeSceneDataC(translateScene3D(p).scene!);
-    expect(text).toContain("static const GsMesh meshes[] = {\n  { 0, 0, 0, 0 }\n};");
+    expect(text).toContain("static const GsMesh meshes[] = {\n  { 0, 0, 0, 0, 0, 0, -1, 0, 0 }\n};");
     expect(text).toContain("static const GsLight lights[] = {\n  { 0, { 0, 0, 0 }, 0 }\n};");
   });
 });

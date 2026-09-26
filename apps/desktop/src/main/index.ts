@@ -1,6 +1,8 @@
 import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
 
+import icon from "../../resources/icon.png?asset";
+
 import { registerAssetsIpcHandlers } from "./assets-ipc";
 import { registerExportRomIpcHandler } from "./export-rom-ipc";
 import { registerPlayIpcHandler, stopPlaySession } from "./play-ipc";
@@ -18,6 +20,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     title: "Good Stuff DS Game Maker",
+    icon,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,

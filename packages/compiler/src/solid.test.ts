@@ -51,6 +51,33 @@ describe("solid shapes in the scene description", () => {
   });
 });
 
+describe("probe_solid", () => {
+  it("compiles to a runtime call with the node index and four floats, and gives back an int", () => {
+    const r = game("    var held = probe_solid(-0.5, -1.0, 0.0, 1.0)\n    if held == 5:\n        position.x = 1.0\n");
+    expect(codes(r)).toEqual([]);
+    expect(r.scene!.scriptCode).toMatch(/gs_probe_solid\(gss0_self\[inst\], \(-2048\), \(-4096\), 0, 4096\)/);
+  });
+
+  it("counts as using the solid shapes and the body's own, though it never moves the body", () => {
+    const r = game("    var held = probe_solid(-0.5, -1.0, 0.0, 1.0)\n    if held == 0:\n        pass\n");
+    expect(codes(r)).toEqual([]);
+  });
+
+  it("can be asked of another body by name", () => {
+    const r = game("    var held = $Other.probe_solid(-0.5, 0.0, 0.0, 0.0)\n    if held == 0:\n        pass\n", [shape("Floor", { solid: true }), mesh("Other", [shape("OtherShape")])]);
+    expect(r.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const other = r.scene!.nodes.findIndex((n) => n.name === "Other");
+    expect(r.scene!.scriptCode).toContain(`gs_probe_solid(${other}, `);
+  });
+
+  it("wants four numbers, and a body with a shape", () => {
+    const wrong = game("    var held = probe_solid(-0.5, 0.0)\n");
+    expect(wrong.diagnostics.some((d) => d.code === "script-error")).toBe(true);
+    const noShape = translateScene3D(scriptedProject([{ source: "func _process(delta):\n    var held = probe_solid(-0.5, 0.0, 0.0, 0.0)\n", attachTo: ["Player"] }], [mesh("Player")]));
+    expect(noShape.diagnostics.some((d) => d.code === "script-error" && d.message.includes("collision shape"))).toBe(true);
+  });
+});
+
 describe("what the compiler says about shapes used by move_and_collide", () => {
   it("counts a body's shapes and every solid shape as used, so there is nothing to warn about", () => {
     expect(codes(game("    move_and_collide(0.0, -0.1, 0.0)\n"))).toEqual([]);

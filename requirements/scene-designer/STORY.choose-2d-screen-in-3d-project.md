@@ -39,6 +39,8 @@ Choices I made without asking (say if any is wrong):
 - **Scene > Add Node (3D project):** the 3D kinds (and sound and animation players), then "Add 2D Node (the 2D screen)" with the 2D kinds.
 - **Compiler:** the ROM's 3D screen is the project's 3D screen. A visible 2D node other than a plain Node2D group gives the warning `two-d-node-not-built`, naming it and its screen.
 
+> **Update:** the ROM now draws `Sprite2D` nodes on the 2D screen (`STORY.sprites-on-the-2d-screen-of-a-3d-project.md`); the other 2D kinds are still not drawn.
+
 ## Acceptance Criteria
 ```gherkin
 Scenario: New Project asks for the 2D screen of a 3D project

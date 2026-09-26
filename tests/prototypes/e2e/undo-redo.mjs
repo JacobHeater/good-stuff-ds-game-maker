@@ -94,7 +94,8 @@ async function undoRedoItems() {
   await menu("Scene");
   const items = await page.evaluate(() => [...document.querySelectorAll("button")]
     .filter((b) => /^(Undo|Redo)/.test(b.textContent.trim()))
-    .map((b) => ({ text: b.textContent.trim(), disabled: b.disabled })));
+    // The shortcut hint is drawn by CSS from data-shortcut (not part of the button's text), so it is appended here.
+    .map((b) => ({ text: b.textContent.trim() + (b.querySelector("[data-shortcut]")?.dataset.shortcut ?? ""), disabled: b.disabled })));
   await click("Scene"); // close the menu again
   await sleep(100);
   return items;

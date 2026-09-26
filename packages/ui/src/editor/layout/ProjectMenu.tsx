@@ -13,13 +13,14 @@ export function ProjectMenu(): JSX.Element {
     <MenuDropdown label="Project">
       {(run) => (
         <>
-          <MenuItem label="Open Project..." onSelect={run(() => void openProject())} />
+          <MenuItem label="Open Project..." shortcut="Ctrl+O" onSelect={run(() => void openProject())} />
           <MenuSeparator />
-          <MenuItem label="Save Project" onSelect={run(() => void saveProject())} />
-          <MenuItem label="Save Project As..." onSelect={run(() => void saveProjectAs())} />
+          <MenuItem label="Save Project" shortcut="Ctrl+S" onSelect={run(() => void saveProject())} />
+          <MenuItem label="Save Project As..." shortcut="Ctrl+Shift+S" onSelect={run(() => void saveProjectAs())} />
           <MenuSeparator />
           <MenuItem
             label={exporting ? "Exporting ROM..." : "Export ROM..."}
+            shortcut="Ctrl+Shift+E"
             disabled={exporting}
             onSelect={run(() => void exportRom())}
           />

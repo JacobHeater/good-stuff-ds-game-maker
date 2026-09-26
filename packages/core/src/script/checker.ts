@@ -1,4 +1,5 @@
 import { getAnimationPlayer } from "../animation";
+import { getSpriteAnimations } from "../sprite-animation";
 import { flattenSceneTree, is3DNodeKind, type SceneNode, type SceneNodeKind } from "../scene-node";
 import type {
   AssignStmt,
@@ -26,14 +27,24 @@ export const BUTTON_NAMES: readonly ButtonName[] = ["a", "b", "x", "y", "l", "r"
 
 /** Names that mean something built in, so a script's own variables and functions can't use them. */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set([
-  "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "bool", "void",
-  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "delta"
+  "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "randi", "randf", "atan2", "bool", "void",
+  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "delta"
 ]);
 
 /** What the checker needs to know about the project the script lives in. */
 export interface ScriptSceneContext {
+  /**
+   * The node the script is being checked as. `$Name` looks for a node with that name **under this node first** (as in Godot, where `$Child` is relative to
+   * the node the script is on), and only then anywhere in the scene, so a script attached to several copies of a node each finds its own children. Left out
+   * for a script that isn't attached to anything.
+   */
+  scope?: SceneNode;
   /** The scene tree, to find the nodes `$Name` refers to. */
   root: SceneNode;
+  /** The names of the project's scenes, the starting one first: what `change_scene("name")` may name. Left out when not known (any name is taken to be the first scene). */
+  sceneNames?: readonly string[];
+  /** The project's global variables (see `collectProjectGlobals`): every script can use them by name. Left out when not known; the script's own `global var`s are used then. */
+  globals?: ReadonlyArray<{ name: string; type: ScriptType }>;
   /** The nodes the script is attached to; empty when it isn't attached yet, in which case `self` may use every member. */
   attached: ReadonlyArray<{
     name: string;
@@ -43,6 +54,17 @@ export interface ScriptSceneContext {
     /** The names of an AnimationPlayer's animations, in order; left out when not known. */
     animations?: readonly string[];
   }>;
+}
+
+/** What a node has to be to use a member: a 3D transform, a sound player, a collision shape, an animation player or a touch area. */
+type NodeCapability = "transform" | "audio" | "collision" | "animation" | "speed" | "touch" | "label";
+
+/** The nodes that play named animations: an AnimationPlayer (properties of other nodes over time) and an AnimatedSprite2D (frames of its sprite sheet). */
+const ANIMATED_KINDS: readonly SceneNodeKind[] = ["AnimationPlayer", "AnimatedSprite2D"];
+
+/** The names of a node's animations, in order. */
+function animationNamesOf(node: SceneNode): string[] {
+  return node.kind === "AnimatedSprite2D" || node.kind === "MeshInstance3D" ? getSpriteAnimations(node).animations.map((animation) => animation.name) : getAnimationPlayer(node).animations.map((animation) => animation.name);
 }
 
 /** What a script does that the compiler needs to know before it generates anything. */
@@ -67,6 +89,9 @@ export interface ScriptUsage {
   /** The script calls `play("name")` on its own node (an AnimationPlayer), and on which other nodes (by id). */
   selfPlaysAnimation: boolean;
   nodePlaysAnimation: Set<string>;
+  /** The script asks a touch area (its own node, or these other nodes by id) whether it is touched. */
+  selfTouch: boolean;
+  nodeTouch: Set<string>;
 }
 
 export interface ScriptCheckResult {
@@ -114,7 +139,9 @@ export function checkScript(source: string, context: ScriptSceneContext): Script
     selfMoves: false,
     nodeMoves: new Set(),
     selfPlaysAnimation: false,
-    nodePlaysAnimation: new Set()
+    nodePlaysAnimation: new Set(),
+    selfTouch: false,
+    nodeTouch: new Set()
   };
   // With syntax errors the tree is missing pieces, and checking it would report a cascade of names that "don't exist".
   if (parsed.diagnostics.length > 0) {
@@ -133,6 +160,9 @@ function sortDiagnostics(diagnostics: ScriptDiagnostic[]): ScriptDiagnostic[] {
 class Checker {
   readonly diagnostics: ScriptDiagnostic[] = [];
   private readonly members = new Map<string, VarDecl>();
+  /** Project-wide variables by name: the project's (from the context) and this script's own `global var`s. */
+  private readonly globals = new Map<string, ScriptType>();
+  private readonly globalDeclared = new Set<string>();
   private readonly functions = new Map<string, Signature>();
   private scopes: Array<Map<string, LocalInfo>> = [];
   private current: FuncDecl | null = null;
@@ -161,7 +191,24 @@ class Checker {
 
   run(): void {
     // Variables.
+    for (const global of this.context.globals ?? []) this.globals.set(global.name, global.type);
     for (const variable of this.program.variables) {
+      if (variable.global) {
+        if (this.members.has(variable.name) || this.globalDeclared.has(variable.name)) this.error(variable.nameSpan, `"${variable.name}" is already declared in this script.`);
+        else if (RESERVED_NAMES.has(variable.name)) this.error(variable.nameSpan, `"${variable.name}" is a built-in name and can't be used for a variable.`);
+        else {
+          this.globalDeclared.add(variable.name);
+          const known = this.globals.get(variable.name);
+          const type = this.literalType(variable);
+          if (known !== undefined && type !== null && known !== type) this.error(variable.nameSpan, `The global "${variable.name}" is declared as ${an(known)} in another script, but ${an(type)} here.`);
+          else if (known === undefined && type !== null) this.globals.set(variable.name, type);
+        }
+        continue;
+      }
+      if (this.globals.has(variable.name) && !this.members.has(variable.name)) {
+        this.error(variable.nameSpan, `"${variable.name}" is a global variable of the project (declared with "global var"), so it can't also be this script's own variable.`);
+        continue;
+      }
       if (this.members.has(variable.name)) this.error(variable.nameSpan, `"${variable.name}" is already declared in this script.`);
       else if (RESERVED_NAMES.has(variable.name)) this.error(variable.nameSpan, `"${variable.name}" is a built-in name and can't be used for a variable.`);
       else this.members.set(variable.name, variable);
@@ -220,6 +267,18 @@ class Checker {
     return null;
   }
 
+  /** The type a variable declaration gets from its literal (or its declared type), or null when its value isn't a literal. */
+  private literalType(variable: VarDecl): ScriptType | null {
+    const value = this.literalValue(variable.init);
+    if (value === null) return null;
+    const literal: ScriptType = typeof value === "boolean" ? "bool" : Number.isInteger(value) && this.isIntLiteral(variable.init) ? "int" : "float";
+    return variable.declaredType ?? literal;
+  }
+
+  private isIntLiteral(expr: Expr): boolean {
+    return expr.kind === "int" || (expr.kind === "unary" && expr.operand.kind === "int");
+  }
+
   private resolveVarType(declared: ScriptType | undefined, actual: ExprType, at: SourceSpan): ScriptType {
     const valueType = this.asValue(actual, at);
     if (declared === undefined) return valueType ?? "int";
@@ -236,7 +295,7 @@ class Checker {
       if (!scope.has(param.name)) scope.set(param.name, { type: signature?.params[index] ?? "int", span: param, used: true, quiet: true });
     });
     for (const param of func.params) {
-      if (this.members.has(param.name) || this.functions.has(param.name)) {
+      if (this.members.has(param.name) || this.globals.has(param.name) || this.functions.has(param.name)) {
         this.error(param, `"${param.name}" is already declared; choose another name for the parameter.`);
       }
     }
@@ -288,7 +347,7 @@ class Checker {
       this.error(span, `"${name}" is a built-in name and can't be used for a variable.`);
       return;
     }
-    if (this.members.has(name) || this.functions.has(name) || this.lookupLocal(name)) {
+    if (this.members.has(name) || this.globals.has(name) || this.functions.has(name) || this.lookupLocal(name)) {
       this.error(span, `"${name}" is already declared; choose another name.`);
       return;
     }
@@ -375,6 +434,29 @@ class Checker {
 
   private checkAssign(statement: AssignStmt): void {
     const targetType = this.typeOfExpr(statement.target);
+    // `$Label.text = "Game Over"`: the only thing a string can be used for.
+    if (statement.target.res?.kind === "labelText") {
+      this.typeOfExpr(statement.value);
+      if (statement.op !== "=") this.error(statement, `"${statement.op}" doesn't work on text; use = to set a label's text.`);
+      else if (statement.value.kind !== "string") this.error(statement.value, 'A label\'s text can only be set to text in quotes, like $Label.text = "Game Over"; show a number with {} in the text and set .value.');
+      return;
+    }
+    // A whole vector can be set from another node's vector: `$Block.position = $Touch.position` copies x, y and z. That is the only thing a vector can be.
+    if (targetType === "vec3" && statement.target.res?.kind === "nodeVector") {
+      const valueType = this.typeOfExpr(statement.value);
+      if (statement.op !== "=") {
+        this.error(statement, `"${statement.op}" doesn't work on a whole vector; use = to copy another node's vector, or change .x, .y and .z one at a time.`);
+      } else if (valueType === "vec3" && statement.value.res?.kind === "nodeVector") {
+        if (this.isSpriteTarget(statement.target.res.target) !== this.isSpriteTarget(statement.value.res.target)) {
+          this.error(statement, "A 2D node's vector can only be copied from another 2D node's, and a 3D node's from a 3D node's.");
+          return;
+        }
+        this.noteWrite(statement.target.res.target, statement.target.res.prop);
+      } else if (valueType !== "unknown") {
+        this.error(statement.value, "A vector can only be set from another node's vector, like $Block.position = $Touch.position; assign numbers to .x, .y and .z otherwise.");
+      }
+      return;
+    }
     const lvalue = this.assignableType(statement.target);
     const valueType = this.typeOfExpr(statement.value);
     if (lvalue === null) return;
@@ -397,10 +479,15 @@ class Checker {
   /** The type of what can be assigned to `target`, or null after reporting that it can't be assigned to. */
   private assignableType(target: Expr): ScriptType | null {
     if (target.kind === "name") {
-      if (target.res?.kind === "local" || target.res?.kind === "member") return target.ty as ScriptType;
+      if (target.res?.kind === "local" || target.res?.kind === "member" || target.res?.kind === "global") return target.ty as ScriptType;
       if (target.res?.kind === "nodeProp" && target.ty !== undefined) {
         this.noteWrite(target.res.target, target.res.prop);
         return target.ty as ScriptType;
+      }
+      // A Sprite2D's bare `rotation` is one number (its angle), written like an axis.
+      if (target.res?.kind === "nodeAxis") {
+        this.noteWrite(target.res.target, target.res.prop);
+        return "float";
       }
     }
     if (target.kind === "member" && target.res) {
@@ -414,7 +501,7 @@ class Checker {
       }
     }
     if (target.ty !== undefined && target.ty !== "unknown") {
-      this.error(target, target.ty === "vec3" ? "A whole vector can't be assigned in this version; assign .x, .y and .z one at a time." : "You can't assign to this.");
+      this.error(target, target.ty === "vec3" ? "A whole vector can only be set from another node's vector here, like $A.position = $B.position." : "You can't assign to this.");
     }
     return null;
   }
@@ -583,14 +670,26 @@ class Checker {
       expr.res = { kind: "member", name: expr.name };
       return member.ty ?? member.declaredType ?? "int";
     }
+    const global = this.globals.get(expr.name);
+    if (global !== undefined) {
+      expr.res = { kind: "global", name: expr.name };
+      return global;
+    }
     if (expr.name === "self") {
       expr.res = { kind: "nodeRef", target: { kind: "self" } };
       return "node";
+    }
+    if ((expr.name === "position" || expr.name === "rotation" || expr.name === "scale" || expr.name === "visible") && this.isSpriteTarget({ kind: "self" })) {
+      return this.spriteMember(expr, { kind: "self" }, expr.name);
     }
     if (expr.name === "position" || expr.name === "rotation" || expr.name === "scale") {
       if (!this.selfSupports("transform", expr.name, expr)) return "unknown";
       expr.res = { kind: "nodeVector", target: { kind: "self" }, prop: expr.name };
       return "vec3";
+    }
+    if (expr.name === "visible" && this.isLabelTarget({ kind: "self" })) {
+      expr.res = { kind: "nodeProp", target: { kind: "self" }, prop: "visible" };
+      return "bool";
     }
     if (expr.name === "visible") {
       if (!this.selfSupports("transform", "visible", expr)) return "unknown";
@@ -598,7 +697,7 @@ class Checker {
       return "bool";
     }
     if (expr.name === "speed_scale") {
-      if (!this.selfSupports("animation", "speed_scale", expr)) return "unknown";
+      if (!this.selfSupports("speed", "speed_scale", expr)) return "unknown";
       expr.res = { kind: "nodeProp", target: { kind: "self" }, prop: "speed_scale" };
       return "float";
     }
@@ -621,6 +720,18 @@ class Checker {
 
   /** Resolves `$Name` against the scene; reports a missing or ambiguous name. */
   private resolveNodeRef(name: string, at: SourceSpan): NodeTarget | null {
+    const scope = this.context.scope;
+    if (scope) {
+      const under = flattenSceneTree(scope).filter((node) => node.id !== scope.id && node.name === name);
+      if (under.length === 1) {
+        this.usage.referencedNodeIds.add(under[0].id);
+        return { kind: "node", nodeId: under[0].id, name };
+      }
+      if (under.length > 1) {
+        this.error(at, `${under.length} nodes under ${scope.name} are named "${name}", so ${name} could mean any of them; rename all but one.`);
+        return null;
+      }
+    }
     const nodes = this.nodesByName.get(name) ?? [];
     if (nodes.length === 0) {
       this.error(at, `There is no node named "${name}" in the scene.`);
@@ -640,7 +751,7 @@ class Checker {
   }
 
   /** Whether `self` can use a member needing `capability`; reports (naming the node kind that can't) when it can't. */
-  private selfSupports(capability: "transform" | "audio" | "collision" | "animation", member: string, at: SourceSpan): boolean {
+  private selfSupports(capability: NodeCapability, member: string, at: SourceSpan): boolean {
     for (const attached of this.context.attached) {
       if (!this.kindSupports(attached.kind, capability)) {
         this.error(at, `"${member}" isn't available on ${attached.name} (a ${attached.kind}), and this script is attached to it.`);
@@ -650,13 +761,47 @@ class Checker {
     return true;
   }
 
-  private kindSupports(kind: SceneNodeKind, capability: "transform" | "audio" | "collision" | "animation"): boolean {
+  /** Whether `target` is a Label (for `self`: every node the script is attached to is one): it can be shown and hidden, and has a value and a text. */
+  private isLabelTarget(target: NodeTarget): boolean {
+    const kinds = this.targetKinds(target);
+    return kinds.length > 0 && kinds.every((kind) => kind === "Label");
+  }
+
+  /** Whether `target` is a Sprite2D (for `self`: every node the script is attached to is one): its position, rotation and scale are 2D. */
+  private isSpriteTarget(target: NodeTarget): boolean {
+    const kinds = this.targetKinds(target);
+    return kinds.length > 0 && kinds.every((kind) => kind === "Sprite2D" || kind === "AnimatedSprite2D");
+  }
+
+  /**
+   * A Sprite2D's members: `position` and `scale` (vectors with .x and .y, in screen pixels and as a factor), `rotation` (one number, degrees clockwise) and `visible`.
+   * Rotation is resolved to the node state's third rotation slot, so the generated code treats it like any other axis.
+   */
+  private spriteMember(expr: Expr, target: NodeTarget, name: string): ExprType {
+    switch (name) {
+      case "position":
+      case "scale":
+        expr.res = { kind: "nodeVector", target, prop: name };
+        return "vec3";
+      case "rotation":
+        expr.res = { kind: "nodeAxis", target, prop: "rotation", axis: 2 };
+        return "float";
+      default:
+        expr.res = { kind: "nodeProp", target, prop: "visible" };
+        return "bool";
+    }
+  }
+
+  private kindSupports(kind: SceneNodeKind, capability: NodeCapability): boolean {
     if (capability === "collision") return kind === "CollisionShape3D";
-    if (capability === "animation") return kind === "AnimationPlayer";
+    if (capability === "animation") return ANIMATED_KINDS.includes(kind);
+    if (capability === "speed") return kind === "AnimationPlayer";
+    if (capability === "touch") return kind === "TouchArea2D" || kind === "TouchArea3D";
+    if (capability === "label") return kind === "Label";
     return capability === "transform" ? is3DNodeKind(kind) : kind === "AudioStreamPlayer";
   }
 
-  private nodeSupports(target: NodeTarget, capability: "transform" | "audio" | "collision" | "animation", member: string, at: SourceSpan): boolean {
+  private nodeSupports(target: NodeTarget, capability: NodeCapability, member: string, at: SourceSpan): boolean {
     if (target.kind === "self") return this.selfSupports(capability, member, at);
     const kind = this.kindOf(target);
     if (kind === null || this.kindSupports(kind, capability)) return true;
@@ -678,11 +823,18 @@ class Checker {
         this.error(expr.nameSpan, `A vector has .x, .y and .z, not .${expr.name}.`);
         return "unknown";
       }
+      if (axis === 2 && this.isSpriteTarget(object.res.target)) {
+        this.error(expr.nameSpan, `A 2D node's ${object.res.prop} has .x and .y only.`);
+        return "unknown";
+      }
       expr.res = { kind: "nodeAxis", target: object.res.target, prop: object.res.prop, axis: axis as 0 | 1 | 2 };
       return "float";
     }
     if (baseType === "node" && object.res && object.res.kind === "nodeRef") {
       const target = object.res.target;
+      if ((expr.name === "position" || expr.name === "rotation" || expr.name === "scale" || expr.name === "visible") && this.isSpriteTarget(target)) {
+        return this.spriteMember(expr, target, expr.name);
+      }
       switch (expr.name) {
         case "position":
         case "rotation":
@@ -691,16 +843,24 @@ class Checker {
           expr.res = { kind: "nodeVector", target, prop: expr.name };
           return "vec3";
         case "visible":
-          if (!this.nodeSupports(target, "transform", expr.name, expr.nameSpan)) return "unknown";
+          if (!this.isLabelTarget(target) && !this.nodeSupports(target, "transform", expr.name, expr.nameSpan)) return "unknown";
           expr.res = { kind: "nodeProp", target, prop: "visible" };
           return "bool";
+        case "value":
+          if (!this.nodeSupports(target, "label", expr.name, expr.nameSpan)) return "unknown";
+          expr.res = { kind: "nodeProp", target, prop: "value" };
+          return "int";
+        case "text":
+          if (!this.nodeSupports(target, "label", expr.name, expr.nameSpan)) return "unknown";
+          expr.res = { kind: "labelText", target };
+          return "string";
         case "volume":
         case "pitch":
           if (!this.nodeSupports(target, "audio", expr.name, expr.nameSpan)) return "unknown";
           expr.res = { kind: "nodeProp", target, prop: expr.name };
           return "float";
         case "speed_scale":
-          if (!this.nodeSupports(target, "animation", expr.name, expr.nameSpan)) return "unknown";
+          if (!this.nodeSupports(target, "speed", expr.name, expr.nameSpan)) return "unknown";
           expr.res = { kind: "nodeProp", target, prop: "speed_scale" };
           return "float";
         case "is_playing":
@@ -709,6 +869,17 @@ class Checker {
         case "overlaps":
           this.error(expr.nameSpan, "overlaps must be called with the other shape: overlaps($Other).");
           return "unknown";
+        case "is_touched":
+        case "is_touch_pressed":
+        case "is_touch_released":
+          this.error(expr.nameSpan, `${expr.name} must be called: ${expr.name}().`);
+          return "unknown";
+        case "probe_solid":
+          this.error(expr.nameSpan, "probe_solid must be called: probe_solid(y, x0, x1, x2).");
+          return "unknown";
+        case "ray_cast":
+          this.error(expr.nameSpan, "ray_cast must be called: ray_cast(ox, oy, oz, dx, dy, dz, max).");
+          return "unknown";
         case "move_and_collide":
         case "is_on_floor":
         case "is_on_wall":
@@ -716,12 +887,13 @@ class Checker {
           this.error(expr.nameSpan, `${expr.name} must be called: ${expr.name === "move_and_collide" ? "move_and_collide(dx, dy, dz)" : `${expr.name}()`}.`);
           return "unknown";
         default:
-          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale.`);
+          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text.`);
           return "unknown";
       }
     }
-    if (baseType !== "vec3" && baseType !== "node") this.asValue(baseType, object);
-    else this.error(expr.nameSpan, `Can't take .${expr.name} of this.`);
+    if (baseType !== "vec3" && baseType !== "node") {
+      if (this.asValue(baseType, object) !== null) this.error(expr.nameSpan, `A number has no .${expr.name}; only a node's position and scale have .x and .y.`);
+    } else this.error(expr.nameSpan, `Can't take .${expr.name} of this.`);
     return "unknown";
   }
 
@@ -740,10 +912,13 @@ class Checker {
         if (callee.name === "play" || callee.name === "stop") return this.checkPlayOrStop(expr, callee.name, object.res.target, callee.nameSpan);
         if (callee.name === "is_playing") return this.checkAnimationCall(expr, "is_playing", object.res.target, callee.nameSpan);
         if (callee.name === "overlaps") return this.checkOverlaps(expr, object.res.target, callee.nameSpan);
-        if (callee.name === "move_and_collide" || callee.name === "is_on_floor" || callee.name === "is_on_wall" || callee.name === "is_on_ceiling") {
+        if (callee.name === "is_touched" || callee.name === "is_touch_pressed" || callee.name === "is_touch_released") {
+          return this.checkTouchCall(expr, callee.name, object.res.target, callee.nameSpan);
+        }
+        if (callee.name === "move_and_collide" || callee.name === "is_on_floor" || callee.name === "is_on_wall" || callee.name === "is_on_ceiling" || callee.name === "probe_solid" || callee.name === "ray_cast") {
           return this.checkBodyCall(expr, callee.name, object.res.target, callee.nameSpan);
         }
-        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and animation players have play("name"), stop() and is_playing().`);
+        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), and touch areas have is_touched(), is_touch_pressed() and is_touch_released().`);
         return "unknown";
       }
       this.error(callee, "This can't be called.");
@@ -784,11 +959,61 @@ class Checker {
   }
 
   /**
+   * `area.is_touched()`, `is_touch_pressed()` and `is_touch_released()` (or the bare call, for `self`): the node must be a TouchArea2D or TouchArea3D. The result is a bool
+   * even when something is wrong, so one mistake doesn't cascade into more.
+   */
+  private checkTouchCall(expr: Extract<Expr, { kind: "call" }>, name: string, target: NodeTarget, nameSpan: SourceSpan): ExprType {
+    this.checkArgCount(expr, 0, `${name}()`);
+    if (this.nodeSupports(target, "touch", name, nameSpan)) {
+      expr.res = { kind: "touchState", target, state: name === "is_touched" ? "held" : name === "is_touch_pressed" ? "pressed" : "released" };
+      if (target.kind === "self") this.usage.selfTouch = true;
+      else this.usage.nodeTouch.add(target.nodeId);
+    }
+    return "bool";
+  }
+
+  /**
    * `body.move_and_collide(dx, dy, dz)` and `body.is_on_floor()` / `is_on_wall()` / `is_on_ceiling()`: the body is a 3D node with a collision shape under it
    * (or that is one). move_and_collide moves the node, so it counts as a script that writes the node's position.
    */
   private checkBodyCall(expr: Extract<Expr, { kind: "call" }>, name: string, target: NodeTarget, nameSpan: SourceSpan): ExprType {
     const moving = name === "move_and_collide";
+    if (name === "ray_cast") {
+      if (expr.args.length !== 7) {
+        this.checkArgCount(expr, 7, "ray_cast()");
+        for (const arg of expr.args) this.typeOfExpr(arg);
+      } else {
+        for (const arg of expr.args) {
+          const value = this.asValue(this.typeOfExpr(arg), arg);
+          if (value === "bool") this.error(arg, "ray_cast() needs numbers: where the ray starts (x, y, z), which way it goes (x, y, z) and how far to look.");
+        }
+      }
+      if (this.nodeSupports(target, "transform", name, nameSpan) && this.requireBody(target, name, nameSpan)) {
+        expr.res = { kind: "rayCall", target };
+        // Looking at the solid shapes counts as using them (and the body's own, which the ray ignores), though nothing is written.
+        if (target.kind === "self") this.usage.selfMoves = true;
+        else this.usage.nodeMoves.add(target.nodeId);
+      }
+      return "float";
+    }
+    if (name === "probe_solid") {
+      if (expr.args.length !== 4) {
+        this.checkArgCount(expr, 4, "probe_solid()");
+        for (const arg of expr.args) this.typeOfExpr(arg);
+      } else {
+        for (const arg of expr.args) {
+          const value = this.asValue(this.typeOfExpr(arg), arg);
+          if (value === "bool") this.error(arg, "probe_solid() needs numbers: how far below the shape's centre to look, then three positions along the shape's longer side.");
+        }
+      }
+      if (this.nodeSupports(target, "transform", name, nameSpan) && this.requireBody(target, name, nameSpan)) {
+        expr.res = { kind: "probeCall", target };
+        // Looking at the solid shapes counts as using them (and the body's own), though nothing is written.
+        if (target.kind === "self") this.usage.selfMoves = true;
+        else this.usage.nodeMoves.add(target.nodeId);
+      }
+      return "int";
+    }
     if (moving) {
       if (expr.args.length !== 3) {
         this.checkArgCount(expr, 3, "move_and_collide()");
@@ -866,7 +1091,7 @@ class Checker {
    */
   private checkPlayOrStop(expr: Extract<Expr, { kind: "call" }>, name: "play" | "stop", target: NodeTarget, nameSpan: SourceSpan): ExprType {
     const kinds = this.targetKinds(target);
-    const animation = kinds.length > 0 ? kinds.every((kind) => kind === "AnimationPlayer") : name === "play" && expr.args.length === 1;
+    const animation = kinds.length > 0 ? kinds.every((kind) => ANIMATED_KINDS.includes(kind)) || this.isMeshAnimationTarget(target) : name === "play" && expr.args.length === 1;
     if (animation) return this.checkAnimationCall(expr, name, target, nameSpan);
     if (kinds.length > 0 && !kinds.every((kind) => kind === "AudioStreamPlayer")) {
       // Neither kind of player: say what the node is, without complaining about the arguments too.
@@ -882,16 +1107,31 @@ class Checker {
     return "void";
   }
 
-  /** `play("name")`, `stop()` and `is_playing()` on an AnimationPlayer; the name must be one of the player's animations. */
+  /** `play("name")`, `stop()` and `is_playing()` on an AnimationPlayer or an AnimatedSprite2D; the name must be one of the node's animations. */
+  private isSpriteAnimationTarget(target: NodeTarget): boolean {
+    const kinds = this.targetKinds(target);
+    return kinds.length > 0 && kinds.every((kind) => kind === "AnimatedSprite2D");
+  }
+
+  /** A MeshInstance3D whose model has several poses: its frame animations run on the DS like an AnimatedSprite2D's. */
+  private isMeshAnimationTarget(target: NodeTarget): boolean {
+    const kinds = this.targetKinds(target);
+    if (kinds.length === 0 || !kinds.every((kind) => kind === "MeshInstance3D")) return false;
+    // Only a mesh that has animations counts (a plain mesh has no play(): it says so).
+    if (target.kind === "self") return this.context.attached.every((attached) => (attached.animations?.length ?? 0) > 0);
+    const node = flattenSceneTree(this.context.root).find((candidate) => candidate.id === target.nodeId);
+    return node !== undefined && getSpriteAnimations(node).animations.length > 0;
+  }
+
   private checkAnimationCall(expr: Extract<Expr, { kind: "call" }>, method: "play" | "stop" | "is_playing", target: NodeTarget, nameSpan: SourceSpan): ExprType {
     const result: ExprType = method === "is_playing" ? "bool" : "void";
-    if (!this.nodeSupports(target, "animation", method, nameSpan)) {
+    if (!this.isMeshAnimationTarget(target) && !this.nodeSupports(target, "animation", method, nameSpan)) {
       for (const arg of expr.args) this.typeOfExpr(arg);
       return result;
     }
     if (method !== "play") {
       this.checkArgCount(expr, 0, `${method}()`);
-      expr.res = { kind: "animCall", target, method, animation: 0 };
+      expr.res = { kind: "animCall", target, method, animation: 0, sprite: this.isSpriteAnimationTarget(target), mesh: this.isMeshAnimationTarget(target) };
       return result;
     }
     if (expr.args.length !== 1) {
@@ -913,7 +1153,7 @@ class Checker {
       if (known && this.context.attached.length > 0) lists = this.context.attached.map((attached) => ({ who: attached.name, names: attached.animations! }));
     } else {
       const node = flattenSceneTree(this.context.root).find((candidate) => candidate.id === target.nodeId);
-      if (node) lists = [{ who: `$${target.name}`, names: getAnimationPlayer(node).animations.map((animation) => animation.name) }];
+      if (node) lists = [{ who: `$${target.name}`, names: animationNamesOf(node) }];
     }
     let index = 0;
     if (lists) {
@@ -937,10 +1177,37 @@ class Checker {
       }
       index = indexes[0];
     }
-    expr.res = { kind: "animCall", target, method: "play", animation: index };
+    expr.res = { kind: "animCall", target, method: "play", animation: index, sprite: this.isSpriteAnimationTarget(target), mesh: this.isMeshAnimationTarget(target) };
     if (target.kind === "self") this.usage.selfPlaysAnimation = true;
     else this.usage.nodePlaysAnimation.add(target.nodeId);
     return result;
+  }
+
+  /** `change_scene("Level2")`: the name must be one of the project's scenes. The switch happens when the frame ends. */
+  private checkChangeScene(expr: Extract<Expr, { kind: "call" }>): ExprType {
+    if (expr.args.length !== 1) {
+      this.checkArgCount(expr, 1, 'change_scene("name")');
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return "void";
+    }
+    const arg = expr.args[0];
+    if (arg.kind !== "string") {
+      this.typeOfExpr(arg);
+      this.error(arg, 'change_scene() needs the scene\'s name in quotes, like change_scene("Level2").');
+      return "void";
+    }
+    arg.ty = "string";
+    const names = this.context.sceneNames;
+    let index = 0;
+    if (names) {
+      index = names.indexOf(arg.value);
+      if (index < 0) {
+        this.error(arg, `The project has no scene "${arg.value}". Its scenes are: ${names.map((name) => `"${name}"`).join(", ")}.`);
+        return "void";
+      }
+    }
+    expr.res = { kind: "sceneCall", scene: index };
+    return "void";
   }
 
   private notePlay(target: NodeTarget): void {
@@ -976,13 +1243,24 @@ class Checker {
       expr.res = { kind: "touch", fn: name };
       return name === "is_touching" ? "bool" : "int";
     }
-    this.error(nameSpan, `Input has no function "${name}". It has is_button_down, is_button_pressed, is_button_released, is_touching, touch_x and touch_y.`);
+    if (name === "touch_ground_x" || name === "touch_ground_z") {
+      if (expr.args.length !== 1) {
+        this.checkArgCount(expr, 1, `Input.${name}`);
+        for (const arg of expr.args) this.typeOfExpr(arg);
+      } else {
+        const value = this.asValue(this.typeOfExpr(expr.args[0]), expr.args[0]);
+        if (value === "bool") this.error(expr.args[0], `Input.${name} needs the height of the plane as a number, like Input.${name}(0.0).`);
+      }
+      expr.res = { kind: "touchGround", axis: name === "touch_ground_x" ? 0 : 1 };
+      return "float";
+    }
+    this.error(nameSpan, `Input has no function "${name}". It has is_button_down, is_button_pressed, is_button_released, is_touching, touch_x, touch_y, touch_ground_x and touch_ground_z.`);
     return "unknown";
   }
 
   private callNamed(expr: Extract<Expr, { kind: "call" }>, name: string): ExprType {
     const local = this.lookupLocal(name);
-    if (local || this.members.has(name)) {
+    if (local || this.members.has(name) || this.globals.has(name)) {
       this.error(expr.callee, `"${name}" is a variable, not a function.`);
       for (const arg of expr.args) this.typeOfExpr(arg);
       return "unknown";
@@ -1010,6 +1288,22 @@ class Checker {
       case "int":
       case "float":
         return this.callMath1(expr, name);
+      case "randi": {
+        // A whole number below n: randi(6) is 0 to 5.
+        const args = this.numericArgs(expr, name, 1);
+        expr.res = { kind: "builtin", name };
+        if (args && args[0] === "float") this.error(expr.args[0], "randi() takes a whole number, like randi(6) for 0 to 5; use int(x) to drop the fraction.");
+        return "int";
+      }
+      case "randf":
+        this.checkArgCount(expr, 0, "randf()");
+        for (const arg of expr.args) this.typeOfExpr(arg);
+        expr.res = { kind: "builtin", name };
+        return "float";
+      case "atan2":
+        this.numericArgs(expr, name, 2);
+        expr.res = { kind: "builtin", name };
+        return "float";
       case "min":
       case "max":
         return this.callMathN(expr, name, 2);
@@ -1017,11 +1311,26 @@ class Checker {
         return this.callMathN(expr, name, 3);
       case "overlaps":
         return this.checkOverlaps(expr, { kind: "self" }, expr.callee);
+      case "is_touched":
+      case "is_touch_pressed":
+      case "is_touch_released":
+        return this.checkTouchCall(expr, name, { kind: "self" }, expr.callee);
       case "move_and_collide":
       case "is_on_floor":
       case "is_on_wall":
       case "is_on_ceiling":
+      case "probe_solid":
+      case "ray_cast":
         return this.checkBodyCall(expr, name, { kind: "self" }, expr.callee);
+      case "change_scene":
+        return this.checkChangeScene(expr);
+      case "save_game":
+      case "load_game":
+      case "has_save":
+        this.checkArgCount(expr, 0, `${name}()`);
+        for (const arg of expr.args) this.typeOfExpr(arg);
+        expr.res = { kind: "saveCall", fn: name };
+        return "bool";
       case "play":
       case "stop":
         return this.checkPlayOrStop(expr, name, { kind: "self" }, expr.callee);

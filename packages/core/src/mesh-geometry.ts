@@ -1,4 +1,4 @@
-import { getImportedMeshGeometry, type ImportedMesh } from "./imported-mesh";
+import { getImportedFrameCount, getImportedMeshFrameGeometry, getImportedMeshGeometry, type ImportedMesh } from "./imported-mesh";
 import type { ImportedTexture } from "./imported-texture";
 import { getPrimitiveGeometry, type PrimitiveGeometry } from "./primitive-geometry";
 import type { MeshInstance3DData } from "./scene-node";
@@ -24,6 +24,20 @@ export function resolveMeshGeometry(
     return found ? getImportedMeshGeometry(found) : undefined;
   }
   return mesh.primitive ? getPrimitiveGeometry(mesh.primitive) : undefined;
+}
+
+/** How many poses a mesh instance's model has (1 unless it is a model imported from several files as frames). */
+export function getMeshFrameCount(mesh: MeshInstance3DData, importedMeshes: readonly ImportedMesh[] | undefined): number {
+  if (mesh.importedMeshId === undefined) return 1;
+  const found = importedMeshes?.find((candidate) => candidate.id === mesh.importedMeshId);
+  return found ? getImportedFrameCount(found) : 1;
+}
+
+/** The geometry of pose `frame` of a mesh instance's model (the ordinary geometry for a model with one pose). */
+export function resolveMeshFrameGeometry(mesh: MeshInstance3DData, importedMeshes: readonly ImportedMesh[] | undefined, frame: number): PrimitiveGeometry | undefined {
+  if (mesh.importedMeshId === undefined) return resolveMeshGeometry(mesh, importedMeshes);
+  const found = importedMeshes?.find((candidate) => candidate.id === mesh.importedMeshId);
+  return found ? getImportedMeshFrameGeometry(found, frame) : undefined;
 }
 
 /** The texture a mesh instance is drawn with, or undefined when it has none (or names one the project lacks). */

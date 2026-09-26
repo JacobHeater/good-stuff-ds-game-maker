@@ -1,5 +1,5 @@
 import {
-  checkScript,
+  checkScriptOnNodes,
   DS_HARDWARE_PROFILE,
   DS_MAX_LIGHTS,
   describeMeshSource,
@@ -10,7 +10,13 @@ import {
   getCollisionShape,
   getLightIntensity,
   getSoundByteSize,
+  getSpriteTransform,
   getThreeDScreen,
+  isUpright,
+  otherScreen,
+  textureMemoryLimit,
+  getTouchArea2DRect,
+  getTouchArea3D,
   isTwoDVisualKind,
   getSoundSamples,
   getTextureByteSize,
@@ -19,6 +25,10 @@ import {
   meshSourceKey,
   playbackFrequency,
   resolveMeshGeometry,
+  resolveMeshFrameGeometry,
+  getMeshFrameCount,
+  getMeshDiffuseLevels,
+  getSpriteAnimations,
   resolveMeshTexture,
   textureSizeClass,
   type FpsTarget,
@@ -26,12 +36,16 @@ import {
   type ProjectScript,
   type ProjectSnapshot,
   type SceneNode,
-  type ScriptCheckResult
+  type ScriptCheckResult,
+  sceneNamesOf,
+  collectProjectGlobals,
+  type ProjectGlobal
 } from "@goodstuff/core";
 
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
-import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsTexture } from "./ds-scene";
+import { collectSprites } from "./translate-scene-2d";
+import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
 import { FixedPointRangeError, packNormal, rgb15, toF32, toT16, toV10, toV16 } from "./fixed-point";
 import { axisDirection, composeTransform, IDENTITY, invertAffine, multiply, splitScale, withoutScale, type Mat4 } from "./matrix";
 import { generateScriptCode, type CompiledScript } from "./script-codegen";
@@ -59,6 +73,10 @@ export interface TranslateOptions {
    * caller supplies it; defaults to the DS profile's default.
    */
   fpsTarget?: FpsTarget;
+  /** This scene's place in the project's list of scenes (the starting scene is 0). It names the scene's generated script code, so scenes can share one file. */
+  sceneIndex?: number;
+  /** The names of all the project's scenes, for `change_scene("name")`. Defaults to the project's own. */
+  sceneNames?: readonly string[];
 }
 
 export interface TranslateResult {
@@ -95,13 +113,14 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     diagnostics.push({
       severity: "error",
       code: "not-a-3d-project",
-      message: "Only 3D projects can be compiled so far; 2D compilation isn't supported yet."
+      message: "This is a 2D project, which the 3D translator can't compile."
     });
     return { scene: null, diagnostics };
   }
 
   // ---- Scripts first: they decide which nodes must be kept and which can move.
-  const scripts = checkProjectScripts(project, diagnostics);
+  const scripts = checkProjectScripts(project, diagnostics, options.sceneNames ?? sceneNamesOf(project));
+  const globals = scripts.globals;
 
   const meshes: Collected[] = [];
   const cameras: Collected[] = [];
@@ -109,6 +128,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   const audioNodes: Collected[] = [];
   const shapeNodes: Collected[] = [];
   const animationNodes: Collected[] = [];
+  const touchNodes: Collected[] = [];
   const kept: KeptNode[] = [];
 
   /** Whether `node` or anything under it is attached to a script or named by one. */
@@ -177,14 +197,19 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       case "AnimationPlayer":
         animationNodes.push({ node, world, index });
         break;
+      case "TouchArea2D":
+      case "TouchArea3D":
+        touchNodes.push({ node, world, index });
+        break;
       default:
-        // Node3D groups draw nothing and are ignored by design. A node for the 2D screen is a different matter: the ROM doesn't draw those yet.
-        if (isTwoDVisualKind(node.kind) && node.kind !== "Node2D") {
+        // Node3D groups draw nothing and are ignored by design. A Sprite2D is drawn on the 2D screen (see `collectSprites` below); every other node for the 2D
+        // screen is a different matter: the ROM doesn't draw those yet.
+        if (isTwoDVisualKind(node.kind) && node.kind !== "Node2D" && node.kind !== "Sprite2D" && node.kind !== "AnimatedSprite2D" && node.kind !== "Label") {
           diagnostics.push({
             severity: "warning",
             code: "two-d-node-not-built",
             nodeName: node.name,
-            message: `This ${node.kind} is on the ${node.screen} (2D) screen, and the ROM doesn't draw 2D nodes yet, so the screen stays blank. It is saved with the project.`
+            message: `This ${node.kind} is on the ${node.screen} (2D) screen, and the ROM only draws Sprite2D, AnimatedSprite2D and Label there so far, so it isn't drawn. It is saved with the project.`
           });
         }
         break;
@@ -277,12 +302,23 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     if (texture) usedTextures.set(texture.id, getTextureByteSize(texture));
   }
   const textureBytes = [...usedTextures.values()].reduce((sum, bytes) => sum + bytes, 0);
-  const textureLimit = DS_HARDWARE_PROFILE.memory.textureMemoryBytes;
+  // The sprites on the 2D screen (the sub engine). One VRAM bank holds their tiles, so with sprites the textures get 384 KB instead of 512 KB.
+  const twoDScreen = otherScreen(getThreeDScreen(project) ?? "top");
+  const keptIndexOf = new Map(kept.map((entry) => [entry.node.id, entry.index]));
+  const twoDSprites = collectSprites(project, () => twoDScreen, [twoDScreen], diagnostics, options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget, {
+    nodeIndexOf: (node) => keptIndexOf.get(node.id),
+    reachedByScript: (node) => scripts.touchedIds.has(node.id),
+    // Rotation and scale need a rotation matrix: a sprite that starts turned or scaled, or one whose transform a script writes.
+    rotatable: (node) => !isUpright(getSpriteTransform(node)) || scripts.dynamicRootIds.has(node.id)
+  })[twoDScreen];
+  const textureLimit = textureMemoryLimit(twoDSprites.images.length > 0);
   if (textureBytes > textureLimit) {
     diagnostics.push({
       severity: "error",
       code: "texture-memory",
-      message: `The scene's textures need ${textureBytes} bytes and the DS has ${textureLimit} bytes of texture memory.`
+      message:
+        `The scene's textures need ${textureBytes} bytes and the DS has ${textureLimit} bytes of texture memory` +
+        (twoDSprites.images.length > 0 ? ` (one 128 KB bank of the 512 KB holds the sprites on the 2D screen).` : ".")
     });
   }
 
@@ -371,6 +407,32 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     }
   }
 
+  // Touch areas do something only when a script asks them, and only where the stylus can reach them: the bottom screen is the touch screen, so a
+  // TouchArea2D must be on it (the 2D screen must be the bottom one) and a TouchArea3D needs the 3D engine on it.
+  const threeDScreen = getThreeDScreen(project) ?? "top";
+  for (const { node } of touchNodes) {
+    if (!scripts.touchIds.has(node.id)) {
+      diagnostics.push({
+        severity: "warning",
+        code: "touch-area-unused",
+        nodeName: node.name,
+        message: "No script asks this touch area whether it is touched (is_touched(), is_touch_pressed() or is_touch_released()), so it does nothing in the game."
+      });
+    }
+    const screen = node.kind === "TouchArea3D" ? threeDScreen : node.screen;
+    if (screen !== "bottom") {
+      diagnostics.push({
+        severity: "warning",
+        code: "touch-area-not-touchable",
+        nodeName: node.name,
+        message:
+          node.kind === "TouchArea3D"
+            ? "This TouchArea3D can never be touched: the 3D scene is on the top screen, and only the bottom screen senses the stylus. Put the 3D engine on the bottom screen."
+            : "This TouchArea2D is on the top screen, which does not sense the stylus, so it can never be touched. Put the 2D screen on the bottom."
+      });
+    }
+  }
+
   if (hasErrors(diagnostics)) return { scene: null, diagnostics };
 
   // Build the DS-format description. Any value that doesn't fit becomes a diagnostic naming its node.
@@ -414,19 +476,19 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     return textures.length;
   };
   // A vertex table is per geometry AND texture: texture coordinates are in texels, so they depend on the texture's size.
-  const indexOfPrimitive = (mesh: NonNullable<SceneNode["mesh"]>): number => {
+  const indexOfPrimitive = (mesh: NonNullable<SceneNode["mesh"]>, frame = 0): number => {
     const texture = resolveMeshTexture(mesh, project.textures);
-    const key = texture ? `${meshSourceKey(mesh)}|texture:${texture.id}` : meshSourceKey(mesh);
+    const key = (texture ? `${meshSourceKey(mesh)}|texture:${texture.id}` : meshSourceKey(mesh)) + (frame > 0 ? `#frame${frame}` : "");
     const existing = primitiveIndex.get(key);
     if (existing !== undefined) return existing;
-    const geometry = resolveMeshGeometry(mesh, project.meshes)!;
+    const geometry = (frame > 0 ? resolveMeshFrameGeometry(mesh, project.meshes, frame) : resolveMeshGeometry(mesh, project.meshes))!;
     const normals: number[] = [];
     for (let i = 0; i < geometry.normals.length; i += 3) {
       normals.push(packNormal(geometry.normals[i], geometry.normals[i + 1], geometry.normals[i + 2]));
     }
     primitives.push({
       key,
-      label: describeMeshSource(mesh, project.meshes) + (texture ? ` + ${texture.name}` : ""),
+      label: describeMeshSource(mesh, project.meshes) + (frame > 0 ? ` pose ${frame}` : "") + (texture ? ` + ${texture.name}` : ""),
       triangleCount: geometry.triangleCount,
       positions: geometry.positions.map(toV16),
       normals,
@@ -439,16 +501,61 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   };
 
   const dsMeshes: DsMesh[] = [];
+  const meshFrames: number[] = [];
+  const meshAnimations: DsSpriteAnimation[] = [];
+  const gameFps = options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget;
   for (const { node, world, index } of drawableMeshes) {
     const built = guard(node, () => {
       const texture = resolveMeshTexture(node.mesh!, project.textures);
       // Rotation and translation go to the DS as one matrix and scale as another thing: see `splitScale`.
       const { rigid, scale } = splitScale(world);
+      // Frame animations: a model with several poses, and animations that say which pose to show when.
+      const poses = getMeshFrameCount(node.mesh!, project.meshes);
+      const authored = getSpriteAnimations(node);
+      let frameStart = 0;
+      let frameCount = 0;
+      let animationFirst = 0;
+      let animationStart = -1;
+      let animationCount = 0;
+      if (authored.animations.length > 0 && poses <= 1) {
+        diagnostics.push({
+          severity: "warning",
+          code: "animated-mesh-without-frames",
+          nodeName: node.name,
+          message: "This mesh has animations, but its model has only one pose, so it never changes. Import the model from several .obj files (one for each pose) to animate it."
+        });
+      } else if (authored.animations.length > 0) {
+        const bad = authored.animations.find((animation) => animation.frames.some((frame) => frame >= poses));
+        if (bad) {
+          diagnostics.push({
+            severity: "error",
+            code: "animation-frame-out-of-range",
+            nodeName: node.name,
+            message: `The animation "${bad.name}" shows pose ${bad.frames.find((frame) => frame >= poses)}, but the model has ${poses} poses (0 to ${poses - 1}).`
+          });
+          return null;
+        }
+        frameStart = meshFrames.length;
+        frameCount = poses;
+        for (let f = 0; f < poses; f++) meshFrames.push(indexOfPrimitive(node.mesh!, f));
+        animationFirst = meshAnimations.length;
+        for (const animation of authored.animations) {
+          meshAnimations.push({ frames: animation.frames, step: Math.max(1, Math.round((animation.fps * 4096) / gameFps)), loop: animation.loop });
+        }
+        animationCount = authored.animations.length;
+        const start = authored.start === undefined ? -1 : authored.animations.findIndex((animation) => animation.name === authored.start);
+        animationStart = start < 0 ? -1 : animationFirst + start;
+      }
       return {
         node: index,
+        frameStart,
+        frameCount,
+        animation: animationStart,
+        animationFirst,
+        animationCount,
         primitive: indexOfPrimitive(node.mesh!),
         texture: texture ? indexOfTexture(texture) : 0,
-        diffuse: texture ? DEFAULTS.texturedMeshDiffuse : DEFAULTS.meshDiffuse,
+        diffuse: ((levels) => rgb15(levels[0], levels[1], levels[2]))(getMeshDiffuseLevels(node.mesh!, texture !== undefined)),
         world: matrixF32(rigid),
         scale: scale.map(toF32) as [number, number, number]
       };
@@ -470,6 +577,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   dsCamera = guard(cameraEntry.node, () => ({
     node: cameraEntry.index,
     fovDegrees: DEFAULTS.fovDegrees,
+    tanHalfFov: Math.tan((DEFAULTS.fovDegrees * Math.PI) / 360),
     nearPlane: DEFAULTS.nearPlane,
     farPlane: DEFAULTS.farPlane,
     view: matrixF32(invertAffine(withoutScale(cameraEntry.world)))
@@ -520,6 +628,25 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     if (built) {
       colliderIndexByNode.set(node.id, colliders.length);
       colliders.push(built);
+    }
+  }
+  // Touch areas, in tree order. A rectangle is in whole screen pixels; a volume is in the DS's number format (half extents for a box).
+  const touchAreas: DsTouchArea[] = [];
+  const touchIndexByNode = new Map<string, number>();
+  for (const { node, index } of touchNodes) {
+    const built = guard(node, (): DsTouchArea => {
+      if (node.kind === "TouchArea2D") {
+        const rect = getTouchArea2DRect(node);
+        return { node: index, shape: "rect", rect: [rect.x, rect.y, rect.width, rect.height], params: [0, 0, 0] };
+      }
+      const data = getTouchArea3D(node);
+      return data.shape === "box"
+        ? { node: index, shape: "box", rect: [0, 0, 0, 0], params: [toF32(data.size.x / 2), toF32(data.size.y / 2), toF32(data.size.z / 2)] }
+        : { node: index, shape: "sphere", rect: [0, 0, 0, 0], params: [toF32(data.radius), 0, 0] };
+    });
+    if (built) {
+      touchIndexByNode.set(node.id, touchAreas.length);
+      touchAreas.push(built);
     }
   }
   const f32x3 = (v: { x: number; y: number; z: number }): [number, number, number] => [toF32(v.x), toF32(v.y), toF32(v.z)];
@@ -594,19 +721,22 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     const built = guard(entry.node, () => {
       const { rigid, scale } = splitScale(entry.world);
       const local = entry.node.transform3D;
+      // A Sprite2D keeps its 2D state in the same slots: position x, y in pixels, its angle (degrees, clockwise) in the third rotation slot, scale x, y.
+      const sprite = entry.node.kind === "Sprite2D" || entry.node.kind === "AnimatedSprite2D" ? { position: entry.node.position, ...getSpriteTransform(entry.node) } : null;
       return {
         name: entry.node.name,
         parent: entry.parent,
-        position: local ? f32x3(local.position) : ([0, 0, 0] as [number, number, number]),
-        rotation: local ? f32x3(local.rotation) : ([0, 0, 0] as [number, number, number]),
-        scale: local ? f32x3(local.scale) : ([toF32(1), toF32(1), toF32(1)] as [number, number, number]),
+        position: sprite ? ([toF32(sprite.position.x), toF32(sprite.position.y), 0] as [number, number, number]) : local ? f32x3(local.position) : ([0, 0, 0] as [number, number, number]),
+        rotation: sprite ? ([0, 0, toF32(sprite.rotation)] as [number, number, number]) : local ? f32x3(local.rotation) : ([0, 0, 0] as [number, number, number]),
+        scale: sprite ? ([toF32(sprite.scale.x), toF32(sprite.scale.y), toF32(1)] as [number, number, number]) : local ? f32x3(local.scale) : ([toF32(1), toF32(1), toF32(1)] as [number, number, number]),
         visible: entry.node.visible,
         dynamic: entry.dynamic,
         world: matrixF32(rigid),
         worldScale: scale.map(toF32) as [number, number, number],
         audio: audioIndexByNode.get(entry.node.id) ?? -1,
         collider: colliderIndexByNode.get(entry.node.id) ?? -1,
-        animPlayer: animPlayerIndexByNode.get(entry.node.id) ?? -1
+        animPlayer: animPlayerIndexByNode.get(entry.node.id) ?? -1,
+        touch: touchIndexByNode.get(entry.node.id) ?? -1
       };
     });
     if (built) dsNodes.push(built);
@@ -620,7 +750,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     program: result.program,
     instances: attached.map((node) => indexById.get(node.id)!).sort((a, b) => a - b)
   }));
-  const scriptCode = generateScriptCode(compiledScripts, indexById);
+  const scriptCode = generateScriptCode(compiledScripts, indexById, options.sceneIndex ? `sc${options.sceneIndex}_` : "", new Map(globals.map((g, i) => [g.name, i])));
 
   return {
     scene: {
@@ -638,6 +768,11 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       animations,
       animationTracks,
       animationKeys,
+      touchAreas,
+      meshFrames,
+      meshAnimations,
+      sprites2D: twoDSprites,
+      globals: globals.map((g) => ({ name: g.name, type: g.type, value: g.type === "float" ? toF32(g.initial) : g.initial })),
       nodes: dsNodes,
       scriptCode
     },
@@ -657,8 +792,12 @@ interface ScriptPlan {
   animPlayedIds: Set<string>;
   /** Collision shapes a script passes to `overlaps()`. */
   overlapIds: Set<string>;
+  /** Touch areas a script asks about (`is_touched()` and the others). */
+  touchIds: Set<string>;
   /** Nodes a script moves with `move_and_collide()` (the bodies): the shapes under them, and every solid shape, are used by that. */
   moveIds: Set<string>;
+  /** The project's global variables, sorted by name. */
+  globals: ProjectGlobal[];
   /** Each script that is attached to something, checked, with the nodes it is attached to. */
   compiled: Array<{ script: ProjectScript; result: ScriptCheckResult; attached: SceneNode[] }>;
 }
@@ -667,8 +806,8 @@ interface ScriptPlan {
  * Checks every attached script against the scene (a script nothing uses isn't compiled, so a half-written one never blocks a build)
  * and reports each problem as a diagnostic naming the script, line and column.
  */
-function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[]): ScriptPlan {
-  const plan: ScriptPlan = { touchedIds: new Set(), dynamicRootIds: new Set(), playedIds: new Set(), animPlayedIds: new Set(), overlapIds: new Set(), moveIds: new Set(), compiled: [] };
+function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[], sceneNames: readonly string[]): ScriptPlan {
+  const plan: ScriptPlan = { touchedIds: new Set(), dynamicRootIds: new Set(), playedIds: new Set(), animPlayedIds: new Set(), overlapIds: new Set(), touchIds: new Set(), moveIds: new Set(), globals: [], compiled: [] };
   const scriptsById = new Map((project.scripts ?? []).map((script) => [script.id, script]));
   const attachments = new Map<string, SceneNode[]>();
   for (const node of flattenSceneTree(project.scene)) {
@@ -685,11 +824,29 @@ function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[]
     attachments.set(node.scriptId, [...(attachments.get(node.scriptId) ?? []), node]);
   }
 
+  // The project's global variables: the same in every scene, declared by any script and usable by all of them.
+  const collected = collectProjectGlobals(project.scripts ?? []);
+  plan.globals = collected.globals;
+  for (const problem of collected.problems) {
+    const declaredBy = (project.scripts ?? []).find((script) => script.name === problem.scriptName);
+    if (declaredBy && !attachments.has(declaredBy.id)) continue; // a script nothing uses doesn't block a build
+    diagnostics.push({
+      severity: "error",
+      code: "script-error",
+      nodeName: problem.scriptName ? `${problem.scriptName} script` : undefined,
+      message: problem.line !== undefined ? `line ${problem.line}: ${problem.message}` : problem.message
+    });
+  }
+
   for (const script of project.scripts ?? []) {
     const attached = attachments.get(script.id);
     if (!attached || attached.length === 0) continue;
-    const result = checkScript(script.source, { root: project.scene, attached: attached.map((node) => ({ name: node.name, kind: node.kind, hasShape: flattenSceneTree(node).some((n) => n.kind === "CollisionShape3D"), animations: node.kind === "AnimationPlayer" ? getAnimationPlayer(node).animations.map((animation) => animation.name) : undefined })) });
-    for (const problem of result.diagnostics) {
+    // Checked once for each node the script is attached to, with that node as the scope of $Name: a script on several copies of a block finds each copy's own
+    // children. Nodes whose checks name the same nodes share one compiled script (one copy of the code, a copy of the variables each); a node that finds
+    // different nodes for its $Names is compiled as a script of its own, so in the C a $Name always means one fixed node.
+    const groups = new Map<string, { result: ScriptCheckResult; nodes: SceneNode[] }>();
+    const { perNode, diagnostics: problems } = checkScriptOnNodes(script.source, project.scene, attached, sceneNames, plan.globals);
+    for (const problem of problems) {
       diagnostics.push({
         severity: problem.severity,
         code: problem.severity === "error" ? "script-error" : "script-warning",
@@ -697,22 +854,28 @@ function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[]
         message: `line ${problem.line}, column ${problem.column}: ${problem.message}`
       });
     }
-    const usage = result.usage;
-    for (const node of attached) {
+    for (const { node, result } of perNode) {
+      const usage = result.usage;
       plan.touchedIds.add(node.id);
       if (usage.selfWritesTransform) plan.dynamicRootIds.add(node.id);
       if (usage.selfCallsPlay) plan.playedIds.add(node.id);
       if (usage.selfOverlaps) plan.overlapIds.add(node.id);
+      if (usage.selfTouch) plan.touchIds.add(node.id);
       if (usage.selfMoves) plan.moveIds.add(node.id);
       if (usage.selfPlaysAnimation) plan.animPlayedIds.add(node.id);
+      for (const id of usage.referencedNodeIds) plan.touchedIds.add(id);
+      for (const id of usage.nodeWritesTransform) plan.dynamicRootIds.add(id);
+      for (const id of usage.nodeCallsPlay) plan.playedIds.add(id);
+      for (const id of usage.nodeOverlaps) plan.overlapIds.add(id);
+      for (const id of usage.nodeTouch) plan.touchIds.add(id);
+      for (const id of usage.nodeMoves) plan.moveIds.add(id);
+      for (const id of usage.nodePlaysAnimation) plan.animPlayedIds.add(id);
+      const key = JSON.stringify([...result.usage.referencedNodeIds].sort());
+      const group = groups.get(key);
+      if (group) group.nodes.push(node);
+      else groups.set(key, { result, nodes: [node] });
     }
-    for (const id of usage.referencedNodeIds) plan.touchedIds.add(id);
-    for (const id of usage.nodeWritesTransform) plan.dynamicRootIds.add(id);
-    for (const id of usage.nodeCallsPlay) plan.playedIds.add(id);
-    for (const id of usage.nodeOverlaps) plan.overlapIds.add(id);
-    for (const id of usage.nodeMoves) plan.moveIds.add(id);
-    for (const id of usage.nodePlaysAnimation) plan.animPlayedIds.add(id);
-    plan.compiled.push({ script, result, attached });
+    for (const { result, nodes } of groups.values()) plan.compiled.push({ script, result, attached: nodes });
   }
   return plan;
 }

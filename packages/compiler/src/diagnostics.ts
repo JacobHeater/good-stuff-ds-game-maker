@@ -7,6 +7,22 @@ export type DiagnosticSeverity = "error" | "warning";
 
 export type DiagnosticCode =
   | "not-a-3d-project"
+  | "not-a-2d-project"
+  | "missing-sprite"
+  | "sprite-without-image"
+  | "extra-scenes-not-built"
+  | "scene-instance-missing"
+  | "animation-frame-out-of-range"
+  | "animated-sprite-without-animations"
+  | "animated-mesh-without-frames"
+  | "sprite-off-screen"
+  | "label-off-screen"
+  | "too-many-labels"
+  | "too-many-sprites"
+  | "too-many-sprite-palettes"
+  | "too-many-rotating-sprites"
+  | "sprite-memory"
+  | "two-d-scripts-not-built"
   | "no-camera"
   | "multiple-cameras"
   | "too-many-lights"
@@ -29,6 +45,8 @@ export type DiagnosticCode =
   | "script-warning"
   | "missing-script"
   | "collision-shape-unused"
+  | "touch-area-unused"
+  | "touch-area-not-touchable"
   | "player-without-animations"
   | "animation-not-started"
   | "animation-target-missing";
@@ -39,6 +57,8 @@ export interface Diagnostic {
   message: string;
   /** The node it's about, when there is one. */
   nodeName?: string;
+  /** In a project with several scenes, the scene the problem is in. */
+  sceneName?: string;
 }
 
 export function hasErrors(diagnostics: readonly Diagnostic[]): boolean {
@@ -47,6 +67,6 @@ export function hasErrors(diagnostics: readonly Diagnostic[]): boolean {
 
 /** One line per diagnostic, for the Output log and the command line. */
 export function formatDiagnostic(d: Diagnostic): string {
-  const where = d.nodeName ? ` [${d.nodeName}]` : "";
+  const where = `${d.sceneName ? ` [scene ${d.sceneName}]` : ""}${d.nodeName ? ` [${d.nodeName}]` : ""}`;
   return `${d.severity === "error" ? "Error" : "Warning"}${where}: ${d.message}`;
 }

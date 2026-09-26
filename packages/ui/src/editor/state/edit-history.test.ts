@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { EMPTY_HISTORY, endGesture, MAX_HISTORY, MERGE_WINDOW_MS, recordEdit, redoStep, undoStep, type EditState } from "./edit-history";
 
-const state = (name: string): EditState => ({ sceneRoot: createSceneNode({ name, kind: "Node3D" }) as SceneNode, meshes: undefined, textures: undefined, sounds: undefined, scripts: undefined, selectedNodeId: name });
+const state = (name: string): EditState => ({ sceneRoot: createSceneNode({ name, kind: "Node3D" }) as SceneNode, meshes: undefined, textures: undefined, sounds: undefined, scripts: undefined, sprites: undefined, selectedNodeId: name });
 
 describe("edit history", () => {
   it("records an edit and undoes it, keeping the current state for redo", () => {

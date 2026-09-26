@@ -94,6 +94,41 @@ export function bottomScreenPoint(capture: InputCapture, fx: number, fy: number)
   return { x: window.left + screen.left + fx * screen.width, y: window.top + screen.top + screen.height + fy * screen.height };
 }
 
+/** Both screens of a 2D ROM as the emulator showed them, sampled to the DS's 256 x 192, three bytes (red, green, blue) a pixel. */
+export interface BothScreens {
+  title: string;
+  pngPath: string;
+  top: Uint8Array;
+  bottom: Uint8Array;
+}
+
+/**
+ * Runs a ROM in melonDS and reads back both screens. One screen is found by its bluish backdrop color (a 2D ROM's top backdrop is the same color as a 3D ROM's clear
+ * color, see `TOP_BACKDROP` in runtime2d/source/main.c); the other is directly above or below it, the same size. `bluish` says which physical screen has the bluish
+ * backdrop: the top one for a 2D ROM and for a 3D ROM with 3D on top (the default), the bottom one for a 3D ROM with 3D on the bottom.
+ */
+export function captureBothScreens(romPath: string, pngPath: string, waitSeconds = 5, bluish: "top" | "bottom" = "top"): BothScreens {
+  const capture = captureRom(romPath, pngPath, waitSeconds);
+  const png = PNG.sync.read(readFileSync(pngPath));
+  const { screen } = capture;
+  const scale = screen.width / DS_WIDTH;
+  const sample = (originTop: number): Uint8Array => {
+    const out = new Uint8Array(DS_WIDTH * DS_HEIGHT * 3);
+    for (let y = 0; y < DS_HEIGHT; y++) {
+      for (let x = 0; x < DS_WIDTH; x++) {
+        const sx = Math.min(png.width - 1, Math.floor(screen.left + (x + 0.5) * scale));
+        const sy = Math.min(png.height - 1, Math.floor(originTop + (y + 0.5) * scale));
+        const i = (sy * png.width + sx) * 4;
+        out.set([png.data[i], png.data[i + 1], png.data[i + 2]], (y * DS_WIDTH + x) * 3);
+      }
+    }
+    return out;
+  };
+  return bluish === "top"
+    ? { title: capture.title, pngPath, top: sample(screen.top), bottom: sample(screen.top + screen.height) }
+    : { title: capture.title, pngPath, top: sample(screen.top - screen.height), bottom: sample(screen.top) };
+}
+
 function analyzeCapture(pngPath: string, title: string): EmulatorCapture {
   const png = PNG.sync.read(readFileSync(pngPath));
   const at = (x: number, y: number): [number, number, number] => {

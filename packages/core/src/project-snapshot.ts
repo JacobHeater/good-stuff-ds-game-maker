@@ -1,5 +1,6 @@
 import type { ImportedMesh } from "./imported-mesh";
 import type { ImportedSound } from "./imported-sound";
+import type { ImportedSprite } from "./imported-sprite";
 import type { ProjectScript } from "./project-script";
 import type { ImportedTexture } from "./imported-texture";
 import type { ProjectMode } from "./project-mode";
@@ -31,7 +32,13 @@ export interface ProjectSnapshot {
   /** ISO 8601 timestamps. */
   createdAt: string;
   updatedAt: string;
+  /** The tree of the project's starting scene (the one the game starts in and the one a project with one scene has). See `project-scenes.ts`. */
   scene: SceneNode;
+  /** The starting scene's id and name when they aren't the defaults (its root node's name); always present when there are other scenes. */
+  sceneId?: string;
+  sceneName?: string;
+  /** The project's other scenes, in the order they are listed. Absent when there are none. Scenes share the project's mode, models, textures, sounds, images and scripts. */
+  scenes?: ProjectScene[];
   /**
    * 3D models imported into the project, embedded here (not referenced by path) so the project is one
    * file. Absent when there are none, so a project that never imported anything is byte-identical to
@@ -49,10 +56,23 @@ export interface ProjectSnapshot {
    */
   sounds?: ImportedSound[];
   /**
+   * Images imported for `Sprite2D` nodes, embedded already converted (256-color paletted). Absent when there are none.
+   * See requirements/persistence/TASK.embed-imported-sprites-in-project-file.md.
+   */
+  sprites?: ImportedSprite[];
+  /**
    * Scripts the user wrote, embedded here. Absent when there are none. Never dropped for being unattached: they are the user's own work.
    * See requirements/persistence/TASK.embed-scripts-in-project-file.md.
    */
   scripts?: ProjectScript[];
+}
+
+/** One of a project's scenes other than the starting one. */
+export interface ProjectScene {
+  id: string;
+  /** What a script calls it: `change_scene("Level2")`. Unique in the project. */
+  name: string;
+  scene: SceneNode;
 }
 
 /** Creates a brand-new project snapshot, stamping fresh id/timestamps. */
@@ -75,9 +95,15 @@ export function createProjectSnapshot(params: { name: string; mode: ProjectMode;
  * in the file; the `meshes`, `textures` and `sounds` keys disappear entirely when none remain.
  */
 export function withUpdatedScene(snapshot: ProjectSnapshot, scene: SceneNode): ProjectSnapshot {
-  const { meshes, textures, sounds, ...rest } = snapshot;
-  const updated: ProjectSnapshot = { ...rest, scene, updatedAt: new Date().toISOString() };
-  const nodes = flattenSceneTree(scene);
+  return pruneUnusedAssets({ ...snapshot, scene, updatedAt: new Date().toISOString() });
+}
+
+/** The project without the imported models, textures, sounds and images that no node of any scene uses (the keys disappear when none remain). */
+export function pruneUnusedAssets(snapshot: ProjectSnapshot): ProjectSnapshot {
+  const { meshes, textures, sounds, sprites, ...rest } = snapshot;
+  const updated: ProjectSnapshot = rest;
+  // What is kept is what any scene uses, so an asset a scene other than the one being edited needs isn't lost.
+  const nodes = [...flattenSceneTree(snapshot.scene), ...(snapshot.scenes ?? []).flatMap((entry) => flattenSceneTree(entry.scene))];
   if (meshes && meshes.length > 0) {
     const used = new Set(nodes.flatMap((node) => (node.mesh?.importedMeshId ? [node.mesh.importedMeshId] : [])));
     const kept = meshes.filter((mesh) => used.has(mesh.id));
@@ -92,6 +118,11 @@ export function withUpdatedScene(snapshot: ProjectSnapshot, scene: SceneNode): P
     const used = new Set(nodes.flatMap((node) => (node.audio?.soundId ? [node.audio.soundId] : [])));
     const kept = sounds.filter((sound) => used.has(sound.id));
     if (kept.length > 0) updated.sounds = kept;
+  }
+  if (sprites && sprites.length > 0) {
+    const used = new Set(nodes.flatMap((node) => (node.spriteId ? [node.spriteId] : [])));
+    const kept = sprites.filter((sprite) => used.has(sprite.id));
+    if (kept.length > 0) updated.sprites = kept;
   }
   return updated;
 }

@@ -1,9 +1,10 @@
 import {
   DS_HARDWARE_PROFILE,
-  DS_PLAIN_MESH_DIFFUSE,
+  getMeshDiffuseLevels,
   findSceneNode,
   getAnimationPlayer,
   getCollisionShape,
+  getTouchArea3D,
   getLightIntensity,
   getTextureTexels,
   is3DNodeKind,
@@ -36,6 +37,7 @@ import {
 } from "three";
 
 import { useEditorStore, type EditorTool } from "../state/editor-store";
+import { useShownSceneRoot } from "../state/shown-scene";
 import { collisionWireframe } from "./collision-wireframe";
 import { createDsMaterial, registerViewportLight, syncViewportLights, type ViewportLight } from "./ds-lighting-material";
 
@@ -45,9 +47,7 @@ const EDITOR_BORDER = "#3a3d41";
  * Mesh colors as the DS sees them (0..1 per channel; see core's ds-lighting.ts): a plain mesh is the DS's grey, a
  * textured one is white so the picture shows in its own colors. A selected mesh is tinted with the editor's accent.
  */
-const PLAIN_DIFFUSE = [DS_PLAIN_MESH_DIFFUSE, DS_PLAIN_MESH_DIFFUSE, DS_PLAIN_MESH_DIFFUSE] as const;
 const SELECTED_DIFFUSE = [0.31, 0.66, 1] as const;
-const TEXTURED_DIFFUSE = [1, 1, 1] as const;
 const TEXTURED_SELECTED_TINT = [0.66, 0.83, 1] as const;
 
 const DS_WIDTH = DS_HARDWARE_PROFILE.screens.width;
@@ -147,15 +147,18 @@ function MeshView({
   // the "wrong" way is still solid in the ROM; drawing imported models double-sided keeps the editor agreeing with it.
   // The primitives are all wound correctly (a plane is one sheet, seen from both sides).
   const doubleSided = mesh.primitive === "plane" || mesh.importedMeshId !== undefined;
+  // The mesh's own color as the DS holds it (5 bits a channel), or the default grey / white for a textured one.
+  const levels = getMeshDiffuseLevels(mesh, map !== null);
+  const ownDiffuse = useMemo(() => [levels[0] / 31, levels[1] / 31, levels[2] / 31] as const, [levels[0], levels[1], levels[2]]);
   const material = useMemo(
     () =>
       createDsMaterial({
-        diffuse: map ? TEXTURED_DIFFUSE : selected ? SELECTED_DIFFUSE : PLAIN_DIFFUSE,
+        diffuse: selected && !map ? SELECTED_DIFFUSE : ownDiffuse,
         tint: map && selected ? TEXTURED_SELECTED_TINT : undefined,
         map,
         side: doubleSided ? DoubleSide : FrontSide
       }),
-    [map, selected, doubleSided]
+    [map, selected, doubleSided, ownDiffuse]
   );
   useEffect(() => () => material.dispose(), [material]);
   if (!geometry) return null;
@@ -207,6 +210,41 @@ function CollisionShapeView({ node, selected, onSelect }: { node: SceneNode; sel
         {kind === "sphere" && <sphereGeometry args={[radius, 16, 12]} />}
         {kind === "capsule" && <capsuleGeometry args={[radius, Math.max(0, height - radius * 2), 4, 12]} />}
         {kind === "cylinder" && <cylinderGeometry args={[radius, radius, height, 16]} />}
+        <meshBasicMaterial color={color} transparent opacity={selected ? 0.22 : 0.1} depthWrite={false} side={DoubleSide} />
+      </mesh>
+    </>
+  );
+}
+
+/** A touch area is drawn in its own color, so it can be told from the collision shapes. */
+const TOUCH_AREA_COLOR = "#5fd6c4";
+
+/**
+ * A TouchArea3D, drawn as a wireframe with a faint fill you can click. It is drawn in the node's own space, so the node's position, rotation and scale (and its
+ * parents') place and size it, as they do in the ROM.
+ */
+function TouchAreaView({ node, selected, onSelect }: { node: SceneNode; selected: boolean; onSelect: () => void }): JSX.Element {
+  const area = getTouchArea3D(node);
+  const { shape: kind, size, radius } = area;
+  const lines = useMemo(() => {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(collisionWireframe({ shape: kind, size, radius, height: 2 }), 3));
+    return geometry;
+  }, [kind, size.x, size.y, size.z, radius]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => lines.dispose(), [lines]);
+  const color = selected ? EDITOR_ACCENT : TOUCH_AREA_COLOR;
+  return (
+    <>
+      <lineSegments geometry={lines} renderOrder={1}>
+        <lineBasicMaterial color={color} />
+      </lineSegments>
+      <mesh
+        onPointerDown={(event: ThreeEvent<MouseEvent>) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+      >
+        {kind === "box" ? <boxGeometry args={[size.x, size.y, size.z]} /> : <sphereGeometry args={[radius, 16, 12]} />}
         <meshBasicMaterial color={color} transparent opacity={selected ? 0.22 : 0.1} depthWrite={false} side={DoubleSide} />
       </mesh>
     </>
@@ -435,7 +473,7 @@ function SceneNodeView({
   const select = (): void => onSelect(node.id);
   const drawn = node.screen === activeScreen;
   // Only meshes and grouping nodes are sized by their scale; a camera or light gizmo stays gizmo-sized.
-  const scaled = node.kind === "MeshInstance3D" || node.kind === "Node3D" || node.kind === "CollisionShape3D";
+  const scaled = node.kind === "MeshInstance3D" || node.kind === "Node3D" || node.kind === "CollisionShape3D" || node.kind === "TouchArea3D";
 
   return (
     <group
@@ -451,6 +489,7 @@ function SceneNodeView({
         <MeshView mesh={node.mesh} importedMeshes={importedMeshes} importedTextures={importedTextures} selected={selected} onSelect={select} />
       )}
       {drawn && node.kind === "CollisionShape3D" && <CollisionShapeView node={node} selected={selected} onSelect={select} />}
+      {drawn && node.kind === "TouchArea3D" && <TouchAreaView node={node} selected={selected} onSelect={select} />}
       {drawn && node.kind === "Camera3D" && <CameraGizmo selected={selected} onSelect={select} />}
       {drawn && (node.kind === "DirectionalLight3D" || node.kind === "OmniLight3D") && (
         <LightGizmo node={node} selected={selected} onSelect={select} />
@@ -473,6 +512,7 @@ function SceneNodeView({
  * instead of looking like smooth modern 3D.
  */
 export function Viewport3D(): JSX.Element {
+  const shownRoot = useShownSceneRoot();
   const { state, selectNode, setTransform3D, endEditGesture } = useEditorStore();
   const activeScreen: ScreenId = state.screenFilter === "both" ? "top" : state.screenFilter;
   const nodeObjects = useRef<NodeObjects>(new Map());
@@ -484,7 +524,7 @@ export function Viewport3D(): JSX.Element {
     selected.id !== state.sceneRoot.id &&
     selected.screen === activeScreen &&
     is3DNodeKind(selected.kind) &&
-    (state.activeTool !== "scale" || selected.kind === "MeshInstance3D" || selected.kind === "Node3D" || selected.kind === "CollisionShape3D")
+    (state.activeTool !== "scale" || selected.kind === "MeshInstance3D" || selected.kind === "Node3D" || selected.kind === "CollisionShape3D" || selected.kind === "TouchArea3D")
       ? state.activeTool
       : null;
   // The animation preview: what the selected AnimationPlayer's animation gives each node at the playhead (null when no preview is showing).
@@ -535,7 +575,7 @@ export function Viewport3D(): JSX.Element {
             <SceneNodeView
               importedMeshes={state.project?.meshes}
               importedTextures={state.project?.textures}
-              node={state.sceneRoot}
+              node={shownRoot}
               activeScreen={activeScreen}
               selectedId={state.selectedNodeId}
               objects={nodeObjects.current}

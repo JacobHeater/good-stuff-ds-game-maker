@@ -44,10 +44,12 @@ than crashing.
 **Built-in functions.** `abs(x)`, `min(a, b)`, `max(a, b)`, `clamp(v, lo, hi)` (same type as their arguments; `int` mixed with `float`
 gives `float`), `sqrt(x)` (`float`), `sin(degrees)` and `cos(degrees)` (`float` in, `float` out, in -1..1), `int(x)`, `float(x)`.
 
+**Input.** `Input.touch_ground_x(height)` and `Input.touch_ground_z(height)` (`float`) give the world X / Z where the stylus points on the flat horizontal plane at that world height (a ray from the camera through the touched pixel, met with the plane; 0 when the stylus is up or the ray never reaches the plane); they need the 3D scene on the touch screen. This is what dragging a 3D object with the stylus is built from (`tests/prototypes/scripts/jenga-block.gsscript`).
 **Input.** `Input.is_button_down("a")` (held), `Input.is_button_pressed("a")` (went down this frame), `Input.is_button_released("a")`
 (went up this frame). The name is a string literal and must be one of `a b x y l r start select up down left right`.
 `Input.is_touching()` (bool), `Input.touch_x()` and `Input.touch_y()` (`int` pixels, 0..255 and 0..191; 0 when not touching).
 
+**Nodes.** `$Name` is looked for **under the node the script is attached to first** (as in Godot, where `$Child` is relative to the node the script is on) and then anywhere in the scene; several nodes with that name under the node (or, failing that, in the scene) is an error. So a script attached to several copies of a node finds each copy's own children, and the compiler gives each copy that finds different nodes its own compiled script.
 **Nodes.** `self` is the node the script is attached to; its members can be used without `self.`. `$Name` (or `$"Name with spaces"`)
 is another node, found by its name in the scene (it must exist, and exactly once). Members, for any node with a 3D transform:
 `position`, `rotation` (degrees) and `scale`, each with `.x`, `.y` and `.z` (`float`, read and write), and `visible` (`bool`,
@@ -61,8 +63,9 @@ For a node with a collision shape under it (a body, or a shape itself): `move_an
 `is_on_wall()`, `is_on_ceiling()` (`bool`) (`collision/STORY.solid-shapes-and-move-and-collide.md`).
 For an `AnimationPlayer`: `play("name")` (the name of one of its animations, in quotes), `stop()`, `is_playing()` (`bool`) and `speed_scale` (`float`, read and write)
 (`animation/TASK.animation-script-control.md`).
-Whole vectors are not values in version 1: use `position.x`, not `position`.
+Whole vectors are not values in version 1: use `position.x`, not `position`. The one exception is copying: `$Block.position = $Touch.position` (also `rotation` and `scale`, and `self` or a bare `position = $Touch.position`) sets all three components from another node's vector; `+=` and the like, and anything that is not another node's vector on the right, are errors.
 
+**Sprite2D** (on the 2D screen of a 3D project): `position.x` and `position.y` (screen pixels), `rotation` (one number, degrees clockwise), `scale.x` and `scale.y` (a factor, negative flips), and `visible`, read and write. `position.z`, `scale.z` and `rotation.x` are errors (`scene-designer/STORY.script-and-rotate-2d-nodes.md`).
 **Scope.** Names are case sensitive. A name can't be declared twice in one scope or shadow a variable or function; keywords
 (`var func if elif else while for in return break continue pass and or not true false range`) and built-in names can't be used as names.
 

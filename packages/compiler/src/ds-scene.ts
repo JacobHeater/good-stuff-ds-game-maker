@@ -87,6 +87,21 @@ export interface DsNode {
   collider: number;
   /** Index into `DsScene3D.animationPlayers` when this node is an AnimationPlayer with animations, otherwise -1. */
   animPlayer: number;
+  /** Index into `DsScene3D.touchAreas` when this node is a TouchArea2D or TouchArea3D, otherwise -1. */
+  touch: number;
+}
+
+/**
+ * A touch area (a `TouchArea2D` or `TouchArea3D`), placed by its node. A "rect" is a rectangle on the touch screen in screen pixels (`rect` is left, top,
+ * width, height); a "box" or "sphere" is a volume in the 3D scene, placed and scaled by its node, and `params` are `f32` (20.12): a box's half extents or a
+ * sphere's radius in the first slot.
+ */
+export interface DsTouchArea {
+  /** Index into `DsScene3D.nodes`. */
+  node: number;
+  shape: "rect" | "box" | "sphere";
+  rect: [number, number, number, number];
+  params: [number, number, number];
 }
 
 /** One keyframe: the time and the value (a vector's X/Y/Z; a bool or a number is in the first slot), in 20.12. */
@@ -152,6 +167,16 @@ export interface DsMesh {
   world: number[];
   /** Per-axis scale as `f32` (20.12), applied to positions only. Negative on x for a mirrored mesh. */
   scale: [number, number, number];
+  /**
+   * A model with several poses that has frame animations (requirements/scene-designer/STORY.animated-3d-models.md): its poses' vertex tables are `frameCount` entries of `DsScene3D.meshFrames`
+   * from `frameStart` (each a primitive index; the first is `primitive`), `animation` is the animation (an index into `meshAnimations`) that plays at the start or -1, and its own
+   * animations are `animationCount` entries from `animationFirst`. A mesh that isn't animated has all of these 0 (and -1 for `animation`).
+   */
+  frameStart: number;
+  frameCount: number;
+  animation: number;
+  animationFirst: number;
+  animationCount: number;
 }
 
 /** The DS has only parallel (directional) lights. */
@@ -168,6 +193,8 @@ export interface DsCamera {
   /** Index into `DsScene3D.nodes`. */
   node: number;
   fovDegrees: number;
+  /** tan(fovDegrees / 2): what turns a touched point on the screen into a ray through the scene (touch areas in 3D). */
+  tanHalfFov: number;
   nearPlane: number;
   farPlane: number;
   /** World-to-camera transform. */
@@ -192,6 +219,18 @@ export interface DsScene3D {
   animations: DsAnimation[];
   animationTracks: DsAnimationTrack[];
   animationKeys: DsAnimationKey[];
+  touchAreas: DsTouchArea[];
+  /** The primitive of each pose of each animated mesh, meshes' runs one after another (see `DsMesh.frameStart`). */
+  meshFrames: number[];
+  /** Every frame animation of every animated mesh; a mesh's own are a run of it. `frames` are poses of the mesh (0 is its first). */
+  meshAnimations: DsSpriteAnimation[];
+  /**
+   * The sprites on the project's 2D screen (the sub engine; the 3D engine is the main one). Empty when there are none, in which case the runtime keeps all four
+   * VRAM banks for textures; with sprites, one bank holds their tiles and textures get three (384 KB).
+   */
+  sprites2D: DsScreen2D;
+  /** The project's global variables, the same in every scene (they keep their values when the scene changes and are what the save file holds). */
+  globals: DsGlobal[];
   /** Every kept node, parents first. Meshes, the camera and lights refer to it. */
   nodes: DsNode[];
   /**
@@ -199,4 +238,108 @@ export interface DsScene3D {
    * table when nothing has a script). See `script-codegen.ts`.
    */
   scriptCode: string;
+}
+
+/**
+ * One sprite image as the DS's sprite engine holds it (256 colors, 8 bits a pixel): the pixels are already in the order the
+ * hardware reads them (8 x 8 tiles left to right, top to bottom, each tile's 64 pixels row by row), so the runtime copies them
+ * into sprite memory as they are. Shared by every sprite on the screen that draws it.
+ */
+export interface DsSpriteImage {
+  key: string;
+  label: string;
+  /** One of the DS's sprite sizes (`SPRITE_SIZES` in core). */
+  width: number;
+  height: number;
+  /** All 256 palette entries as RGB15; entry 0 is the transparent color (never drawn) and unused entries are 0. */
+  palette: number[];
+  /** `frames` frames of `width * height` bytes each, one after the other, each in tile order. */
+  tiles: number[];
+  /** How many frames the image has: 1 for a picture, more for a sprite sheet (`width` and `height` are one frame's size). All of them share the palette. */
+  frames: number;
+}
+
+/**
+ * One animation of an AnimatedSprite2D, ready for the runtime: the frames (numbers in the sheet), how far it goes through them each game frame and whether it starts over
+ * at the end. `step` is animation frames per game frame in 20.12 (a speed of 12 frames a second in a 30 fps game is 0.4 = 1638): the runtime adds it up and moves on a
+ * frame each time it passes 1.
+ */
+export interface DsSpriteAnimation {
+  frames: number[];
+  step: number;
+  loop: boolean;
+}
+
+/**
+ * One `Sprite2D` on a screen: which image and where its top-left corner sits, in screen pixels. In a 3D project (whose scripts can move, turn, scale and hide the
+ * sprite) it also says which node holds its live state, whether the runtime must follow that node every frame, and which of the engine's rotation matrices it uses.
+ */
+export interface DsSprite {
+  /** The node's name, for comments. */
+  name: string;
+  /** Index into `DsScreen2D.images`. */
+  image: number;
+  /** The corner of the sprite as it starts. For a sprite with a rotation matrix it is the corner of the doubled box the hardware draws it in, centered on the picture. */
+  x: number;
+  y: number;
+  /** Index into `DsScene3D.nodes` (the node's position, rotation, scale and visibility are the sprite's), or -1 when no script can reach the sprite. Only in a 3D project. */
+  node?: number;
+  /** A script can change the sprite, so the runtime reads its node every frame and updates the sprite. Only in a 3D project. */
+  dynamic?: boolean;
+  /** The rotation matrix (0..31) this sprite is drawn with, or -1 for none: a sprite that starts rotated or scaled, or that a script can change. Only in a 3D project. */
+  affine?: number;
+  /** The rotation (degrees, clockwise) and scale the sprite starts with, as `f32` (20.12). Only in a 3D project. */
+  rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
+  /**
+   * An AnimatedSprite2D: which of the screen's `animations` plays when the scene starts (-1: none does, and the sprite shows frame 0), and the range of that table this
+   * sprite's own animations fill (`animationFirst` for `animationCount` entries, in the order a script's `play("name")` counts them). Sprites that aren't animated have -1, 0, 0.
+   */
+  animation: number;
+  animationFirst: number;
+  animationCount: number;
+}
+
+/**
+ * One `Label` on a screen: text on the 8 x 8 grid (`column` 0..31, `row` 0..23), in one of the console's eight colors. `text` is plain ASCII (the compiler replaces anything the DS's
+ * font hasn't got) and may hold `{}` where the label's value goes. In a 3D project `node` is the label's place in the node table (its visibility is the node's), or -1.
+ */
+/** One of the project's global variables (`global var`), as the runtime keeps it: one 32-bit number (a float in 20.12) with the value the game starts with. */
+export interface DsGlobal {
+  name: string;
+  type: "int" | "float" | "bool";
+  value: number;
+}
+
+export interface DsLabel {
+  name: string;
+  column: number;
+  row: number;
+  color: number;
+  text: string;
+  node?: number;
+  /** Whether it shows when the scene starts (a script can change it). Only in a 3D project. */
+  visible?: boolean;
+}
+
+/** What one 2D engine draws. */
+export interface DsScreen2D {
+  images: DsSpriteImage[];
+  /** The screen's text, in tree order (later labels are drawn over earlier ones). */
+  labels: DsLabel[];
+  /** Every animation of every AnimatedSprite2D on the screen; a sprite's own are a run of it (`DsSprite.animationFirst`). */
+  animations: DsSpriteAnimation[];
+  /** In hardware order: the first sprite is drawn over all the others. */
+  sprites: DsSprite[];
+}
+
+/**
+ * A 2D project described as the DS's two 2D engines will show it. Plain data, the output of `translateScene2D` and the input
+ * to `writeScene2DDataC`. The top screen is the main engine and the bottom screen the sub engine.
+ */
+export interface DsScene2D {
+  fps: 30 | 60;
+  top: DsScreen2D;
+  bottom: DsScreen2D;
 }

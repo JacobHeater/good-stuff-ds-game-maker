@@ -19,6 +19,8 @@ export interface CompiledScript {
   instances: number[];
 }
 
+import { cString, fontSafeText } from "./label-text";
+
 const FIXED_ONE = 4096;
 
 const BUTTON_MASK: Record<string, string> = {
@@ -50,11 +52,15 @@ class ScriptWriter {
   constructor(
     private readonly script: CompiledScript,
     private readonly index: number,
-    private readonly nodeIndexById: ReadonlyMap<string, number>
+    private readonly nodeIndexById: ReadonlyMap<string, number>,
+    /** "" for the starting scene, "sc1_" and so on for the others: what keeps the names of one scene's scripts from another's. */
+    private readonly scenePrefix = "",
+    /** Each global variable's place in the ROM's table of them. */
+    private readonly globalIndex: ReadonlyMap<string, number> = new Map()
   ) {}
 
   private get prefix(): string {
-    return `gss${this.index}`;
+    return `${this.scenePrefix}gss${this.index}`;
   }
 
   private funcName(name: string): string {
@@ -76,7 +82,9 @@ class ScriptWriter {
   // ---- The whole script
 
   write(): string[] {
-    const { program, instances } = this.script;
+    const { instances } = this.script;
+    // A `global var` isn't part of a node's state: there is one copy in the game (gs_global).
+    const program = { ...this.script.program, variables: this.script.program.variables.filter((v) => !v.global) };
     const count = instances.length;
     this.raw(`/* script ${commentSafe(this.script.name)}: attached to ${count} node${count === 1 ? "" : "s"} */`);
 
@@ -87,6 +95,10 @@ class ScriptWriter {
     this.raw(`} ${this.prefix}_State;`);
     const initial = program.variables.length === 0 ? "0" : program.variables.map((v) => this.initialValue(v)).join(", ");
     this.raw(`static ${this.prefix}_State ${this.prefix}_state[${count}] = {`);
+    for (let i = 0; i < count; i++) this.raw(`\t{ ${initial} }${i < count - 1 ? "," : ""}`);
+    this.raw("};");
+    // What the state goes back to when the scene is loaded again.
+    this.raw(`static const ${this.prefix}_State ${this.prefix}_state_initial[${count}] = {`);
     for (let i = 0; i < count; i++) this.raw(`\t{ ${initial} }${i < count - 1 ? "," : ""}`);
     this.raw("};");
     this.raw(`static const uint16_t ${this.prefix}_self[${count}] = { ${instances.join(", ")} };`);
@@ -208,6 +220,21 @@ class ScriptWriter {
 
   private assign(statement: AssignStmt): void {
     const target = statement.target;
+    // `$A.position = $B.position`: the three components are copied one by one.
+    if (target.res?.kind === "nodeVector" && statement.value.res?.kind === "nodeVector") {
+      const to = target.res;
+      const from = statement.value.res;
+      for (let axis = 0; axis < 3; axis++) {
+        this.line(`gs_node_state[${this.nodeIndex(to.target)}].${to.prop}[${axis}] = gs_node_state[${this.nodeIndex(from.target)}].${from.prop}[${axis}];`);
+      }
+      return;
+    }
+    // `$Label.text = "Game Over"`.
+    if (target.res?.kind === "labelText") {
+      if (statement.value.kind !== "string") this.fail("a label's text set to something that isn't text in quotes", statement);
+      this.line(`gs_label_set_text(${this.nodeIndex(target.res.target)}, ${cString(fontSafeText(statement.value.value))});`);
+      return;
+    }
     const value = this.expr(statement.value);
     // The type the target holds, its current value as C, and how to store a new value.
     let type: ScriptType;
@@ -222,6 +249,10 @@ class ScriptWriter {
         current = `p_${target.name}`;
         store = (code) => `${current} = ${code};`;
       }
+    } else if (target.kind === "name" && target.res?.kind === "global") {
+      type = target.ty as ScriptType;
+      current = this.globalRef(target.res.name, target);
+      store = (code) => `${current} = ${code};`;
     } else if (target.kind === "name" && target.res?.kind === "member") {
       type = target.ty as ScriptType;
       current = `${this.prefix}_state[inst].m_${target.name}`;
@@ -236,6 +267,11 @@ class ScriptWriter {
         type = "bool";
         current = `gs_node_state[${this.nodeIndex(res.target)}].visible`;
         store = (code) => `${current} = ${code};`;
+      } else if (res.prop === "value") {
+        type = "int";
+        const node = this.nodeIndex(res.target);
+        current = `gs_label_get_value(${node})`;
+        store = (code) => `gs_label_set_value(${node}, ${code});`;
       } else if (res.prop === "speed_scale") {
         type = "float";
         const player = `gs_node_anim_player(${this.nodeIndex(res.target)})`;
@@ -325,11 +361,19 @@ class ScriptWriter {
       return { code: `${isParam ? "p_" : "v_"}${expr.name}`, ty: expr.ty as ScriptType };
     }
     if (res?.kind === "member") return { code: `${this.prefix}_state[inst].m_${expr.name}`, ty: expr.ty as ScriptType };
+    if (res?.kind === "global") return { code: this.globalRef(expr.name, expr), ty: expr.ty as ScriptType };
     if (res?.kind === "nodeProp") return this.nodeProp(res.target, res.prop);
     return this.fail(`the name "${expr.name}" is used as a value`, expr);
   }
 
-  private nodeProp(target: NodeTarget, prop: "visible" | "volume" | "pitch" | "speed_scale"): Typed {
+  private globalRef(name: string, at: { line: number }): string {
+    const index = this.globalIndex.get(name);
+    if (index === undefined) this.fail(`the global "${name}" isn't in the project's table of globals`, at);
+    return `gs_global[${index}]`;
+  }
+
+  private nodeProp(target: NodeTarget, prop: "visible" | "volume" | "pitch" | "speed_scale" | "value"): Typed {
+    if (prop === "value") return { code: `gs_label_get_value(${this.nodeIndex(target)})`, ty: "int" };
     if (prop === "visible") return { code: `gs_node_state[${this.nodeIndex(target)}].visible`, ty: "bool" as ScriptType };
     if (prop === "speed_scale") return { code: `gs_anim_get_speed(gs_node_anim_player(${this.nodeIndex(target)}))`, ty: "float" };
     return { code: `gs_audio_get_${prop}(gs_node_audio_player(${this.nodeIndex(target)}))`, ty: "float" };
@@ -382,7 +426,23 @@ class ScriptWriter {
         return { code: res.fn === "touch_x" ? "gs_touch_x" : "gs_touch_y", ty: "int" };
       case "audioCall":
         return { code: `gs_audio_${res.method}(gs_node_audio_player(${this.nodeIndex(res.target)}))`, ty: "int" };
+      case "sceneCall":
+        return { code: `gs_change_scene(${res.scene})`, ty: "int" };
+      case "saveCall":
+        return { code: `gs_${res.fn}()`, ty: "bool" as ScriptType };
       case "animCall": {
+        if (res.mesh) {
+          const node = this.nodeIndex(res.target);
+          if (res.method === "play") return { code: `gs_mesh_play(${node}, ${res.animation})`, ty: "int" };
+          if (res.method === "stop") return { code: `gs_mesh_stop(${node})`, ty: "int" };
+          return { code: `gs_mesh_is_playing(${node})`, ty: "bool" as ScriptType };
+        }
+        if (res.sprite) {
+          const node = this.nodeIndex(res.target);
+          if (res.method === "play") return { code: `gs_sprite_play(${node}, ${res.animation})`, ty: "int" };
+          if (res.method === "stop") return { code: `gs_sprite_stop(${node})`, ty: "int" };
+          return { code: `gs_sprite_is_playing(${node})`, ty: "bool" as ScriptType };
+        }
         const player = `gs_node_anim_player(${this.nodeIndex(res.target)})`;
         if (res.method === "play") return { code: `gs_anim_play(${player}, ${res.animation})`, ty: "int" };
         if (res.method === "stop") return { code: `gs_anim_stop(${player})`, ty: "int" };
@@ -393,8 +453,16 @@ class ScriptWriter {
           code: `gs_move_and_collide(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`,
           ty: "bool" as ScriptType
         };
+      case "rayCall":
+        return { code: `gs_ray_cast(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`, ty: "float" };
+      case "probeCall":
+        return { code: `gs_probe_solid(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`, ty: "int" };
       case "bodyState":
         return { code: `gs_body_state(${this.nodeIndex(res.target)}, GS_BODY_${res.state.toUpperCase()})`, ty: "bool" as ScriptType };
+      case "touchGround":
+        return { code: `gs_touch_ground(${res.axis}, ${this.convert(this.expr(expr.args[0]), "float")})`, ty: "float" };
+      case "touchState":
+        return { code: `gs_touch_state(${this.nodeIndex(res.target)}, GS_TOUCH_${res.state.toUpperCase()})`, ty: "bool" as ScriptType };
       case "overlapsCall":
         return { code: `gs_overlaps(${this.nodeIndex(res.a)}, ${this.nodeIndex(res.b)})`, ty: "bool" as ScriptType };
       case "builtin":
@@ -417,6 +485,12 @@ class ScriptWriter {
       case "sin":
       case "cos":
         return { code: `gs_${name}(${this.convert(args[0], "float")})`, ty: "float" };
+      case "randi":
+        return { code: `gs_randi(${args[0].code})`, ty: "int" };
+      case "randf":
+        return { code: "gs_randf()", ty: "float" };
+      case "atan2":
+        return { code: `gs_atan2(${this.convert(args[0], "float")}, ${this.convert(args[1], "float")})`, ty: "float" };
       case "abs":
       case "min":
       case "max":
@@ -433,9 +507,10 @@ class ScriptWriter {
  * The text of `script_code.c` for the given scripts: each script's state and functions, then the table of script instances
  * (one per attached node, in node-table order) that the runtime calls each frame.
  */
-export function generateScriptCode(scripts: readonly CompiledScript[], nodeIndexById: ReadonlyMap<string, number>): string {
+export function generateScriptCode(scripts: readonly CompiledScript[], nodeIndexById: ReadonlyMap<string, number>, scenePrefix = "", globalIndex: ReadonlyMap<string, number> = new Map()): string {
   const out: string[] = [];
   out.push("/* GENERATED by @goodstuff/compiler from the project's scripts. Do not edit: the next build overwrites this file. */");
+  out.push("#include <string.h>");
   out.push('#include "gs_api.h"');
   out.push("");
   // Generated code may define helpers a script never calls, and locals it never reads; that is the script author's business, not a warning.
@@ -447,7 +522,7 @@ export function generateScriptCode(scripts: readonly CompiledScript[], nodeIndex
   const entries: Array<{ node: number; script: number; inst: number; ready: boolean; process: boolean }> = [];
   scripts.forEach((script, index) => {
     if (script.instances.length === 0) return;
-    out.push(...new ScriptWriter(script, index, nodeIndexById).write());
+    out.push(...new ScriptWriter(script, index, nodeIndexById, scenePrefix, globalIndex).write());
     script.instances.forEach((node, inst) => {
       entries.push({
         node,
@@ -460,15 +535,23 @@ export function generateScriptCode(scripts: readonly CompiledScript[], nodeIndex
   });
 
   entries.sort((a, b) => a.node - b.node || a.script - b.script);
-  out.push("const GsScriptInstance gs_script_instances[] = {");
+  out.push(`const GsScriptInstance ${scenePrefix}gs_script_instances[] = {`);
   if (entries.length === 0) out.push("\t{ 0, 0, 0, 0 }");
   entries.forEach((e, i) => {
-    const ready = e.ready ? `gss${e.script}__ready` : "0";
-    const process = e.process ? `(void (*)(int, int32_t))gss${e.script}__process` : "0";
+    const ready = e.ready ? `${scenePrefix}gss${e.script}__ready` : "0";
+    const process = e.process ? `(void (*)(int, int32_t))${scenePrefix}gss${e.script}__process` : "0";
     out.push(`\t{ ${ready}, ${process}, ${e.node}, ${e.inst} }${i < entries.length - 1 ? "," : ""}`);
   });
   out.push("};");
-  out.push(`const uint16_t gs_script_instance_count = ${entries.length};`);
+  out.push(`const uint16_t ${scenePrefix}gs_script_instance_count = ${entries.length};`);
+  out.push("");
+  // Loading the scene again starts every script's variables over.
+  out.push(`void ${scenePrefix}gs_scripts_reset(void) {`);
+  scripts.forEach((script, index) => {
+    if (script.instances.length === 0) return;
+    out.push(`\tmemcpy(${scenePrefix}gss${index}_state, ${scenePrefix}gss${index}_state_initial, sizeof ${scenePrefix}gss${index}_state);`);
+  });
+  out.push("}");
   out.push("");
   return out.join("\n");
 }

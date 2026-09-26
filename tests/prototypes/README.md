@@ -129,6 +129,70 @@ without UVs (`quad-uv.obj` is written by the script), and a real Export ROM.
 pnpm build && node tests/prototypes/e2e/texture-mesh.mjs
 ```
 
+## `e2e/tree-select-reorder.mjs` — selecting, reordering and folding nodes in the Scene tree (5 checks)
+
+Real clicks with Ctrl and Shift held (toggle and range selection, the Inspector's note), Delete and Ctrl+D on a multi-selection with one Ctrl+Z each, and drag and drop played as the DOM
+drag events a drag makes (top edge = before, bottom edge = after, middle = inside, a whole selection moving together, and the drops that do nothing). A real mouse drag isn't driven.
+
+```sh
+pnpm build && node tests/prototypes/e2e/tree-select-reorder.mjs
+```
+
+## `e2e/sprites-3d-project.mjs` — sprites on the 2D screen of a 3D project (5 checks)
+
+A 3D project (camera and cube), a Sprite2D given a real PNG on its 2D screen, the 2D viewport drawing it, the Hardware tab's texture limit dropping from 512 KB to 384 KB (one bank goes to the
+sprite tiles) with the sprite counted on the 2D screen, a real Export ROM with no warning about the sprite, and the saved file. What the ROM draws is checked on the emulator by
+`packages/compiler/src/testing/sprites-3d.rom.test.ts`.
+
+```sh
+pnpm build && node tests/prototypes/e2e/sprites-3d-project.mjs
+```
+
+## `e2e/touch-areas.mjs` — touch areas in the editor (7 checks)
+
+A 2D project: the Scene menu lists TouchArea2D and not TouchArea3D, a new one is 64 x 64 and drawn at that size in the 2D viewport, the Inspector's Width and Height resize it
+(a too-big value is clamped, typing is one undo step), and it survives save and reopen. A 3D project: both kinds are offered, a TouchArea3D has a Shape select and Size X/Y/Z or
+Radius, and they are saved. A real Export ROM of a 3D project with touch areas, checking the Output log's touch warnings. The stylus behavior itself is tested on the emulator by
+`packages/compiler/src/testing/touch-areas.rom.test.ts` (`pnpm test:rom`).
+
+```sh
+pnpm build && node tests/prototypes/e2e/touch-areas.mjs
+```
+
+## `e2e/shortcuts.mjs` — the editor's keyboard shortcuts (9 checks)
+
+Real key presses in the built app: Ctrl+D (and Ctrl+Z on the copy, and nothing on the scene root), arrow-key nudging of a 2D node (1 px, 8 with Shift, a burst
+is one undo step, and an arrow in the Name field moves the text cursor instead), Escape, F2, Ctrl+S (saves with no dialog) and Ctrl+Shift+S, Ctrl+Shift+E and
+Ctrl+O (the stubbed dialogs record that they were asked), Ctrl+1/2/3, Ctrl+Y, and the shortcut hints in the Scene and Project menus. It does not press F5 (Play
+starts the emulator; `play.mjs` covers the button).
+
+```sh
+pnpm build && node tests/prototypes/e2e/shortcuts.mjs
+```
+
+## `e2e/delete-key.mjs` — deleting the selected node with Delete or Backspace (7 checks)
+
+Real key presses in the built app: Delete and Backspace remove the selected node and one Ctrl+Z restores it; in the Name field they edit the text
+and delete nothing; the scene root, Ctrl+Backspace, Shift+Delete and the Script tab do nothing; Scene > Delete Node shows "Del" and still works.
+
+```sh
+pnpm build && node tests/prototypes/e2e/delete-key.mjs
+```
+
+## `e2e/sprite-image.mjs` — sprite images in a 2D project (11 checks)
+
+Writes real PNG files (a 32 x 32 four-quadrant picture with a transparent border, a 16 x 16 coin, a 24 x 24, a 128 x 128 and a
+64 x 16 image the DS has no sprite for, a 64 x 64 image with 4096 colors, a text file named `.png`) and imports them through the real UI
+into a 2D project. It reads the pixels the 2D viewport draws from a screenshot of the sprite (a check that found the renderer's
+Content-Security-Policy blocking `data:` images), the Hardware tab's per-screen sprite memory and palettes, undo/redo, a node put on the
+bottom screen, the color-reduction warning, the saved file, close/reopen, and a real Export ROM. It prints a `GSDS_SPRITES_ROM_PROJECT=<path>`
+line: run `GSDS_SPRITES_ROM_PROJECT=<path> pnpm test:rom -- sprites-2d` to compare that project's ROM, in the emulator, with a reference
+painted from its images.
+
+```sh
+pnpm build && node tests/prototypes/e2e/sprite-image.mjs
+```
+
 ## `e2e/lighting-parity.mjs` — the editor's lighting and the intensity slider (9 checks)
 
 Builds a flat grey plane and a directional light through the real UI, reads the brightness the viewport actually draws from a
@@ -206,6 +270,17 @@ Scripts in the project's own language, ready to paste into the Script tab and at
 - `player-jump.gsscript`: a simple platformer player for testing games: Left/Right walk, A jumps (once, from the ground), gravity pulls it down, and **solid collision shapes are
   the ground** (`move_and_collide`: it lands on floors and steps, is stopped by walls, bumps its head). Set-up notes are at the top of the file. Its physics is checked frame by
   frame on the DS in `player-script.rom.test.ts` (walking speed, jump height and length, no double jump, landing on a step, walls, a low ceiling).
+- `jenga-block.gsscript`: a Jenga block that the player can **drag with the stylus** along the table (`Input.touch_ground_x/_z` and a `TouchArea3D` child; it is stopped by solid shapes) and that
+  **behaves like a Jenga block**: it starts by settling under gravity, and it looks at what holds it with `probe_solid` (near each end and in the middle of its underside, along its collision shape's longer side; the child shape is named `JengaCollision`, longer in Z, and cross layers are made by turning the *shape* 90 degrees, as in the owner's project). Middle or both ends held: it
+  stays and sleeps (looking again every 0.3 s, staggered per block). Only one end held: it **tips** about that end (turning about its own Z, the held corner staying put), and either
+  settles leaning on what the far end reaches or, past `tip_limit`, lets go and falls spinning. Nothing under it: it falls. Pulling a block out wakes the ones above on their next look. It is written to be cheap: a block at rest only counts down and looks (one `probe_solid`, about 0.5 ms with 50 solid blocks) every 0.6 s at its own moment, trig is kept between frames, and only moving blocks pay for `move_and_collide`. The block's numbers (`shape_lift`, `half_length`, `half_height`) are variables at the top, set for a 0.6 x 0.3 x 1.8 block (the collision skin is 0.01, too big for a block 0.015 tall). **The scene also needs a `Node3D` named `Tower`** (the blocks count moving blocks on it and raise a "tower is coming down" flag: when 4 move at once every resting block is thrown outward). Blocks that let go tumble, skid and bounce (a turn in the air is refused if it would push a corner into something), a hard landing knocks a block sideways, and blocks that fall 20 units below their start retire. At last measure a collapse still runs in slow motion on the DS (about 180 ms a frame with 30 blocks moving, before the last speedup). The 3D scene must be on the bottom screen. Compile-checked in `touch-areas.test.ts`;
+  run on the emulator against the owner's real project once (tower settles; pulling supports makes the top blocks tip and lean), not kept as a test.
+- `camera-look.gsscript`: look around with the D-pad: Left/Right turn the camera on the spot (B faster, Select resets); it never tilts, so the horizon stays level. Attach it to the Camera3D, nothing
+  else to set up. Compile-checked in `example-scripts.test.ts` (which also checks it writes only the camera's Y rotation); not run on the emulator.
+- `physics-body.gsscript`: rigid-body physics for a MeshInstance3D (a ball): gravity 9.81 with terminal speed, air drag, bounciness that loses height each bounce and settles
+  below a rest speed, steady floor friction, wall and ceiling bounces (the blocked axis is found by comparing the move asked for with the move made), rolling spin of speed / radius,
+  D-pad forces and an A kick that depend on mass, B to reset. Same set-up as `player-jump.gsscript` (a collision shape under the mesh, solid shapes for the floor and walls).
+  **Written on request and not run, not even through the script checker.**
 
 ## `e2e/script-autocomplete.mjs` — auto-complete in the script editor (9 checks)
 
@@ -237,6 +312,18 @@ platformer authored through the UI (a player with a body shape, a solid floor an
 ```sh
 pnpm build && node tests/prototypes/e2e/platformer.mjs        # prints "SAVED <path>"
 GSDS_PLATFORMER_ROM_PROJECT=<path> pnpm test:rom               # runs it in melonDS: the player falls onto the floor and stands; with Right held it stops at the wall
+```
+
+## `e2e/animated-sprite.mjs` — animated sprites from sprite sheets (9 checks)
+
+Real Inspector, real PNGs (a 64 x 16 sheet of four flat-colored 16 x 16 frames, and a 48 x 16 one that isn't a whole number of 32 x 16 frames), only the native file dialog stubbed. Checks the
+sheet field and empty animations list, a refused ragged sheet ("Import Sprite Sheet" dialog, reason in the Output log), a real import with Frame size 16 x 16 (four frames, a "default" animation 0-3 that
+starts), the viewport's pixels (one 16 x 16 frame drawn 2x, red for frame 0, then blue when the start animation is one beginning on frame 2), adding and editing animations (name, frames "2, 3", speed, loop,
+start), refused input (frame past the sheet, not a number, a name another animation has), the Inspector's Preview really changing picture, saving (frame size and animations in the file) and undo.
+It prints `GSDS_ANIMATED_PROJECT=<path>`. Run `pnpm build` first. **Flaky:** about one run in three dies with `Runtime.callFunctionOn timed out` (seen in the other E2E scripts too); rerun.
+
+```
+pnpm build && node tests/prototypes/e2e/animated-sprite.mjs
 ```
 
 ## `e2e/animation.mjs` — the AnimationPlayer (10 checks)

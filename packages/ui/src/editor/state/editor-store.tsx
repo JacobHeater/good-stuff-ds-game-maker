@@ -1,9 +1,16 @@
 import type {
   AudioPlayerData,
+  LabelData,
   FpsTarget,
   ImportedMesh,
   ImportedSound,
+  ImportedSprite,
+  RiggedModel,
+  TouchArea2DData,
+  TouchArea3DShape,
   ImportedTexture,
+  SpriteAnimation,
+  SpriteAnimationsData,
   MeshInstance3DData,
   MeshPrimitive,
   ProjectMode,
@@ -48,11 +55,31 @@ import {
   formatSoundTime,
   getAudioPlayer,
   getImportedTriangleCount,
+  importGltf,
+  readGltfFile,
+  parseMeshColor,
+  meshColorFromLevels,
+  getImportedFrameCount,
+  getMeshFrameCount,
   getLightIntensity,
   getPrimitiveTriangleCount,
   getSoundByteSize,
   getSoundDurationSeconds,
+  getSpriteByteSize,
+  getSpriteFrames,
+  getSpriteAnimations,
+  clampSpriteAnimationFps,
+  createSpriteAnimation,
+  nextAnimationName,
+  getSpriteTransform,
+  normalizeSpriteTransform,
   getTextureByteSize,
+  getLabel,
+  MAX_LABEL_CHARS,
+  getTouchArea2D,
+  getTouchArea3D,
+  normalizeTouchArea2D,
+  normalizeTouchArea3D,
   insertNodeAfterSibling,
   meshSourceKey,
   NEW_SCRIPT_SOURCE,
@@ -60,12 +87,17 @@ import {
   isNodeKindAllowedInMode,
   removeSceneNode,
   uniqueNodeName,
+  copyName,
+  moveSceneNodes,
+  topMostNodes,
+  type DropPosition,
   uniqueScriptName,
   updateSceneNode,
-  withUpdatedScene,
   DS_HARDWARE_PROFILE
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
+import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
+import { DEFAULT_START_SCENE_ID, instanceWouldCycle, listScenes, newSceneId, outerNodeId, pruneUnusedAssets, uniqueSceneName, withSceneEntries, withSceneTree, type SceneEntry } from "@goodstuff/core";
 import { EMPTY_HISTORY, endGesture, recordEdit, redoStep, undoStep, type EditHistory, type EditState } from "./edit-history";
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 
@@ -84,6 +116,52 @@ export type EditorTool = "select" | "move" | "rotate" | "scale";
 /** The settings of an audio player that can be edited one at a time (the sound itself is chosen with `setAudioSound`). */
 export type AudioPlayerChange = Partial<Pick<AudioPlayerData, "autoplay" | "volume" | "pitch" | "loop">>;
 /** What can be edited on a collision shape: any of these at once (a box's size may name just some of its axes). */
+/** A change to a Sprite2D's rotation (degrees, clockwise) and/or its scale on each axis. */
+/** What the animation editor changes about one animation of an AnimatedSprite2D; the fields given are the ones that change. */
+export interface SpriteAnimationChange {
+  name?: string;
+  frames?: number[];
+  fps?: number;
+  loop?: boolean;
+}
+
+/**
+ * An AnimatedSprite2D whose sheet has changed: frames of its animations that the new sheet doesn't have are dropped (and an animation left with none goes), so a saved project
+ * never names a frame that isn't there. A start animation that went is forgotten.
+ */
+function fitAnimationsToSheet(node: SceneNode, sheet: ImportedSprite | undefined): SceneNode {
+  if (!node.spriteAnimations) return node;
+  const count = sheet ? getSpriteFrames(sheet).count : Number.POSITIVE_INFINITY;
+  const data = getSpriteAnimations(node);
+  const animations = data.animations.map((animation) => ({ ...animation, frames: animation.frames.filter((frame) => frame < count) })).filter((animation) => animation.frames.length > 0);
+  const start = data.start !== undefined && animations.some((animation) => animation.name === data.start) ? data.start : undefined;
+  return { ...node, spriteAnimations: { animations, ...(start !== undefined ? { start } : {}) } };
+}
+
+/** A sheet just put on an AnimatedSprite2D that has no animations yet: one that plays every frame, from the start, so the picture moves at once. */
+function withDefaultAnimation(node: SceneNode, frameCount: number): SceneNode {
+  if (frameCount < 2 || getSpriteAnimations(node).animations.length > 0) return node;
+  const animation = createSpriteAnimation("default", Array.from({ length: frameCount }, (_, i) => i));
+  return { ...node, spriteAnimations: { animations: [animation], start: animation.name } };
+}
+
+export interface SpriteTransformChange {
+  rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
+}
+
+/** A change to a Label's text and/or color. */
+export type LabelChange = Partial<LabelData>;
+/** A change to a TouchArea2D's rectangle: any of its fields. */
+export type TouchArea2DChange = Partial<TouchArea2DData>;
+/** A change to a TouchArea3D: its shape, some of its box size, or its radius. */
+export interface TouchArea3DChange {
+  shape?: TouchArea3DShape;
+  size?: Partial<Vector3>;
+  radius?: number;
+}
+
 export interface CollisionShapeChange {
   shape?: CollisionShapeKind;
   size?: Partial<{ x: number; y: number; z: number }>;
@@ -102,7 +180,20 @@ export interface ProjectActionResult {
 
 export interface EditorState {
   sceneRoot: SceneNode;
+  /** The node the Inspector and the viewports work on: the one last clicked. */
   selectedNodeId: string;
+  /**
+   * Other nodes selected along with `selectedNodeId` (Ctrl+click, Shift+click). Delete, Duplicate and dragging in the Scene tree act on all of them. Never holds the primary
+   * node, or a node that is not in the scene (`normalizeSelection` keeps it so).
+   */
+  extraSelectedIds: string[];
+  /** Where a Shift+click range starts: the node last selected without Shift. */
+  selectionAnchorId: string;
+  /**
+   * Nodes whose children are folded away in the Scene tree. Only the tree's look: not saved with the project and not an edit (no undo step). Selecting a node inside
+   * a folded one unfolds the way to it (`normalizeSelection`).
+   */
+  collapsedNodeIds: string[];
   activeWorkspace: WorkspaceId;
   activeBottomTab: BottomTabId;
   screenFilter: ScreenFilter;
@@ -118,6 +209,13 @@ export interface EditorState {
   project: ProjectSnapshot | null;
   /** Where `project` is saved on disk. */
   projectFilePath: string | null;
+  /**
+   * The scene being edited (`sceneRoot` is its tree). The project's own copy of that tree is stale while it is edited, like `project.scene` always was; `savedProjectOf` puts the live tree
+   * in. Switching scene is not an edit.
+   */
+  activeSceneId: string;
+  /** The project's scenes as they were when it was last opened or saved (trees by reference): what "unsaved" compares with. */
+  savedScenes: SceneEntry[] | undefined;
   /**
    * The project's scripts as they were when it was last opened or saved. A script edit changes `project.scripts` but not the scene tree, so this
    * is what "unsaved" compares them with; undoing back to it (by reference, like the scene tree) reads as clean.
@@ -152,8 +250,43 @@ export const EMPTY_ANIMATION_UI: AnimationUi = { playerId: null, animationId: nu
  * references equal again and the project reads as clean. (An edit reverted by
  * hand, rather than by undo, still reads as unsaved.)
  */
-export function hasUnsavedChanges(state: Pick<EditorState, "project" | "sceneRoot" | "savedScripts">): boolean {
-  return state.project !== null && (state.sceneRoot !== state.project.scene || state.project.scripts !== state.savedScripts);
+export function hasUnsavedChanges(state: Pick<EditorState, "project" | "sceneRoot" | "savedScripts"> & Partial<Pick<EditorState, "activeSceneId" | "savedScenes">>): boolean {
+  if (state.project === null) return false;
+  if (state.project.scripts !== state.savedScripts) return true;
+  if (!state.savedScenes || state.activeSceneId === undefined) return state.sceneRoot !== state.project.scene;
+  // Every scene must be the tree it was (by reference), under the name it had, in the place it had.
+  const now = listScenes(withSceneTree(state.project, state.activeSceneId, state.sceneRoot));
+  return now.length !== state.savedScenes.length || now.some((entry, i) => entry.id !== state.savedScenes![i].id || entry.name !== state.savedScenes![i].name || entry.isStart !== state.savedScenes![i].isStart || entry.scene !== state.savedScenes![i].scene);
+}
+
+/** The project as it would be saved: the scene being edited put into it, and the assets no scene uses left out. */
+export function savedProjectOf(state: Pick<EditorState, "project" | "sceneRoot" | "activeSceneId">): ProjectSnapshot {
+  const project = withSceneTree(state.project!, state.activeSceneId, state.sceneRoot);
+  return pruneUnusedAssets({ ...project, updatedAt: new Date().toISOString() });
+}
+
+/** The project's scenes with the scene being edited as it is now. */
+function currentSceneEntries(state: Pick<EditorState, "project" | "sceneRoot" | "activeSceneId">): SceneEntry[] {
+  return state.project ? listScenes(withSceneTree(state.project, state.activeSceneId, state.sceneRoot)) : [];
+}
+
+/** `entries` become the project's scenes and `activeId` the one being edited (its tree is the scene tree, and nothing in it is selected but its root). */
+function withScenes(state: EditorState, entries: readonly SceneEntry[], activeId: string): EditorState {
+  const active = entries.find((entry) => entry.id === activeId) ?? entries[0];
+  const project = withSceneEntries(state.project!, entries);
+  const changedScene = active.id !== state.activeSceneId;
+  return {
+    ...state,
+    project,
+    activeSceneId: active.id,
+    sceneRoot: active.scene,
+    selectedNodeId: changedScene || !findSceneNode(active.scene, state.selectedNodeId) ? active.scene.id : state.selectedNodeId,
+    extraSelectedIds: changedScene ? [] : state.extraSelectedIds,
+    selectionAnchorId: changedScene ? active.scene.id : state.selectionAnchorId,
+    collapsedNodeIds: changedScene ? [] : state.collapsedNodeIds,
+    screenFilter: changedScene && project.mode === "3D" ? active.scene.screen : state.screenFilter,
+    animationUi: changedScene ? EMPTY_ANIMATION_UI : state.animationUi
+  };
 }
 
 /** What the user is being asked to save before, e.g. "close this project". */
@@ -189,6 +322,19 @@ export function screenRolesOf(state: EditorState): { threeD: ScreenId; twoD: Scr
 
 export type Action =
   | { type: "SELECT_NODE"; id: string }
+  /** Ctrl+click (toggle the node in the selection) or Shift+click (select the range from the anchor to the node). */
+  | { type: "SELECT_NODE_MODIFIED"; id: string; mode: "toggle" | "range" }
+  /** Deletes the nodes (the whole selection when `ids` is left out); what is under a node goes with it. */
+  | { type: "DELETE_NODES"; ids?: string[] }
+  /** Duplicates the nodes (the whole selection when `ids` is left out) and selects the copies. */
+  | { type: "DUPLICATE_NODES"; ids?: string[] }
+  /** Moves the nodes (with what is under them) next to or inside `targetId`: a drag and drop in the Scene tree. */
+  | { type: "MOVE_NODES"; ids: string[]; targetId: string; position: DropPosition }
+  /** Folds or unfolds a node's children in the Scene tree. */
+  | { type: "TOGGLE_COLLAPSED"; id: string }
+  /** Folds every node that has children (the scene root stays open), or unfolds them all. */
+  | { type: "COLLAPSE_ALL" }
+  | { type: "EXPAND_ALL" }
   | { type: "SET_WORKSPACE"; workspace: WorkspaceId }
   | { type: "SET_BOTTOM_TAB"; tab: BottomTabId }
   | { type: "SET_SCREEN_FILTER"; filter: ScreenFilter }
@@ -203,7 +349,9 @@ export type Action =
   | { type: "TOGGLE_VISIBLE"; id: string }
   | { type: "SET_MESH_SOURCE"; id: string; source: MeshSource }
   | { type: "IMPORT_MESH"; mesh: ImportedMesh; warnings: string[] }
+  | { type: "IMPORT_RIGGED_MODEL"; model: RiggedModel; warnings: string[] }
   | { type: "SET_MESH_TEXTURE"; id: string; textureId: string | null }
+  | { type: "SET_MESH_COLOR"; id: string; color: string | null; at: number }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
@@ -218,9 +366,28 @@ export type Action =
   | { type: "ANIM_DELETE_KEY"; playerId: string; animationId: string; trackId: string; time: number }
   | { type: "ANIM_UI"; change: Partial<AnimationUi> }
   | { type: "IMPORT_TEXTURE"; nodeId: string; texture: ImportedTexture; warnings: string[] }
+  | { type: "SET_NODE_SCREEN"; id: string; screen: ScreenId }
+  | { type: "SET_SPRITE_IMAGE"; id: string; spriteId: string | null }
+  | { type: "IMPORT_SPRITE"; nodeId: string | null; sprite: ImportedSprite; warnings: string[] }
+  | { type: "SCENE_SWITCH"; id: string }
+  | { type: "SCENE_ADD"; id: string; name: string }
+  | { type: "SCENE_RENAME"; id: string; name: string; at: number }
+  | { type: "SCENE_DELETE"; id: string }
+  | { type: "SCENE_DUPLICATE"; id: string; newId: string }
+  | { type: "SCENE_SET_START"; id: string }
+  /** Puts an instance of another scene in the scene being edited, under `parentId` (the selected node when absent). */
+  | { type: "SCENE_INSTANTIATE"; sceneId: string; parentId?: string }
+  | { type: "SPRITE_ANIM_ADD"; id: string }
+  | { type: "SPRITE_ANIM_SET"; id: string; index: number; change: SpriteAnimationChange; at: number }
+  | { type: "SPRITE_ANIM_REMOVE"; id: string; index: number }
+  | { type: "SPRITE_ANIM_START"; id: string; name: string | null }
   | { type: "SET_AUDIO_SOUND"; id: string; soundId: string | null }
   | { type: "SET_AUDIO_PLAYER"; id: string; change: AudioPlayerChange; at: number }
   | { type: "SET_COLLISION_SHAPE"; id: string; change: CollisionShapeChange; at: number }
+  | { type: "SET_SPRITE_TRANSFORM"; id: string; change: SpriteTransformChange; at: number }
+  | { type: "SET_TOUCH_AREA_2D"; id: string; change: TouchArea2DChange; at: number }
+  | { type: "SET_LABEL"; id: string; change: LabelChange; at: number }
+  | { type: "SET_TOUCH_AREA_3D"; id: string; change: TouchArea3DChange; at: number }
   | { type: "IMPORT_SOUND"; nodeId: string | null; sound: ImportedSound; warnings: string[] }
   | { type: "SELECT_SCRIPT"; id: string | null }
   | { type: "CREATE_SCRIPT"; attachTo: string | null; id: string }
@@ -242,6 +409,9 @@ export function createInitialState(): EditorState {
   return {
     sceneRoot,
     selectedNodeId: sceneRoot.id,
+    extraSelectedIds: [],
+    selectionAnchorId: sceneRoot.id,
+    collapsedNodeIds: [],
     activeWorkspace: "2D",
     activeBottomTab: "Output",
     screenFilter: "both",
@@ -251,6 +421,8 @@ export function createInitialState(): EditorState {
     outputLog: ["Good Stuff DS Game Maker ready."],
     project: null,
     projectFilePath: null,
+    activeSceneId: DEFAULT_START_SCENE_ID,
+    savedScenes: undefined,
     savedScripts: undefined,
     selectedScriptId: null,
     animationUi: EMPTY_ANIMATION_UI
@@ -263,11 +435,16 @@ function loadProject(state: EditorState, project: ProjectSnapshot, filePath: str
     ...state,
     sceneRoot: project.scene,
     selectedNodeId: project.scene.id,
+    extraSelectedIds: [],
+    selectionAnchorId: project.scene.id,
+    collapsedNodeIds: [],
     activeWorkspace: project.mode,
     // A 3D project opens looking at its 3D screen.
     screenFilter: project.mode === "3D" ? project.scene.screen : screenFilterForMode(state.screenFilter, project.mode),
     project,
     projectFilePath: filePath,
+    activeSceneId: listScenes(project)[0].id,
+    savedScenes: listScenes(project),
     savedScripts: project.scripts,
     selectedScriptId: project.scripts?.[0]?.id ?? null,
     animationUi: EMPTY_ANIMATION_UI,
@@ -278,8 +455,38 @@ function loadProject(state: EditorState, project: ProjectSnapshot, filePath: str
 
 function applyAction(state: EditorState, action: Action): EditorState {
   switch (action.type) {
+    case "SELECT_NODE_MODIFIED": {
+      // Rows that are folded away take no part in a range: it runs over what the tree shows.
+      const order = visibleNodeIds(state.sceneRoot, state.collapsedNodeIds);
+      if (!order.includes(action.id)) return state;
+      const all = selectedNodeIdsOf(state);
+      let primary: string;
+      let others: string[];
+      let anchor = state.selectionAnchorId;
+      if (action.mode === "toggle") {
+        anchor = action.id;
+        if (all.includes(action.id)) {
+          // Ctrl+click on a selected node takes it out; the last of the rest becomes the primary (the scene root when nothing is left).
+          const rest = all.filter((id) => id !== action.id);
+          primary = action.id !== state.selectedNodeId ? state.selectedNodeId : (rest[0] ?? state.sceneRoot.id); // the most recently selected of the rest
+          others = rest.filter((id) => id !== primary);
+        } else {
+          primary = action.id;
+          others = all;
+        }
+      } else {
+        const shownAnchor = nearestVisibleId(state.sceneRoot, state.collapsedNodeIds, anchor);
+        const from = order.indexOf(order.includes(shownAnchor) ? shownAnchor : state.selectedNodeId);
+        const to = order.indexOf(action.id);
+        const range = order.slice(Math.min(from, to), Math.max(from, to) + 1);
+        primary = action.id;
+        others = range.filter((id) => id !== action.id);
+      }
+      const chosen = applyAction(state, { type: "SELECT_NODE", id: primary }); // the primary's own side effects (an AnimationPlayer opens its panel)
+      return { ...chosen, extraSelectedIds: others, selectionAnchorId: anchor };
+    }
     case "SELECT_NODE": {
-      if (action.id === state.selectedNodeId) return state;
+      if (action.id === state.selectedNodeId && state.extraSelectedIds.length === 0) return { ...state, selectionAnchorId: action.id };
       // Selecting an AnimationPlayer starts the Animation panel on it and shows the panel. Selecting anything else ends a preview (so the viewport shows
       // the nodes' own values again) but leaves the panel as it is, so a node's values can be changed between one key and the next.
       const chosen = findSceneNode(state.sceneRoot, action.id);
@@ -287,6 +494,8 @@ function applyAction(state: EditorState, action: Action): EditorState {
       return {
         ...state,
         selectedNodeId: action.id,
+        extraSelectedIds: [],
+        selectionAnchorId: action.id,
         animationUi: player
           ? action.id === state.animationUi.playerId
             ? { ...state.animationUi, previewTime: null, previewPlaying: false }
@@ -499,6 +708,18 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (getLightIntensity(target) === intensity) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, light: { intensity } })) };
     }
+    case "SET_MESH_COLOR": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target?.mesh) return state;
+      // Only a "#rrggbb" (or null for the default), kept to the 32 levels a channel the DS has, so what is stored is what it draws.
+      const levels = action.color === null ? null : parseMeshColor(action.color);
+      if (action.color !== null && !levels) return state;
+      const next = levels ? meshColorFromLevels(levels) : null;
+      if ((target.mesh.color ?? null) === next) return state;
+      const { color: _cleared, ...withoutColor } = target.mesh;
+      const chosen: MeshInstance3DData = next === null ? withoutColor : { ...withoutColor, color: next };
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
+    }
     case "SET_MESH_TEXTURE": {
       const target = findSceneNode(state.sceneRoot, action.id);
       if (!target?.mesh || (target.mesh.textureId ?? null) === action.textureId) return state;
@@ -529,6 +750,199 @@ function applyAction(state: EditorState, action: Action): EditorState {
           `Imported texture "${name}" (${width} x ${height}, ${getTextureByteSize(action.texture)} bytes of texture memory) onto "${target.name}".`,
           ...action.warnings.map((warning) => `Warning: ${warning}`)
         ]
+      };
+    }
+    case "SET_NODE_SCREEN": {
+      // Only in a 2D project, where both screens are 2D and each node says which one it is on. (In a 3D project the screens follow from what
+      // draws a node; see screen-layout.ts.) The scene root stays where it is.
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (state.project?.mode !== "2D" || !target || target.id === state.sceneRoot.id || target.screen === action.screen) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, screen: action.screen })) };
+    }
+    case "SET_SPRITE_IMAGE": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if ((target?.kind !== "Sprite2D" && target?.kind !== "AnimatedSprite2D") || (target.spriteId ?? null) === action.spriteId) return state;
+      // Only an image the project has can be chosen.
+      if (action.spriteId !== null && !state.project?.sprites?.some((sprite) => sprite.id === action.spriteId)) return state;
+      const sheet = action.spriteId === null ? undefined : state.project?.sprites?.find((sprite) => sprite.id === action.spriteId);
+      return {
+        ...state,
+        sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => {
+          const { spriteId: _cleared, ...withoutImage } = node;
+          const changed = action.spriteId === null ? withoutImage : { ...withoutImage, spriteId: action.spriteId };
+          return node.kind === "AnimatedSprite2D" ? fitAnimationsToSheet(changed, sheet) : changed;
+        })
+      };
+    }
+    case "IMPORT_SPRITE": {
+      if (!state.project) return state;
+      const { sprite } = action;
+      const target = action.nodeId === null ? undefined : findSceneNode(state.sceneRoot, action.nodeId);
+      const details = `${sprite.width} x ${sprite.height}, ${getSpriteByteSize(sprite)} bytes of sprite memory`;
+      const warnings = action.warnings.map((warning) => `Warning: ${warning}`);
+      // The image goes into the project and onto the sprite in one step, so the project can never hold a sprite that
+      // names an image it doesn't have.
+      const sprites = [...(state.project.sprites ?? []), sprite];
+      const frames = getSpriteFrames(sprite);
+      if (target?.kind === "Sprite2D" || target?.kind === "AnimatedSprite2D") {
+        return {
+          ...state,
+          project: { ...state.project, sprites },
+          sceneRoot: updateSceneNode(state.sceneRoot, target.id, (node) => {
+            const withSheet = { ...node, spriteId: sprite.id };
+            return node.kind === "AnimatedSprite2D" ? withDefaultAnimation(fitAnimationsToSheet(withSheet, sprite), frames.count) : withSheet;
+          }),
+          outputLog: [...state.outputLog, `Imported sprite ${frames.count > 1 ? "sheet" : "image"} "${sprite.name}" (${details}) onto "${target.name}".`, ...warnings]
+        };
+      }
+      // No sprite is selected: the image arrives as a new Sprite2D in the middle of the screen, under the selected node.
+      const parent = findSceneNode(state.sceneRoot, state.selectedNodeId) ?? state.sceneRoot;
+      const name = uniqueNodeName(sprite.name, parent.children.map((child) => child.name));
+      // A sheet of several frames arrives as an AnimatedSprite2D playing all its frames; a picture as a Sprite2D.
+      const kind = frames.count > 1 ? "AnimatedSprite2D" : "Sprite2D";
+      const created = createSceneNode({
+        name,
+        kind,
+        screen: screenOfNewNode(state, kind, parent),
+        position: { x: DS_HARDWARE_PROFILE.screens.width / 2, y: DS_HARDWARE_PROFILE.screens.height / 2 }
+      });
+      created.spriteId = sprite.id;
+      const newNode = kind === "AnimatedSprite2D" ? withDefaultAnimation(created, frames.count) : created;
+      return {
+        ...state,
+        project: { ...state.project, sprites },
+        sceneRoot: updateSceneNode(state.sceneRoot, parent.id, (node) => ({ ...node, children: [...node.children, newNode] })),
+        selectedNodeId: newNode.id,
+        outputLog: [...state.outputLog, `Imported sprite ${frames.count > 1 ? "sheet" : "image"} "${sprite.name}" (${details}) as node "${name}".`, ...warnings]
+      };
+    }
+    case "SCENE_SWITCH": {
+      if (!state.project || action.id === state.activeSceneId) return state;
+      const entries = currentSceneEntries(state);
+      if (!entries.some((entry) => entry.id === action.id)) return state;
+      return withScenes(state, entries, action.id);
+    }
+    case "SCENE_ADD": {
+      if (!state.project) return state;
+      const entries = currentSceneEntries(state);
+      if (entries.some((entry) => entry.id === action.id)) return state;
+      const name = uniqueSceneName(entries.map((entry) => entry.name), action.name);
+      const scene = { ...createBlankSceneTree(state.project.mode), name };
+      return withScenes(state, [...entries, { id: action.id, name, scene, isStart: false }], action.id);
+    }
+    case "SCENE_RENAME": {
+      if (!state.project) return state;
+      const entries = currentSceneEntries(state);
+      const name = action.name.trim();
+      const target = entries.find((entry) => entry.id === action.id);
+      // A name a script can call it by: not empty, and not another scene's.
+      if (!target || name === "" || name === target.name || entries.some((entry) => entry.id !== action.id && entry.name === name)) return state;
+      return withScenes(state, entries.map((entry) => (entry.id === action.id ? { ...entry, name } : entry)), state.activeSceneId);
+    }
+    case "SCENE_DELETE": {
+      if (!state.project) return state;
+      const entries = currentSceneEntries(state);
+      const target = entries.find((entry) => entry.id === action.id);
+      if (!target || entries.length < 2) return state; // a project always has a scene
+      const rest = entries.filter((entry) => entry.id !== action.id);
+      // The starting scene going hands the start to the first scene left; the scene being edited going opens the starting scene.
+      const withStart = target.isStart ? rest.map((entry, i) => ({ ...entry, isStart: i === 0 })) : rest;
+      const active = action.id === state.activeSceneId ? withStart.find((entry) => entry.isStart)!.id : state.activeSceneId;
+      return withScenes(state, withStart, active);
+    }
+    case "SCENE_DUPLICATE": {
+      if (!state.project) return state;
+      const entries = currentSceneEntries(state);
+      const source = entries.find((entry) => entry.id === action.id);
+      if (!source || entries.some((entry) => entry.id === action.newId)) return state;
+      const name = uniqueSceneName(entries.map((entry) => entry.name), source.name);
+      const copy: SceneEntry = { id: action.newId, name, scene: { ...duplicateSceneNode(source.scene), name: source.scene.name }, isStart: false };
+      const at = entries.indexOf(source);
+      return withScenes(state, [...entries.slice(0, at + 1), copy, ...entries.slice(at + 1)], action.newId);
+    }
+    case "SCENE_INSTANTIATE": {
+      if (!state.project) return state;
+      const entries = currentSceneEntries(state);
+      const source = entries.find((entry) => entry.id === action.sceneId);
+      // Not the scene being edited (it would contain itself), and not one that already contains it.
+      if (!source || source.id === state.activeSceneId || instanceWouldCycle(withSceneTree(state.project, state.activeSceneId, state.sceneRoot), state.activeSceneId, source.id)) return state;
+      const parent = findSceneNode(state.sceneRoot, action.parentId ?? state.selectedNodeId) ?? state.sceneRoot;
+      if (parent.instanceOf !== undefined) return state; // an instance holds nothing of its own
+      const name = uniqueNodeName(source.name, parent.children.map((child) => child.name));
+      // It arrives where the scene's own root is, so the scene is drawn as it was made; moving it moves everything in it.
+      const created = createSceneNode({ name, kind: source.scene.kind, screen: screenOfNewNode(state, source.scene.kind, parent), position: { ...source.scene.position } });
+      const node: SceneNode = { ...created, ...(source.scene.transform3D ? { transform3D: source.scene.transform3D } : {}), instanceOf: source.id };
+      return {
+        ...state,
+        sceneRoot: updateSceneNode(state.sceneRoot, parent.id, (target) => ({ ...target, children: [...target.children, node] })),
+        selectedNodeId: node.id,
+        extraSelectedIds: [],
+        selectionAnchorId: node.id,
+        outputLog: [...state.outputLog, `Added an instance of the scene "${source.name}" as "${name}".`]
+      };
+    }
+    case "SCENE_SET_START": {
+      if (!state.project) return state;
+      const entries = currentSceneEntries(state);
+      if (!entries.some((entry) => entry.id === action.id) || entries.find((entry) => entry.isStart)!.id === action.id) return state;
+      return withScenes(state, entries.map((entry) => ({ ...entry, isStart: entry.id === action.id })), state.activeSceneId);
+    }
+    case "SPRITE_ANIM_ADD": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "AnimatedSprite2D" && target?.kind !== "MeshInstance3D") return state;
+      const data = getSpriteAnimations(target);
+      const added = createSpriteAnimation(nextAnimationName(data.animations), [0]);
+      // The first animation a sprite gets is the one it plays from the start (people expect the picture to move).
+      const next: SpriteAnimationsData = { animations: [...data.animations, added], start: data.start ?? added.name };
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, spriteAnimations: next })) };
+    }
+    case "SPRITE_ANIM_SET": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "AnimatedSprite2D" && target?.kind !== "MeshInstance3D") return state;
+      const data = getSpriteAnimations(target);
+      const current = data.animations[action.index];
+      if (!current) return state;
+      const { change } = action;
+      // The frames an animation may show: a sprite sheet's, or (for a model with several poses) the model's.
+      const sheet = state.project?.sprites?.find((sprite) => sprite.id === target.spriteId);
+      const frameCount = target.kind === "MeshInstance3D" ? (target.mesh ? getMeshFrameCount(target.mesh, state.project?.meshes) : 1) : sheet ? getSpriteFrames(sheet).count : Number.POSITIVE_INFINITY;
+      let next: SpriteAnimation = current;
+      if (change.name !== undefined) {
+        const name = change.name.trim();
+        // A name a script can call it by: not empty, and not another animation's.
+        if (name === "" || (name !== current.name && data.animations.some((other) => other.name === name))) return state;
+        next = { ...next, name };
+      }
+      if (change.frames !== undefined) {
+        if (change.frames.length === 0 || change.frames.some((frame) => !Number.isInteger(frame) || frame < 0 || frame >= frameCount)) return state;
+        next = { ...next, frames: [...change.frames] };
+      }
+      if (change.fps !== undefined && Number.isFinite(change.fps)) next = { ...next, fps: clampSpriteAnimationFps(change.fps) };
+      if (change.loop !== undefined) next = { ...next, loop: change.loop };
+      if (next.name === current.name && next.fps === current.fps && next.loop === current.loop && next.frames.length === current.frames.length && next.frames.every((frame, i) => frame === current.frames[i])) return state;
+      const animations = data.animations.map((animation, i) => (i === action.index ? next : animation));
+      const start = data.start === current.name ? next.name : data.start;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, spriteAnimations: { animations, ...(start !== undefined ? { start } : {}) } })) };
+    }
+    case "SPRITE_ANIM_REMOVE": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "AnimatedSprite2D" && target?.kind !== "MeshInstance3D") return state;
+      const data = getSpriteAnimations(target);
+      const removed = data.animations[action.index];
+      if (!removed) return state;
+      const animations = data.animations.filter((_, i) => i !== action.index);
+      const start = data.start === removed.name ? undefined : data.start;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, spriteAnimations: { animations, ...(start !== undefined ? { start } : {}) } })) };
+    }
+    case "SPRITE_ANIM_START": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "AnimatedSprite2D" && target?.kind !== "MeshInstance3D") return state;
+      const data = getSpriteAnimations(target);
+      if (action.name !== null && !data.animations.some((animation) => animation.name === action.name)) return state;
+      if ((data.start ?? null) === action.name) return state;
+      return {
+        ...state,
+        sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, spriteAnimations: { animations: data.animations, ...(action.name !== null ? { start: action.name } : {}) } }))
       };
     }
     case "SET_AUDIO_SOUND": {
@@ -584,6 +998,58 @@ function applyAction(state: EditorState, action: Action): EditorState {
         next.solid === current.solid;
       if (same) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, collision: next })) };
+    }
+    case "SET_SPRITE_TRANSFORM": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "Sprite2D" && target?.kind !== "AnimatedSprite2D") return state;
+      if (!target) return state;
+      const current = getSpriteTransform(target);
+      const finite = (value: number | undefined, fallback: number): number => (value !== undefined && Number.isFinite(value) ? value : fallback);
+      const next = normalizeSpriteTransform({
+        rotation: finite(action.change.rotation, current.rotation),
+        scale: { x: finite(action.change.scaleX, current.scale.x), y: finite(action.change.scaleY, current.scale.y) }
+      });
+      // Setting a value it already has (a default included) isn't an edit.
+      if (next.rotation === current.rotation && next.scale.x === current.scale.x && next.scale.y === current.scale.y) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, transform2D: next })) };
+    }
+    case "SET_LABEL": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "Label") return state;
+      const current = getLabel(target);
+      const next = getLabel({
+        label: {
+          text: action.change.text !== undefined ? action.change.text.slice(0, MAX_LABEL_CHARS) : current.text,
+          color: action.change.color !== undefined && Number.isFinite(action.change.color) ? action.change.color : current.color
+        }
+      });
+      // Setting a value to what it already is (a default on a label that never had settings saved included) isn't an edit.
+      if (next.text === current.text && next.color === current.color) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, label: next })) };
+    }
+    case "SET_TOUCH_AREA_2D": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TouchArea2D") return state;
+      const current = getTouchArea2D(target);
+      const finite = (value: number | undefined, fallback: number): number => (value !== undefined && Number.isFinite(value) ? value : fallback);
+      const next = normalizeTouchArea2D({ width: finite(action.change.width, current.width), height: finite(action.change.height, current.height) });
+      // Setting a value to what it already is (including a default on an area that never had settings saved) isn't an edit.
+      if (next.width === current.width && next.height === current.height) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, touchArea2D: next })) };
+    }
+    case "SET_TOUCH_AREA_3D": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TouchArea3D") return state;
+      const current = getTouchArea3D(target);
+      const { change } = action;
+      const finite = (value: number | undefined, fallback: number): number => (value !== undefined && Number.isFinite(value) ? value : fallback);
+      const next = normalizeTouchArea3D({
+        shape: change.shape ?? current.shape,
+        size: { x: finite(change.size?.x, current.size.x), y: finite(change.size?.y, current.size.y), z: finite(change.size?.z, current.size.z) },
+        radius: finite(change.radius, current.radius)
+      });
+      if (next.shape === current.shape && next.radius === current.radius && next.size.x === current.size.x && next.size.y === current.size.y && next.size.z === current.size.z) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, touchArea3D: next })) };
     }
     case "IMPORT_SOUND": {
       if (!state.project) return state;
@@ -677,6 +1143,24 @@ function applyAction(state: EditorState, action: Action): EditorState {
         })
       };
     }
+    case "IMPORT_RIGGED_MODEL": {
+      if (!state.project || state.project.mode !== "3D") return state;
+      const parent = findSceneNode(state.sceneRoot, state.selectedNodeId) ?? state.sceneRoot;
+      const root = { ...action.model.root, name: uniqueNodeName(action.model.root.name, parent.children.map((child) => child.name)) };
+      const { model } = action;
+      return {
+        ...state,
+        // The models and the nodes that use them go in together, so the project never holds a mesh that names a model it doesn't have.
+        project: { ...state.project, meshes: [...(state.project.meshes ?? []), ...model.meshes] },
+        sceneRoot: updateSceneNode(state.sceneRoot, parent.id, (node) => ({ ...node, children: [...node.children, root] })),
+        selectedNodeId: root.id,
+        outputLog: [
+          ...state.outputLog,
+          `Imported rigged model "${root.name}": ${model.boneCount} bones, ${model.triangleCount} triangles${model.clipNames.length > 0 ? `, animations: ${model.clipNames.map((name) => `"${name}"`).join(", ")} (in its AnimationPlayer)` : ""}.`,
+          ...action.warnings.map((warning) => `Warning: ${warning}`)
+        ]
+      };
+    }
     case "IMPORT_MESH": {
       if (!state.project || state.project.mode !== "3D") return state;
       const parent = findSceneNode(state.sceneRoot, state.selectedNodeId) ?? state.sceneRoot;
@@ -699,7 +1183,7 @@ function applyAction(state: EditorState, action: Action): EditorState {
         selectedNodeId: newNode.id,
         outputLog: [
           ...state.outputLog,
-          `Imported model "${action.mesh.name}" (${triangles} triangles) as node "${name}".`,
+          `Imported model "${action.mesh.name}" (${triangles} triangles${getImportedFrameCount(action.mesh) > 1 ? `, ${getImportedFrameCount(action.mesh)} poses` : ""}) as node "${name}".`,
           ...action.warnings.map((warning) => `Warning: ${warning}`)
         ]
       };
@@ -761,12 +1245,87 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (action.id === state.sceneRoot.id) return state;
       const node = findSceneNode(state.sceneRoot, action.id);
       if (!node) return state;
-      const clone = duplicateSceneNode(node);
+      // The copy gets a name of its own among its siblings ("JengaBlock" -> "JengaBlock2", then "JengaBlock3"); what is under it keeps its names, as in
+      // Godot (names only have to differ within one parent), so a script on every copy finds its own `$Child`.
+      const parent = flattenSceneTree(state.sceneRoot).find((candidate) => candidate.children.some((child) => child.id === action.id));
+      const clone = { ...duplicateSceneNode(node), name: copyName(node.name, parent?.children.map((child) => child.name) ?? []) };
       return {
         ...state,
         sceneRoot: insertNodeAfterSibling(state.sceneRoot, action.id, clone),
         selectedNodeId: clone.id,
-        outputLog: [...state.outputLog, `Duplicated node "${node.name}".`]
+        outputLog: [...state.outputLog, `Duplicated node "${node.name}" as "${clone.name}".`]
+      };
+    }
+    case "TOGGLE_COLLAPSED": {
+      const node = findSceneNode(state.sceneRoot, action.id);
+      if (!node || node.children.length === 0) return state;
+      if (state.collapsedNodeIds.includes(action.id)) return { ...state, collapsedNodeIds: state.collapsedNodeIds.filter((id) => id !== action.id) };
+      // Folding hides the selected nodes inside it: they leave the selection, and the folded node is selected instead when it was the primary that went.
+      const hidden = new Set(flattenSceneTree(node).map((n) => n.id));
+      hidden.delete(node.id);
+      const folded = { ...state, collapsedNodeIds: [...state.collapsedNodeIds, action.id] };
+      const selection = selectedNodeIdsOf(state);
+      if (!selection.some((id) => hidden.has(id))) return folded;
+      const stays = selection.filter((id) => !hidden.has(id));
+      if (hidden.has(state.selectedNodeId)) {
+        const chosen = applyAction(folded, { type: "SELECT_NODE", id: action.id });
+        return { ...chosen, extraSelectedIds: stays, selectionAnchorId: action.id };
+      }
+      return { ...folded, extraSelectedIds: stays.filter((id) => id !== state.selectedNodeId), selectionAnchorId: hidden.has(state.selectionAnchorId) ? action.id : state.selectionAnchorId };
+    }
+    case "COLLAPSE_ALL": {
+      const parents = flattenSceneTree(state.sceneRoot).filter((node) => node.children.length > 0 && node.id !== state.sceneRoot.id).map((node) => node.id);
+      if (parents.length === 0) return state;
+      // Everything inside a folded node is hidden, so the selection comes up to the nearest node that is shown.
+      const folded = { ...state, collapsedNodeIds: parents };
+      const shown = (id: string): string => nearestVisibleId(state.sceneRoot, parents, id);
+      const primary = shown(state.selectedNodeId);
+      const chosen = primary === state.selectedNodeId ? folded : applyAction(folded, { type: "SELECT_NODE", id: primary });
+      return { ...chosen, extraSelectedIds: [...new Set(state.extraSelectedIds.map(shown))].filter((id) => id !== primary), selectionAnchorId: shown(state.selectionAnchorId) };
+    }
+    case "EXPAND_ALL":
+      return state.collapsedNodeIds.length === 0 ? state : { ...state, collapsedNodeIds: [] };
+    case "DELETE_NODES": {
+      const nodes = topMostNodes(state.sceneRoot, action.ids ?? selectedNodeIdsOf(state));
+      if (nodes.length === 0) return state;
+      let next = state;
+      for (const node of nodes) next = applyAction(next, { type: "DELETE_NODE", id: node.id });
+      return {
+        ...next,
+        selectedNodeId: findSceneNode(next.sceneRoot, next.selectedNodeId) ? next.selectedNodeId : next.sceneRoot.id,
+        outputLog: [...state.outputLog, nodes.length === 1 ? `Deleted node "${nodes[0].name}".` : `Deleted ${nodes.length} nodes.`]
+      };
+    }
+    case "DUPLICATE_NODES": {
+      const nodes = topMostNodes(state.sceneRoot, action.ids ?? selectedNodeIdsOf(state));
+      if (nodes.length === 0) return state;
+      let next = state;
+      const copies: string[] = [];
+      for (const node of nodes) {
+        next = applyAction(next, { type: "DUPLICATE_NODE", id: node.id });
+        copies.push(next.selectedNodeId);
+      }
+      const primary = copies[copies.length - 1];
+      return {
+        ...next,
+        selectedNodeId: primary,
+        extraSelectedIds: copies.slice(0, -1),
+        selectionAnchorId: primary,
+        outputLog: [...state.outputLog, nodes.length === 1 ? `Duplicated node "${nodes[0].name}".` : `Duplicated ${nodes.length} nodes.`]
+      };
+    }
+    case "MOVE_NODES": {
+      const moved = movedTree(state, action.ids, action.targetId, action.position);
+      if (!moved) return state;
+      const nodes = topMostNodes(state.sceneRoot, action.ids);
+      const target = findSceneNode(state.sceneRoot, action.targetId);
+      const where = action.position === "inside" ? "into" : action.position === "before" ? "before" : "after";
+      return {
+        ...state,
+        sceneRoot: moved,
+        // Dropped into a folded node: it opens, so the moved nodes are seen where they went.
+        collapsedNodeIds: action.position === "inside" ? state.collapsedNodeIds.filter((id) => id !== action.targetId) : state.collapsedNodeIds,
+        outputLog: [...state.outputLog, `Moved ${nodes.length === 1 ? `"${nodes[0].name}"` : `${nodes.length} nodes`} ${where} "${target?.name ?? ""}".`]
       };
     }
     case "PROJECT_SAVED":
@@ -774,6 +1333,7 @@ function applyAction(state: EditorState, action: Action): EditorState {
         ...state,
         project: action.project,
         projectFilePath: action.filePath,
+        savedScenes: listScenes(action.project),
         savedScripts: action.project.scripts,
         outputLog: [...state.outputLog, `Saved project to "${action.filePath}".`]
       };
@@ -857,11 +1417,43 @@ interface EditorStoreValue {
   setMeshSource: (id: string, source: MeshSource) => void;
   /** Chooses a mesh's texture from the project's imported ones, or none (null). No-op for a mesh that can't take one. */
   setMeshTexture: (id: string, textureId: string | null) => void;
+  /** Sets a mesh's color ("#rrggbb", or null for the default). Dragging in a color picker is one undo step per pause. No-op for a node without a mesh. */
+  setMeshColor: (id: string, color: string | null) => void;
   /**
    * Asks for a .png file and, if the DS can use it, adds it to the project and puts it on the mesh `nodeId`. A refused
    * file changes nothing and is explained in the Output log; cancelling does nothing.
    */
   importTexture: (nodeId: string) => Promise<void>;
+  /** Puts a node of a 2D project on the top or the bottom screen. No-op in a 3D project (its screens follow from what draws each node) and for the scene root. */
+  setNodeScreen: (id: string, screen: ScreenId) => void;
+  /** Chooses a Sprite2D's image from the project's imported ones, or none (null). No-op for other nodes and images the project lacks. */
+  setSpriteImage: (id: string, spriteId: string | null) => void;
+  /**
+   * Asks for a .png file and, if the DS has a sprite for its size, adds it to the project and puts it on the Sprite2D `nodeId`
+   * (with null, or a node that isn't a Sprite2D, as a new Sprite2D in the middle of the screen). A refused file changes nothing and
+   * is explained in the Output log; cancelling does nothing.
+   */
+  importSprite: (nodeId: string | null, frame?: { width: number; height: number }) => Promise<void>;
+  /** Adds an animation (named "anim", "anim2", ...; showing frame 0) to the AnimatedSprite2D `id`; the first one it gets is the one it starts with. */
+  addSpriteAnimation: (id: string) => void;
+  /** Changes an animation of an AnimatedSprite2D (name, frames, speed or looping); a name that is empty or already taken, or a frame the sheet doesn't have, is ignored. */
+  setSpriteAnimation: (id: string, index: number, change: SpriteAnimationChange) => void;
+  removeSpriteAnimation: (id: string, index: number) => void;
+  /** Which animation an AnimatedSprite2D plays from the start (null: none). */
+  setSpriteStartAnimation: (id: string, name: string | null) => void;
+  /** Scenes (requirements/scene-designer/STORY.multiple-scenes.md). Switching the scene being edited is not an edit; the rest are (and can be undone). */
+  switchScene: (id: string) => void;
+  /** Adds an empty scene (named `name`, or with a number after it when that is taken) and opens it. */
+  addScene: (name?: string) => string;
+  renameScene: (id: string, name: string) => void;
+  /** Deletes a scene (never the last one); the starting scene going makes the first left the start. */
+  deleteScene: (id: string) => void;
+  /** Copies a scene (every node with a new id) next to the original and opens the copy. */
+  duplicateScene: (id: string) => string;
+  /** Makes a scene the one the game starts in. */
+  setStartScene: (id: string) => void;
+  /** Adds an instance of another scene to the scene being edited (under `parentId`, or the selected node): a node that shows that whole scene, changing when the scene does. */
+  instantiateScene: (sceneId: string, parentId?: string) => void;
   /** Opens a script in the Script tab (not an edit). */
   selectScript: (id: string | null) => void;
   /** Creates a script (with the stubs), opens it, and attaches it to `attachTo` when given. Returns the new script's id. */
@@ -882,6 +1474,13 @@ interface EditorStoreValue {
   setAudioPlayer: (id: string, change: AudioPlayerChange) => void;
   /** Changes a CollisionShape3D's shape, box size, radius or height. Typing in a field is one undo step per pause. No-op for other nodes. */
   setCollisionShape: (id: string, change: CollisionShapeChange) => void;
+  /** Changes a Sprite2D's rotation and scale. Typing in a field is one undo step per pause. No-op for other nodes. */
+  setSpriteTransform: (id: string, change: SpriteTransformChange) => void;
+  /** Changes a TouchArea2D's size in pixels / a TouchArea3D's shape and size. Typing in a field is one undo step per pause. No-op for other nodes. */
+  setTouchArea2D: (id: string, change: TouchArea2DChange) => void;
+  /** Changes a Label's text and/or color. Typing in the text is one undo step per pause. No-op for other nodes. */
+  setLabel: (id: string, change: LabelChange) => void;
+  setTouchArea3D: (id: string, change: TouchArea3DChange) => void;
   /**
    * Asks for a sound file (.wav, .mp3 or .ogg), converts it to what the DS plays and adds it to the project: onto the audio
    * player `nodeId` when that is one, otherwise as a new AudioStreamPlayer under the selected node. A refused file changes
@@ -892,10 +1491,23 @@ interface EditorStoreValue {
    * Asks for an .obj file and, if it is acceptable, adds a MeshInstance3D that uses it under the selected
    * node. A refused file changes nothing and is explained in the Output log; cancelling does nothing.
    */
-  importModel: () => Promise<void>;
+  importModel: (poses?: boolean) => Promise<void>;
+  /** Scene > Import Rigged Model: a .glb or .gltf with a skeleton becomes a tree of bone nodes with the mesh under its bones and the file's clips in an AnimationPlayer. */
+  importRiggedModel: () => Promise<void>;
   addNode: (kind: SceneNodeKind) => void;
   deleteNode: (id: string) => void;
   duplicateNode: (id: string) => void;
+  /** Ctrl+click (toggle) or Shift+click (range) a node in the Scene tree. */
+  selectNodeModified: (id: string, mode: "toggle" | "range") => void;
+  /** Delete / duplicate every selected node (the scene root excepted). */
+  deleteSelected: () => void;
+  duplicateSelected: () => void;
+  /** Drag and drop in the Scene tree: moves these nodes next to or inside `targetId` (no-op when that isn't allowed). */
+  moveNodes: (ids: string[], targetId: string, position: DropPosition) => void;
+  /** Fold or unfold a node's children in the Scene tree; fold or unfold them all. */
+  toggleCollapsed: (id: string) => void;
+  collapseAll: () => void;
+  expandAll: () => void;
   /** Creates a new project of `mode` (permanent), asks where to save it, and opens it. */
   createProject: (name: string, mode: ProjectMode, twoDScreen?: ScreenId) => Promise<ProjectActionResult>;
   /** Resolves true only if the project was actually written (not canceled, not failed). */
@@ -946,10 +1558,14 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Toggle visibility of ${nameOf(action.id)}` };
     case "SET_MESH_SOURCE":
       return { label: `Change mesh of ${nameOf(action.id)}` };
+    case "IMPORT_RIGGED_MODEL":
+      return { label: `Import rigged model ${action.model.root.name}` };
     case "IMPORT_MESH":
       return { label: `Import ${action.mesh.name}` };
     case "SET_MESH_TEXTURE":
       return { label: `Change texture of ${nameOf(action.id)}` };
+    case "SET_MESH_COLOR":
+      return { label: `Change color of ${nameOf(action.id)}`, mergeKey: `mesh-color:${action.id}`, at: action.at };
     case "ANIM_CREATE":
       return { label: `Add animation to ${nameOf(action.playerId)}` };
     case "ANIM_RENAME":
@@ -980,6 +1596,35 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Change intensity of ${nameOf(action.id)}`, mergeKey: `light:${action.id}`, at: action.at };
     case "IMPORT_TEXTURE":
       return { label: `Import texture ${action.texture.name}` };
+    case "SET_NODE_SCREEN":
+      return { label: `Move ${nameOf(action.id)} to the ${action.screen} screen` };
+    case "SET_SPRITE_IMAGE":
+      return { label: `Change image of ${nameOf(action.id)}` };
+    case "IMPORT_SPRITE":
+      return { label: `Import sprite ${getSpriteFrames(action.sprite).count > 1 ? "sheet" : "image"} ${action.sprite.name}` };
+    case "SCENE_ADD":
+      return { label: `Add scene ${action.name}` };
+    case "SCENE_RENAME":
+      return { label: "Rename scene", mergeKey: `scene-name:${action.id}`, at: action.at };
+    case "SCENE_DELETE":
+      return { label: "Delete scene" };
+    case "SCENE_DUPLICATE":
+      return { label: "Duplicate scene" };
+    case "SCENE_SET_START":
+      return { label: "Change the starting scene" };
+    case "SCENE_INSTANTIATE":
+      return { label: `Instantiate scene ${before.project ? (listScenes(before.project).find((entry) => entry.id === action.sceneId)?.name ?? "") : ""}`.trim() };
+    case "SPRITE_ANIM_ADD":
+      return { label: `Add animation to ${nameOf(action.id)}` };
+    case "SPRITE_ANIM_SET": {
+      const { change } = action;
+      const field = change.name !== undefined ? "name" : change.frames !== undefined ? "frames" : change.fps !== undefined ? "speed" : "looping";
+      return { label: `Change ${field} of an animation of ${nameOf(action.id)}`, mergeKey: `sprite-anim:${action.id}:${action.index}:${field}`, at: action.at };
+    }
+    case "SPRITE_ANIM_REMOVE":
+      return { label: `Remove animation from ${nameOf(action.id)}` };
+    case "SPRITE_ANIM_START":
+      return { label: `Change starting animation of ${nameOf(action.id)}` };
     case "IMPORT_SOUND":
       return { label: `Import sound ${action.sound.name}` };
     case "CREATE_SCRIPT":
@@ -1005,6 +1650,25 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       const field = change.radius !== undefined ? "radius" : change.height !== undefined ? "height" : "size";
       return { label: `Change ${field} of ${name}`, mergeKey: `collision:${action.id}:${field}`, at: action.at };
     }
+    case "SET_SPRITE_TRANSFORM": {
+      const field = action.change.rotation !== undefined ? "rotation" : action.change.scaleX !== undefined ? "scale X" : "scale Y";
+      return { label: `Change ${field} of ${nameOf(action.id)}`, mergeKey: `sprite-transform:${action.id}:${field}`, at: action.at };
+    }
+    case "SET_LABEL":
+      // Typing is one undo step per pause; a color is one step per choice.
+      if (action.change.text !== undefined) return { label: `Change text of ${nameOf(action.id)}`, mergeKey: `label-text:${action.id}`, at: action.at };
+      return { label: `Change color of ${nameOf(action.id)}` };
+    case "SET_TOUCH_AREA_2D": {
+      const field = action.change.width !== undefined ? "width" : "height";
+      return { label: `Change ${field} of ${nameOf(action.id)}`, mergeKey: `touch2d:${action.id}:${field}`, at: action.at };
+    }
+    case "SET_TOUCH_AREA_3D": {
+      const { change } = action;
+      const name = nameOf(action.id);
+      if (change.shape !== undefined) return { label: `Change shape of ${name} to ${change.shape}` };
+      const field = change.radius !== undefined ? "radius" : "size";
+      return { label: `Change ${field} of ${name}`, mergeKey: `touch3d:${action.id}:${field}`, at: action.at };
+    }
     case "SET_AUDIO_PLAYER": {
       const { change } = action;
       // A slider is one step per drag; a checkbox is one step per click.
@@ -1021,6 +1685,16 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Delete ${nameOf(action.id)}` };
     case "DUPLICATE_NODE":
       return { label: `Duplicate ${nameOf(action.id)}` };
+    case "DELETE_NODES":
+    case "DUPLICATE_NODES": {
+      const count = topMostNodes(before.sceneRoot, action.ids ?? selectedNodeIdsOf(before)).length;
+      const verb = action.type === "DELETE_NODES" ? "Delete" : "Duplicate";
+      return { label: count === 1 ? `${verb} ${nameOf(topMostNodes(before.sceneRoot, action.ids ?? selectedNodeIdsOf(before))[0].id)}` : `${verb} ${count} nodes` };
+    }
+    case "MOVE_NODES": {
+      const nodes = topMostNodes(before.sceneRoot, action.ids);
+      return { label: nodes.length === 1 ? `Move ${nodes[0].name}` : `Move ${nodes.length} nodes` };
+    }
     default:
       return null;
   }
@@ -1046,26 +1720,33 @@ function editStateOf(state: EditorState): EditState {
     meshes: state.project?.meshes,
     textures: state.project?.textures,
     sounds: state.project?.sounds,
+    sprites: state.project?.sprites,
     scripts: state.project?.scripts,
-    selectedNodeId: state.selectedNodeId
+    selectedNodeId: state.selectedNodeId,
+    sceneEntries: state.project ? currentSceneEntries(state) : undefined,
+    activeSceneId: state.activeSceneId
   };
 }
 
 function restore(state: EditorState, entry: EditState & { label: string }, history: EditHistory, verb: "Undid" | "Redid"): EditorState {
   let project = state.project;
-  if (project && (project.meshes !== entry.meshes || project.textures !== entry.textures || project.sounds !== entry.sounds || project.scripts !== entry.scripts)) {
-    const { meshes: _meshes, textures: _textures, sounds: _sounds, scripts: _scripts, ...rest } = project;
+  if (project && (project.meshes !== entry.meshes || project.textures !== entry.textures || project.sounds !== entry.sounds || project.sprites !== entry.sprites || project.scripts !== entry.scripts)) {
+    const { meshes: _meshes, textures: _textures, sounds: _sounds, sprites: _sprites, scripts: _scripts, ...rest } = project;
     project = {
       ...rest,
       ...(entry.meshes ? { meshes: entry.meshes } : {}),
       ...(entry.textures ? { textures: entry.textures } : {}),
       ...(entry.sounds ? { sounds: entry.sounds } : {}),
+      ...(entry.sprites ? { sprites: entry.sprites } : {}),
       ...(entry.scripts ? { scripts: entry.scripts } : {})
     };
   }
+  // The scenes go back as they were, and the one the edit was made in is the one being edited.
+  if (project && entry.sceneEntries) project = withSceneEntries(project, entry.sceneEntries);
   return {
     ...state,
     sceneRoot: entry.sceneRoot,
+    activeSceneId: entry.activeSceneId ?? state.activeSceneId,
     project,
     // An undo can remove the script that is open (undoing its creation): open another, or none.
     selectedScriptId: project?.scripts?.some((script) => script.id === state.selectedScriptId) ? state.selectedScriptId : (project?.scripts?.[0]?.id ?? null),
@@ -1082,6 +1763,79 @@ function restore(state: EditorState, entry: EditState & { label: string }, histo
  * closing a project starts a fresh history; saving keeps it (you can undo past a save).
  */
 export function editorReducer(state: EditorState, action: Action): EditorState {
+  return normalizeSelection(state, reduceWithHistory(state, action), action);
+}
+
+/**
+ * The scene tree after moving `ids` next to or inside `targetId`, or null when that isn't allowed or changes nothing. In a 3D project a 2D node isn't nested under a 3D node (or
+ * the other way round), as when a node is added; the players and the scene root take anything.
+ */
+function movedTree(state: EditorState, ids: readonly string[], targetId: string, position: DropPosition): SceneNode | null {
+  const threeD = state.project?.mode === "3D";
+  const canAdopt = (node: SceneNode, parent: SceneNode): boolean =>
+    !threeD || parent.id === state.sceneRoot.id || isEngineIndependent(node.kind) || isEngineIndependent(parent.kind) || isTwoDVisualKind(node.kind) === isTwoDVisualKind(parent.kind);
+  return moveSceneNodes(state.sceneRoot, ids, targetId, position, canAdopt);
+}
+
+/** Whether dropping `ids` at `position` relative to `targetId` would move them: what the Scene tree checks while a drag is over a row. */
+export function canMoveNodes(state: EditorState, ids: readonly string[], targetId: string, position: DropPosition): boolean {
+  return movedTree(state, ids, targetId, position) !== null;
+}
+
+/** The ids of the rows the Scene tree shows, in order: every node except those under a folded one. */
+export function visibleNodeIds(root: SceneNode, collapsed: readonly string[]): string[] {
+  const folded = new Set(collapsed);
+  const ids: string[] = [];
+  const visit = (node: SceneNode): void => {
+    ids.push(node.id);
+    if (!folded.has(node.id)) node.children.forEach(visit);
+  };
+  visit(root);
+  return ids;
+}
+
+/** The ancestors of `id`, from the scene root down to its parent; empty for the root or a node that isn't there. */
+export function ancestorIds(root: SceneNode, id: string): string[] {
+  const path: string[] = [];
+  const find = (node: SceneNode): boolean => {
+    if (node.id === id) return true;
+    path.push(node.id);
+    if (node.children.some(find)) return true;
+    path.pop();
+    return false;
+  };
+  return find(root) ? path : [];
+}
+
+/** `id` itself when its row is shown, otherwise the outermost folded node above it (the row that stands for it). */
+export function nearestVisibleId(root: SceneNode, collapsed: readonly string[], id: string): string {
+  return ancestorIds(root, id).find((ancestor) => collapsed.includes(ancestor)) ?? id;
+}
+
+/** The primary selected node and the others selected with it, primary first. */
+export function selectedNodeIdsOf(state: Pick<EditorState, "selectedNodeId" | "extraSelectedIds">): string[] {
+  return [state.selectedNodeId, ...state.extraSelectedIds];
+}
+
+/**
+ * Keeps the selection consistent after any action: the others selected with the primary are dropped when the primary was changed by something other than a click with
+ * Ctrl or Shift (or a duplicate, which selects its copies), and never include a node that is gone, or the primary itself.
+ */
+function normalizeSelection(before: EditorState, after: EditorState, action: Action): EditorState {
+  const keepsMany = action.type === "SELECT_NODE_MODIFIED" || action.type === "DUPLICATE_NODES" || action.type === "TOGGLE_COLLAPSED" || action.type === "COLLAPSE_ALL";
+  const primaryChanged = after.selectedNodeId !== before.selectedNodeId;
+  const existing = new Set(flattenSceneTree(after.sceneRoot).map((node) => node.id));
+  const extras = primaryChanged && !keepsMany ? [] : after.extraSelectedIds.filter((id) => id !== after.selectedNodeId && existing.has(id));
+  const anchor = primaryChanged && !keepsMany ? after.selectedNodeId : existing.has(after.selectionAnchorId) ? after.selectionAnchorId : after.selectedNodeId;
+  // A node selected from somewhere else (the viewport, a new node, an undo) may be inside a folded one: unfold the way to it. Folded ids of nodes that are gone are dropped.
+  const reveal = primaryChanged ? new Set(ancestorIds(after.sceneRoot, after.selectedNodeId)) : new Set<string>();
+  const collapsed = after.collapsedNodeIds.filter((id) => existing.has(id) && !reveal.has(id));
+  const sameCollapsed = collapsed.length === after.collapsedNodeIds.length;
+  if (sameCollapsed && extras.length === after.extraSelectedIds.length && extras.every((id, i) => id === after.extraSelectedIds[i]) && anchor === after.selectionAnchorId) return after;
+  return { ...after, extraSelectedIds: extras, selectionAnchorId: anchor, collapsedNodeIds: collapsed };
+}
+
+function reduceWithHistory(state: EditorState, action: Action): EditorState {
   switch (action.type) {
     case "UNDO": {
       if (!state.project) return state;
@@ -1109,7 +1863,12 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         next.project?.meshes !== state.project?.meshes ||
         next.project?.textures !== state.project?.textures ||
         next.project?.sounds !== state.project?.sounds ||
-        next.project?.scripts !== state.project?.scripts;
+        next.project?.sprites !== state.project?.sprites ||
+        next.project?.scripts !== state.project?.scripts ||
+        next.project?.scenes !== state.project?.scenes ||
+        next.project?.sceneName !== state.project?.sceneName ||
+        next.project?.sceneId !== state.project?.sceneId ||
+        next.activeSceneId !== state.activeSceneId;
       if (!edit || !changed) return next;
       return { ...next, history: recordEdit(state.history, editStateOf(state), edit) };
     }
@@ -1126,7 +1885,8 @@ const EditorStoreContext = createContext<EditorStoreValue | null>(null);
 export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.Element {
   const [state, dispatch] = useReducer(editorReducer, undefined, createInitialState);
 
-  const selectNode = useCallback((id: string) => dispatch({ type: "SELECT_NODE", id }), []);
+  // A node inside an instance is selected as the instance (its id is `<instance id>/<node id>`).
+  const selectNode = useCallback((id: string) => dispatch({ type: "SELECT_NODE", id: outerNodeId(id) }), []);
   const setWorkspace = useCallback((workspace: WorkspaceId) => dispatch({ type: "SET_WORKSPACE", workspace }), []);
   const setBottomTab = useCallback((tab: BottomTabId) => dispatch({ type: "SET_BOTTOM_TAB", tab }), []);
   const setScreenFilter = useCallback((filter: ScreenFilter) => dispatch({ type: "SET_SCREEN_FILTER", filter }), []);
@@ -1150,6 +1910,13 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   const addNode = useCallback((kind: SceneNodeKind) => dispatch({ type: "ADD_NODE", kind }), []);
   const deleteNode = useCallback((id: string) => dispatch({ type: "DELETE_NODE", id }), []);
   const duplicateNode = useCallback((id: string) => dispatch({ type: "DUPLICATE_NODE", id }), []);
+  const selectNodeModified = useCallback((id: string, mode: "toggle" | "range") => dispatch({ type: "SELECT_NODE_MODIFIED", id: outerNodeId(id), mode }), []);
+  const deleteSelected = useCallback(() => dispatch({ type: "DELETE_NODES" }), []);
+  const duplicateSelected = useCallback(() => dispatch({ type: "DUPLICATE_NODES" }), []);
+  const toggleCollapsed = useCallback((id: string) => dispatch({ type: "TOGGLE_COLLAPSED", id }), []);
+  const collapseAll = useCallback(() => dispatch({ type: "COLLAPSE_ALL" }), []);
+  const expandAll = useCallback(() => dispatch({ type: "EXPAND_ALL" }), []);
+  const moveNodes = useCallback((ids: string[], targetId: string, position: DropPosition) => dispatch({ type: "MOVE_NODES", ids, targetId, position }), []);
   const log = useCallback((message: string) => dispatch({ type: "LOG", message }), []);
 
   const createProject = useCallback(async (name: string, mode: ProjectMode, twoDScreen?: ScreenId): Promise<ProjectActionResult> => {
@@ -1167,7 +1934,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
 
   const saveProject = useCallback(async (): Promise<boolean> => {
     if (!state.project) return false;
-    const snapshot = withUpdatedScene(state.project, state.sceneRoot);
+    const snapshot = savedProjectOf(state);
     const result = await window.goodstuff.project.save(state.projectFilePath, snapshot);
     if (result.outcome === "ok" && result.filePath) {
       dispatch({ type: "PROJECT_SAVED", filePath: result.filePath, project: snapshot });
@@ -1177,11 +1944,11 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       dispatch({ type: "LOG", message: `Save failed: ${describeFailure(result)}` });
     }
     return false;
-  }, [state.project, state.projectFilePath, state.sceneRoot]);
+  }, [state.project, state.projectFilePath, state.sceneRoot, state.activeSceneId]);
 
   const saveProjectAs = useCallback(async (): Promise<boolean> => {
     if (!state.project) return false;
-    const snapshot = withUpdatedScene(state.project, state.sceneRoot);
+    const snapshot = savedProjectOf(state);
     const result = await window.goodstuff.project.saveAs(snapshot);
     if (result.outcome === "ok" && result.filePath) {
       dispatch({ type: "PROJECT_SAVED", filePath: result.filePath, project: snapshot });
@@ -1191,11 +1958,56 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       dispatch({ type: "LOG", message: `Save failed: ${describeFailure(result)}` });
     }
     return false;
-  }, [state.project, state.sceneRoot]);
+  }, [state.project, state.sceneRoot, state.activeSceneId]);
 
+  const setMeshColor = useCallback((id: string, color: string | null) => dispatch({ type: "SET_MESH_COLOR", id, color, at: Date.now() }), []);
   const setMeshTexture = useCallback(
     (id: string, textureId: string | null) => dispatch({ type: "SET_MESH_TEXTURE", id, textureId }),
     []
+  );
+
+  const setNodeScreen = useCallback((id: string, screen: ScreenId) => dispatch({ type: "SET_NODE_SCREEN", id, screen }), []);
+
+  const setSpriteImage = useCallback(
+    (id: string, spriteId: string | null) => dispatch({ type: "SET_SPRITE_IMAGE", id, spriteId }),
+    []
+  );
+
+  const switchScene = useCallback((id: string) => dispatch({ type: "SCENE_SWITCH", id }), []);
+  const addScene = useCallback((name = "Scene") => {
+    const id = newSceneId();
+    dispatch({ type: "SCENE_ADD", id, name });
+    return id;
+  }, []);
+  const renameScene = useCallback((id: string, name: string) => dispatch({ type: "SCENE_RENAME", id, name, at: Date.now() }), []);
+  const deleteScene = useCallback((id: string) => dispatch({ type: "SCENE_DELETE", id }), []);
+  const duplicateScene = useCallback((id: string) => {
+    const newId = newSceneId();
+    dispatch({ type: "SCENE_DUPLICATE", id, newId });
+    return newId;
+  }, []);
+  const instantiateScene = useCallback((sceneId: string, parentId?: string) => dispatch({ type: "SCENE_INSTANTIATE", sceneId, parentId }), []);
+  const setStartScene = useCallback((id: string) => dispatch({ type: "SCENE_SET_START", id }), []);
+
+  const addSpriteAnimation = useCallback((id: string) => dispatch({ type: "SPRITE_ANIM_ADD", id }), []);
+  const setSpriteAnimation = useCallback((id: string, index: number, change: SpriteAnimationChange) => dispatch({ type: "SPRITE_ANIM_SET", id, index, change, at: Date.now() }), []);
+  const removeSpriteAnimation = useCallback((id: string, index: number) => dispatch({ type: "SPRITE_ANIM_REMOVE", id, index }), []);
+  const setSpriteStartAnimation = useCallback((id: string, name: string | null) => dispatch({ type: "SPRITE_ANIM_START", id, name }), []);
+
+  const importSprite = useCallback(
+    async (nodeId: string | null, frame?: { width: number; height: number }): Promise<void> => {
+      if (!state.project) return;
+      const result = await window.goodstuff.assets.importSprite(frame);
+      if (result.outcome === "canceled") return;
+      if (result.outcome === "ok" && result.sprite) {
+        dispatch({ type: "IMPORT_SPRITE", nodeId, sprite: result.sprite, warnings: result.warnings });
+        return;
+      }
+      const file = result.fileName ? ` "${result.fileName}"` : "";
+      dispatch({ type: "LOG", message: `Could not import${file}:` });
+      for (const error of result.errors) dispatch({ type: "LOG", message: `  ${error}` });
+    },
+    [state.project]
   );
 
   const importTexture = useCallback(
@@ -1260,6 +2072,11 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     (id: string, change: AudioPlayerChange) => dispatch({ type: "SET_AUDIO_PLAYER", id, change, at: Date.now() }),
     []
   );
+  const setSpriteTransform = useCallback((id: string, change: SpriteTransformChange) => dispatch({ type: "SET_SPRITE_TRANSFORM", id, change, at: Date.now() }), []);
+  const setTouchArea2D = useCallback((id: string, change: TouchArea2DChange) => dispatch({ type: "SET_TOUCH_AREA_2D", id, change, at: Date.now() }), []);
+  const setLabel = useCallback((id: string, change: LabelChange) => dispatch({ type: "SET_LABEL", id, change, at: Date.now() }), []);
+  const setTouchArea3D = useCallback((id: string, change: TouchArea3DChange) => dispatch({ type: "SET_TOUCH_AREA_3D", id, change, at: Date.now() }), []);
+
   const setCollisionShape = useCallback(
     (id: string, change: CollisionShapeChange) => dispatch({ type: "SET_COLLISION_SHAPE", id, change, at: Date.now() }),
     []
@@ -1289,9 +2106,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     [state.project]
   );
 
-  const importModel = useCallback(async (): Promise<void> => {
+  const importModel = useCallback(async (poses?: boolean): Promise<void> => {
     if (!state.project || state.project.mode !== "3D") return;
-    const result = await window.goodstuff.assets.importMesh();
+    const result = await window.goodstuff.assets.importMesh(poses);
     if (result.outcome === "canceled") return;
     if (result.outcome === "ok" && result.mesh) {
       dispatch({ type: "IMPORT_MESH", mesh: result.mesh, warnings: result.warnings });
@@ -1302,6 +2119,23 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     for (const error of result.errors) dispatch({ type: "LOG", message: `  ${error}` });
   }, [state.project]);
 
+  const importRiggedModel = useCallback(async (): Promise<void> => {
+    if (!state.project || state.project.mode !== "3D") return;
+    const picked = await window.goodstuff.assets.pickRiggedModel();
+    if (picked.outcome === "canceled") return;
+    const file = picked.fileName ? ` "${picked.fileName}"` : "";
+    const fail = (errors: string[]): void => {
+      dispatch({ type: "LOG", message: `Could not import${file}:` });
+      for (const error of errors) dispatch({ type: "LOG", message: `  ${error}` });
+    };
+    if (picked.outcome !== "ok" || !picked.bytes) return fail(picked.errors);
+    const read = readGltfFile(picked.bytes, picked.files);
+    if (!read.ok) return fail([read.error]);
+    const result = importGltf(read.input, (picked.fileName ?? "Model").replace(/\.[^.]+$/, ""));
+    if (!result.ok) return fail(result.errors);
+    dispatch({ type: "IMPORT_RIGGED_MODEL", model: result.model, warnings: result.warnings });
+  }, [state.project]);
+
   const [exporting, setExporting] = useState(false);
   const exportingRef = useRef(false);
 
@@ -1310,7 +2144,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     exportingRef.current = true;
     setExporting(true);
     try {
-      const snapshot = withUpdatedScene(state.project, state.sceneRoot);
+      const snapshot = savedProjectOf(state);
       const result = await window.goodstuff.project.exportRom(snapshot, state.projectFilePath);
       for (const line of result.lines) dispatch({ type: "LOG", message: line });
     } finally {
@@ -1327,7 +2161,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     playingRef.current = true;
     setPlaying(true);
     try {
-      const snapshot = withUpdatedScene(state.project, state.sceneRoot);
+      const snapshot = savedProjectOf(state);
       const result = await window.goodstuff.project.play(snapshot);
       for (const line of result.lines) dispatch({ type: "LOG", message: line });
     } finally {
@@ -1339,23 +2173,8 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   // --- Unsaved-changes guard: one prompt for every action that would discard edits. ---
   const [unsavedPrompt, setUnsavedPrompt] = useState<UnsavedChangesPrompt | null>(null);
 
-  // Ctrl+Z undoes, Ctrl+Shift+Z redoes (Cmd on a Mac). It applies even with an Inspector field focused,
-  // since those fields are controlled by the editor and the browser's own text undo would fight it. Not
-  // while the unsaved-changes prompt is up, and not on the startup view (no project).
   const projectOpen = state.project !== null;
   const promptOpen = unsavedPrompt !== null;
-  useEffect(() => {
-    if (!projectOpen || promptOpen) return undefined;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "z") return;
-      // Inside the code editor Ctrl+Z is the editor's own text undo (it has its own history); the scene's undo works everywhere else.
-      if (event.target instanceof Element && event.target.closest(".cm-editor")) return;
-      event.preventDefault();
-      dispatch({ type: event.shiftKey ? "REDO" : "UNDO" });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [projectOpen, promptOpen]);
   const pendingGuardRef = useRef<{ proceed: () => void | Promise<void>; cancel: () => void } | null>(null);
   const dirty = hasUnsavedChanges(state);
 
@@ -1421,6 +2240,60 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     [guardUnsavedChanges]
   );
 
+  // --- Keyboard shortcuts (the rules are in keyboard-shortcuts.ts). One listener for the life of the provider; it reads the latest state and
+  // handlers from a ref, so it is never re-attached and never sees a stale selection. ---
+  const shortcutRef = useRef<{ context: ShortcutContext; run: (command: ShortcutCommand) => void } | null>(null);
+  const selectedNodeForKeys = findSceneNode(state.sceneRoot, state.selectedNodeId);
+  shortcutRef.current = {
+    context: {
+      projectOpen,
+      promptOpen,
+      workspace: state.activeWorkspace,
+      workspaces: state.project ? workspacesForMode(state.project.mode) : [],
+      // Delete and Duplicate work on the whole selection, the scene root excepted: "root" here means there is nothing but the root selected.
+      selectedIsRoot: selectedNodeIdsOf(state).every((id) => id === state.sceneRoot.id),
+      selectedHasPosition2D: selectedNodeForKeys !== undefined && !selectedNodeForKeys.transform3D && !isEngineIndependent(selectedNodeForKeys.kind),
+      focus: "none"
+    },
+    run: (command) => {
+      const selectedId = state.selectedNodeId;
+      switch (command.type) {
+        case "undo": return dispatch({ type: "UNDO" });
+        case "redo": return dispatch({ type: "REDO" });
+        case "save": return void saveProject();
+        case "save-as": return void saveProjectAs();
+        case "open": return void openProject();
+        case "export-rom": return void exportRom();
+        case "play": return void play();
+        case "duplicate": return dispatch({ type: "DUPLICATE_NODES" });
+        case "delete": return dispatch({ type: "DELETE_NODES" });
+        case "select-root": return dispatch({ type: "SELECT_NODE", id: state.sceneRoot.id });
+        case "workspace": return dispatch({ type: "SET_WORKSPACE", workspace: command.workspace });
+        case "nudge":
+          if (selectedNodeForKeys) dispatch({ type: "MOVE_NODE", id: selectedId, x: selectedNodeForKeys.position.x + command.dx, y: selectedNodeForKeys.position.y + command.dy, at: Date.now() });
+          return;
+        case "rename": {
+          const field = document.querySelector<HTMLInputElement>('input[aria-label="Name"]');
+          field?.focus();
+          field?.select();
+          return;
+        }
+      }
+    }
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const current = shortcutRef.current;
+      if (!current || event.defaultPrevented) return;
+      const command = resolveShortcut(event, { ...current.context, focus: classifyFocus(event.target) });
+      if (!command) return;
+      event.preventDefault();
+      current.run(command);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // Tell the main process whether edits are unsaved, and answer its "the window is being closed" request.
   useEffect(() => {
     window.goodstuff.app.setUnsavedChanges(dirty);
@@ -1457,6 +2330,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       toggleVisible,
       setMeshSource,
       setMeshTexture,
+      setMeshColor,
       selectScript,
       createScript,
       renameScript,
@@ -1467,14 +2341,40 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setAudioSound,
       setAudioPlayer,
       setCollisionShape,
+      setTouchArea2D,
+      setLabel,
+      setSpriteTransform,
+      setTouchArea3D,
       renameNode,
       animations,
       importSound,
       importTexture,
+      setSpriteImage,
+      setNodeScreen,
+      importSprite,
+      addSpriteAnimation,
+      setSpriteAnimation,
+      removeSpriteAnimation,
+      setSpriteStartAnimation,
+      switchScene,
+      addScene,
+      renameScene,
+      deleteScene,
+      duplicateScene,
+      setStartScene,
+      instantiateScene,
       importModel,
+      importRiggedModel,
       addNode,
       deleteNode,
       duplicateNode,
+      selectNodeModified,
+      deleteSelected,
+      duplicateSelected,
+      moveNodes,
+      toggleCollapsed,
+      collapseAll,
+      expandAll,
       createProject,
       saveProject,
       saveProjectAs,
@@ -1517,14 +2417,39 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setAudioSound,
       setAudioPlayer,
       setCollisionShape,
+      setTouchArea2D,
+      setLabel,
+      setSpriteTransform,
+      setTouchArea3D,
       renameNode,
       animations,
       importSound,
       importTexture,
+      setSpriteImage,
+      setNodeScreen,
+      importSprite,
+      addSpriteAnimation,
+      setSpriteAnimation,
+      removeSpriteAnimation,
+      setSpriteStartAnimation,
+      switchScene,
+      addScene,
+      renameScene,
+      deleteScene,
+      duplicateScene,
+      setStartScene,
+      instantiateScene,
       importModel,
       addNode,
       deleteNode,
       duplicateNode,
+      selectNodeModified,
+      deleteSelected,
+      duplicateSelected,
+      moveNodes,
+      toggleCollapsed,
+      collapseAll,
+      expandAll,
       createProject,
       saveProject,
       saveProjectAs,

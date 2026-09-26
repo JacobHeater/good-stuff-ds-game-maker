@@ -24,9 +24,11 @@ const api: GoodStuffWindowApi = {
     play: (snapshot) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.play, snapshot)
   },
   assets: {
-    importMesh: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importMesh),
+    importMesh: (poses?: boolean) => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importMesh, poses),
     importTexture: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importTexture),
-    pickSound: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickSound)
+    importSprite: (frame?: { width: number; height: number }) => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importSprite, frame),
+    pickSound: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickSound),
+    pickRiggedModel: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickRiggedModel)
   },
   recents: {
     list: () => ipcRenderer.invoke(RECENTS_IPC_CHANNELS.list),

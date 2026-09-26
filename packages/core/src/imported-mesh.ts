@@ -21,6 +21,65 @@ export interface ImportedMesh {
   uvs?: number[];
   /** Three vertex indices per triangle. */
   indices: number[];
+  /**
+   * More poses of the same model, after the first (which is `positions` and `normals`): a model imported from several .obj files that share their triangles (requirements/scene-designer/STORY.animated-3d-models.md).
+   * Each has as many vertices as the first; only where they are and which way they face changes. Absent for a model with one pose.
+   */
+  frames?: ImportedMeshFrame[];
+}
+
+/** One more pose of an imported model: the vertices' places and normals (the triangles and texture coordinates are the model's own). */
+export interface ImportedMeshFrame {
+  positions: number[];
+  normals: number[];
+}
+
+/** How many poses the model has (1 for an ordinary model). */
+export function getImportedFrameCount(mesh: ImportedMesh): number {
+  return 1 + (mesh.frames?.length ?? 0);
+}
+
+const frameExpanded = new WeakMap<ImportedMesh, PrimitiveGeometry[]>();
+
+/** The triangle list of pose `frame` (0 is the first). Built once per model and shared; do not mutate it. An out-of-range frame gives the first. */
+export function getImportedMeshFrameGeometry(mesh: ImportedMesh, frame: number): PrimitiveGeometry {
+  if (frame <= 0 || !mesh.frames?.[frame - 1]) return getImportedMeshGeometry(mesh);
+  let cache = frameExpanded.get(mesh);
+  if (!cache) {
+    cache = [];
+    frameExpanded.set(mesh, cache);
+  }
+  if (!cache[frame]) {
+    const pose = mesh.frames[frame - 1];
+    const base = getImportedMeshGeometry(mesh);
+    const positions: number[] = [];
+    const normals: number[] = [];
+    for (const index of mesh.indices) {
+      positions.push(pose.positions[index * 3], pose.positions[index * 3 + 1], pose.positions[index * 3 + 2]);
+      normals.push(pose.normals[index * 3], pose.normals[index * 3 + 1], pose.normals[index * 3 + 2]);
+    }
+    cache[frame] = { positions, normals, ...(base.uvs ? { uvs: base.uvs } : {}), triangleCount: base.triangleCount };
+  }
+  return cache[frame];
+}
+
+/**
+ * Puts models that are poses of one another into one model with several frames, in the order given. They must have exactly the same triangles: the same number of vertices and the same
+ * indices (and texture coordinates); only the vertices' places may differ. The first is the model's name and texture coordinates.
+ */
+export function mergeMeshFrames(meshes: readonly ImportedMesh[]): { ok: true; mesh: ImportedMesh } | { ok: false; errors: string[] } {
+  if (meshes.length === 0) return { ok: false, errors: ["There are no models to put together."] };
+  const [first, ...rest] = meshes;
+  const errors: string[] = [];
+  for (const other of rest) {
+    if (other.positions.length !== first.positions.length) {
+      errors.push(`"${other.name}" has ${other.positions.length / 3} vertices, but "${first.name}" has ${first.positions.length / 3}. Frames of one model must have the same vertices.`);
+    } else if (other.indices.length !== first.indices.length || other.indices.some((index, i) => index !== first.indices[i])) {
+      errors.push(`"${other.name}" has different triangles from "${first.name}". Frames of one model must be built from the same triangles (only moved), in the same order.`);
+    }
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, mesh: { ...first, ...(rest.length > 0 ? { frames: rest.map((other) => ({ positions: other.positions, normals: other.normals })) } : {}) } };
 }
 
 /**

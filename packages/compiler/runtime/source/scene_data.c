@@ -51,37 +51,63 @@ static const GsAnimationPlayer animationPlayers[] = {
   { 0, 0, -1, 0 }
 };
 
+static const GsTouchArea touchAreas[] = {
+  { 0, 0, { 0, 0, 0, 0 }, { 0, 0, 0 } }
+};
+
 static const GsPrimitive primitives[] = {
   { 12, primitive_0_positions, primitive_0_normals, 0 }
 };
 
 static const GsNode nodes[] = {
   /* Main */
-  { -1, 0, 1, -1, -1, -1, { 0, 0, 0 }, { 0, 0, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096 } } },
+  { -1, 0, 1, -1, -1, -1, -1, { 0, 0, 0 }, { 0, 0, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096 } } },
   /* Cube */
-  { 0, 0, 1, -1, -1, -1, { 0, 0, 0 }, { 0, 122880, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3547, 0, -2048, 0, 0, 4096, 0, 0, 2048, 0, 3547, 0, 0, 0, 0, 4096 } } },
+  { 0, 0, 1, -1, -1, -1, -1, { 0, 0, 0 }, { 0, 122880, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3547, 0, -2048, 0, 0, 4096, 0, 0, 2048, 0, 3547, 0, 0, 0, 0, 4096 } } },
   /* Camera */
-  { 0, 0, 1, -1, -1, -1, { 10240, 8192, 14336 }, { -121835, 130278, 68652 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3333, 0, -2381, 0, -1004, 3714, -1405, 0, 2159, 1727, 3022, 0, 10240, 8192, 14336, 4096 } } },
+  { 0, 0, 1, -1, -1, -1, -1, { 10240, 8192, 14336 }, { -121835, 130278, 68652 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3333, 0, -2381, 0, -1004, 3714, -1405, 0, 2159, 1727, 3022, 0, 10240, 8192, 14336, 4096 } } },
   /* Sun */
-  { 0, 0, 1, -1, -1, -1, { -8192, 16384, 12288 }, { -217621, -89299, -107905 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3408, 0, 2272, 0, 1688, 2742, -2531, 0, -1521, 3042, 2282, 0, -8192, 16384, 12288, 4096 } } }
+  { 0, 0, 1, -1, -1, -1, -1, { -8192, 16384, 12288 }, { -217621, -89299, -107905 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3408, 0, 2272, 0, 1688, 2742, -2531, 0, -1521, 3042, 2282, 0, -8192, 16384, 12288, 4096 } } }
+};
+
+static const uint16_t mesh_frames[] = { 0 };
+static const GsSpriteAnimation mesh_animations[] = {
+  { 0, 0, 0, 0 }
 };
 
 static const GsMesh meshes[] = {
-  { 0, 25368, 0, 1 }
+  { 0, 25368, 0, 1, 0, 0, -1, 0, 0 }
 };
 
 static const GsLight lights[] = {
   { 32767, { 190, -380, -285 }, 3 }
 };
 
-const GsScene gs_scene = {
+static const GsSpriteImage two_d_images[] = {
+  { 0, 0, 0, 0, 0 }
+};
+
+static const GsSprite two_d_sprites[] = {
+  { 0, 0, 0, -1, 0, -1, 0, 4096, 4096, -1, 0, 0 }
+};
+
+static const GsSpriteAnimation two_d_animations[] = {
+  { 0, 0, 0, 0 }
+};
+
+static const GsLabel two_d_labels[] = {
+  { 0, 0, 0, 0, -1, "" }
+};
+
+const GsScene gs_scene_data_0 = {
   0, /* screen: 0 top, 1 bottom */
   60, /* fps */
-  50.0f, 0.1f, 100.0f, /* fov, near, far */
+  50.0f, 0.1f, 100.0f, 0.4663076581549986f, /* fov, near, far, tan(fov / 2) */
   { { 3333, -1004, 2159, 0, 0, 3714, 1727, 0, -2381, -1405, 3022, 0, 0, 0, -19429, 4096 } }, /* view */
   2, 4, /* camera node, node count */
   1, 1, 1, 0, /* primitive, mesh, light, texture counts */
   0, 0, 0, /* sound, audio player, collider counts */
   0, 0, 0, 0, /* animation player, animation, track, key counts */
-  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, animationPlayers, animations, animTracks, animKeys
+  0, /* touch area count */
+  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations
 };

@@ -28,7 +28,11 @@ export const DS_HARDWARE_PROFILE = {
   graphics2D: {
     /** Each screen has its own independent 2D engine and OAM (sprite) table. */
     oamSpritesPerScreen: 128,
-    maxSpriteSizePx: 64
+    maxSpriteSizePx: 64,
+    /** Sprite tile memory each 2D engine can address (one 128 KB VRAM bank each); a 256-color image takes a byte a pixel. */
+    spriteMemoryBytesPerScreen: 128 * 1024,
+    /** Extended palettes: each engine holds 16 palettes of 256 colors for its 8-bit sprites. */
+    spritePalettesPerScreen: 16
   },
   graphics3D: {
     /** Only one screen at a time can receive 3D output. */

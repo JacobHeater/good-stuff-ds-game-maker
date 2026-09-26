@@ -55,10 +55,11 @@ export function WorkspaceToolbar(): JSX.Element {
   return (
     <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-editor-border bg-editor-panel px-3">
       <div className="flex items-center gap-1">
-        {workspaces.map((workspace) => (
+        {workspaces.map((workspace, index) => (
           <button
             key={workspace}
             type="button"
+            title={`${workspace} (Ctrl+${index + 1})`}
             className={tabClasses(state.activeWorkspace === workspace)}
             onClick={() => setWorkspace(workspace)}
           >
@@ -129,6 +130,7 @@ export function WorkspaceToolbar(): JSX.Element {
         <button
           type="button"
           disabled={playing}
+          title="Play (F5)"
           onClick={() => void play()}
           className="rounded bg-editor-accent px-3 py-1 text-xs font-semibold text-editor-bg hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
         >

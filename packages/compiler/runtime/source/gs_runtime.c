@@ -6,6 +6,8 @@
  */
 #include <nds.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #include "gs_api.h"
 #include "gs_runtime.h"
@@ -21,12 +23,35 @@ GsMatrix *gs_world_matrix;
 int32_t (*gs_world_scale)[3];
 uint8_t *gs_world_visible;
 
+/*
+ * compose_node's memory. A node's world transform only changes when its own position, rotation or scale does, or its parent's transform did, and a script that moves
+ * one block leaves every other node as it was: so what each node was last composed from is kept (its nine numbers, and the version of its parent it saw), and a node
+ * whose inputs are the same is not composed again. Composing costs about 0.09 ms on the DS and a move brings up to date every solid shape near the body, which in a
+ * tower is all of them: without this a move cost 7 ms in a 30-block tower and now it costs what the blocks that actually moved cost.
+ */
+typedef struct {
+	int32_t in[9]; /* position, rotation, scale: the same order as GsNodeState */
+	uint16_t parentVersion;
+	uint16_t version; /* changes every time the node is composed */
+	uint8_t valid;
+} ComposeMemo;
+static ComposeMemo *compose_memo;
+
+int gs_pending_scene = -1;
+void gs_change_scene(int scene) { gs_pending_scene = scene; }
+
 void gs_init_nodes(void) {
+	free(gs_node_state);
+	free(gs_world_matrix);
+	free(gs_world_scale);
+	free(gs_world_visible);
+	free(compose_memo);
 	int n = gs_scene.nodeCount;
 	gs_node_state = malloc(sizeof(GsNodeState) * n);
 	gs_world_matrix = malloc(sizeof(GsMatrix) * n);
 	gs_world_scale = malloc(sizeof(int32_t[3]) * n);
 	gs_world_visible = malloc(n);
+	compose_memo = calloc(n, sizeof(ComposeMemo));
 	for (int i = 0; i < n; i++) {
 		const GsNode *node = &gs_scene.nodes[i];
 		for (int a = 0; a < 3; a++) {
@@ -42,16 +67,49 @@ void gs_init_nodes(void) {
 }
 
 /* Angles in degrees as a 20.12 number to libnds's 15-bit angle (32768 = a full turn). The cast wraps, which is what a turn should do. */
-static int16_t angle_of(int32_t degrees) { return (int16_t)(((int64_t)degrees * 32768) / (360 * 4096)); }
+/* degrees * 32768 / (360 * 4096) is exactly degrees / 45, which is a multiply for the compiler; the 64-bit division it was written as is a library call on the DS (about 700 cycles, six times for every node composed). */
+static int16_t angle_of(int32_t degrees) { return (int16_t)(degrees / 45); }
 int32_t gs_sin(int32_t degrees) { return sinLerp(angle_of(degrees)); }
 int32_t gs_cos(int32_t degrees) { return cosLerp(angle_of(degrees)); }
+/* A xorshift generator, seeded from the clock the first time it is asked (a game plays differently each time). */
+static uint32_t rng_state;
+static uint32_t rng_next(void) {
+	if (rng_state == 0) rng_state = ((uint32_t)time(NULL) * 2654435761u) ^ ((uint32_t)REG_VCOUNT << 16) ^ 0x9e3779b9u;
+	if (rng_state == 0) rng_state = 1;
+	rng_state ^= rng_state << 13;
+	rng_state ^= rng_state >> 17;
+	rng_state ^= rng_state << 5;
+	return rng_state;
+}
+int32_t gs_randi(int32_t n) { return n <= 0 ? 0 : (int32_t)((rng_next() >> 8) % (uint32_t)n); }
+int32_t gs_randf(void) { return (int32_t)(rng_next() >> 20); }
+
+/* The angle of a ratio z in 0..1 (f32), in degrees: z * (45 + 15.64 * (1 - z)), within a quarter of a degree. */
+static int32_t atan_unit(int32_t z) { return gs_mulf(z, 45 * GS_ONE + gs_mulf(64061, GS_ONE - z)); }
+int32_t gs_atan2(int32_t y, int32_t x) {
+	if (x == 0 && y == 0) return 0;
+	const int32_t ax = gs_abs(x), ay = gs_abs(y);
+	int32_t angle = ax >= ay ? atan_unit(gs_divf(ay, ax)) : 90 * GS_ONE - atan_unit(gs_divf(ax, ay));
+	if (x < 0) angle = 180 * GS_ONE - angle;
+	return y < 0 ? -angle : angle;
+}
+
 int32_t gs_sqrt(int32_t f) { return f <= 0 ? 0 : sqrtf32(f); }
 
 /* Recomputes node `i`'s world transform from its parent's and its own local values, the way the editor composes it:
    rotation is Rx * Ry * Rz (three.js's XYZ Euler order), scale multiplies down the chain, and a node's position is carried
    through its parent's rotation and scale. */
+
 static void compose_node(int i) {
 	const GsNodeState *s = &gs_node_state[i];
+	ComposeMemo *memo = &compose_memo[i];
+	const int parentIndex = gs_scene.nodes[i].parent;
+	const uint16_t parentVersion = parentIndex >= 0 ? compose_memo[parentIndex].version : 0;
+	if (memo->valid && memo->parentVersion == parentVersion && memcmp(memo->in, s->position, sizeof memo->in) == 0) return;
+	memcpy(memo->in, s->position, sizeof memo->in);
+	memo->parentVersion = parentVersion;
+	memo->version++;
+	memo->valid = 1;
 	int32_t sa = gs_sin(s->rotation[0]), ca = gs_cos(s->rotation[0]);
 	int32_t sb = gs_sin(s->rotation[1]), cb = gs_cos(s->rotation[1]);
 	int32_t sc = gs_sin(s->rotation[2]), cc = gs_cos(s->rotation[2]);
@@ -181,6 +239,188 @@ void gs_read_input(void) {
 	}
 }
 
+/* ---- Touch areas ------------------------------------------------------------------------------------------------------------------ */
+
+static uint8_t *touchNow;    /* per touch area: the stylus is on it this frame (and, once a touch has an owner, only the owner says so) */
+static uint8_t *touchBefore; /* ... and was on it last frame */
+static int touchActive;      /* the stylus has been down since an earlier frame */
+static int touchStart;       /* this is the first frame of the touch */
+static int touchOwner;       /* the area the touch went down on (the nearest of those under it), or -1: the touch owns nothing */
+
+void gs_init_touch(void) {
+	free(touchNow);
+	free(touchBefore);
+	touchNow = calloc(gs_scene.touchAreaCount + 1, 1);
+	touchBefore = calloc(gs_scene.touchAreaCount + 1, 1);
+	touchOwner = -1;
+}
+
+static inline float f32_to_float(int32_t v) { return (float)v * (1.0f / 4096.0f); }
+
+/* A square root by Newton's method (soft float has no sqrt without libm; this only orders touch areas, so a few steps are plenty). */
+static float soft_sqrt(float x) {
+	if (x <= 0.0f) return 0.0f;
+	float guess = x > 1.0f ? x * 0.5f : 1.0f;
+	for (int i = 0; i < 12; i++) guess = 0.5f * (guess + x / guess);
+	return guess;
+}
+
+/*
+ * How far along the ray through the touched screen point (px, py) a box or sphere in the scene is first hit (in the camera's depth: the same number for every shape, so
+ * they can be compared), or -1 when the ray misses it. 0 means the camera is inside it. A ray leaves the camera through the point and is tested against the shape in the
+ * shape's own space: the camera's view matrix times the node's world matrix (both rotation and translation only) takes the shape's space to the camera's, so
+ * the ray's origin and direction are brought into the shape's space with the transpose of the rotation, and divided by the node's scale (the shape scales with
+ * the node). Then it is a ray against an axis-aligned box (the slab method) or a sphere at the origin. The DS has no floating point unit, so this is soft float
+ * and costs a fraction of a millisecond, but it only runs while the stylus is down. The ray is a half line: a shape behind the camera is not hit.
+ */
+static float ray_distance(const GsTouchArea *area, int px, int py) {
+	GsMatrix view;
+	gs_compute_view(&view);
+	const int32_t *w = gs_world_matrix[area->node].m;
+	const int32_t *v = view.m;
+	/* Column-major: element (row r, column c) is m[c * 4 + r]. C = V * W. Only its rotation R and translation t are needed. */
+	float R[3][3], t[3];
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			float sum = 0.0f;
+			for (int k = 0; k < 3; k++) sum += f32_to_float(v[k * 4 + r]) * f32_to_float(w[c * 4 + k]);
+			R[r][c] = sum;
+		}
+		float sum = f32_to_float(v[12 + r]);
+		for (int k = 0; k < 3; k++) sum += f32_to_float(v[k * 4 + r]) * f32_to_float(w[12 + k]);
+		t[r] = sum;
+	}
+	/* The ray in the camera's space: from the origin, through the point on the screen (the camera looks down -Z). */
+	const float nx = 2.0f * ((float)px + 0.5f) / 256.0f - 1.0f;
+	const float ny = 1.0f - 2.0f * ((float)py + 0.5f) / 192.0f;
+	const float d[3] = { nx * gs_scene.tanHalfFov * (256.0f / 192.0f), ny * gs_scene.tanHalfFov, -1.0f };
+	/* Into the shape's space: origin = R^T (0 - t), direction = R^T d, then unscaled. */
+	float o[3], e[3];
+	for (int j = 0; j < 3; j++) {
+		o[j] = -(R[0][j] * t[0] + R[1][j] * t[1] + R[2][j] * t[2]);
+		e[j] = R[0][j] * d[0] + R[1][j] * d[1] + R[2][j] * d[2];
+		float s = f32_to_float(gs_world_scale[area->node][j]);
+		if (s < 0.0f) s = -s;
+		if (s < 0.0001f) s = 0.0001f;
+		o[j] /= s;
+		e[j] /= s;
+	}
+	if (area->shape == GS_TOUCH_SPHERE) {
+		const float r = f32_to_float(area->p[0]);
+		const float a = e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
+		const float b = o[0] * e[0] + o[1] * e[1] + o[2] * e[2];
+		const float c = o[0] * o[0] + o[1] * o[1] + o[2] * o[2] - r * r;
+		const float disc = b * b - a * c;
+		if (!(disc >= 0.0f && (c <= 0.0f || b < 0.0f))) return -1.0f;
+		if (c <= 0.0f) return 0.0f;
+		return (-b - soft_sqrt(disc)) / a;
+	}
+	float tmin = 0.0f, tmax = 1.0e9f;
+	for (int j = 0; j < 3; j++) {
+		const float h = f32_to_float(area->p[j]);
+		if (e[j] > -1.0e-6f && e[j] < 1.0e-6f) {
+			if (o[j] < -h || o[j] > h) return -1.0f; /* parallel to this pair of faces and outside them */
+			continue;
+		}
+		float t1 = (-h - o[j]) / e[j];
+		float t2 = (h - o[j]) / e[j];
+		if (t1 > t2) { const float swap = t1; t1 = t2; t2 = swap; }
+		if (t1 > tmin) tmin = t1;
+		if (t2 < tmax) tmax = t2;
+		if (tmin > tmax) return -1.0f;
+	}
+	return tmin;
+}
+
+int32_t gs_touch_ground(int axis, int32_t plane_y) {
+	if (!gs_touching) return 0;
+	GsMatrix view;
+	gs_compute_view(&view);
+	const int32_t *v = view.m; /* rotation R (element (r, c) is v[c * 4 + r]) and translation t (v[12..14]): world -> camera */
+	const float t[3] = { f32_to_float(v[12]), f32_to_float(v[13]), f32_to_float(v[14]) };
+	const float nx = 2.0f * ((float)gs_touch_x + 0.5f) / 256.0f - 1.0f;
+	const float ny = 1.0f - 2.0f * ((float)gs_touch_y + 0.5f) / 192.0f;
+	const float d[3] = { nx * gs_scene.tanHalfFov * (256.0f / 192.0f), ny * gs_scene.tanHalfFov, -1.0f };
+	/* The ray in the world: origin = R^T (0 - t) (where the camera is), direction = R^T d. */
+	float o[3], w[3];
+	for (int j = 0; j < 3; j++) {
+		o[j] = 0.0f;
+		w[j] = 0.0f;
+		for (int i = 0; i < 3; i++) {
+			const float r = f32_to_float(v[j * 4 + i]);
+			o[j] -= r * t[i];
+			w[j] += r * d[i];
+		}
+	}
+	if (w[1] > -1.0e-6f && w[1] < 1.0e-6f) return 0; /* parallel to the plane */
+	const float s = (f32_to_float(plane_y) - o[1]) / w[1];
+	if (s < 0.0f) return 0; /* the plane is behind the ray */
+	float hit = o[axis == 0 ? 0 : 2] + s * w[axis == 0 ? 0 : 2];
+	if (hit > 500000.0f) hit = 500000.0f;
+	if (hit < -500000.0f) hit = -500000.0f;
+	return (int32_t)(hit * 4096.0f);
+}
+
+void gs_update_touch(void) {
+	for (int i = 0; i < gs_scene.touchAreaCount; i++) {
+		touchBefore[i] = touchNow[i];
+		touchNow[i] = 0;
+	}
+	if (!gs_touching) {
+		touchActive = 0;
+		touchStart = 0;
+		touchOwner = -1;
+		return;
+	}
+	touchStart = !touchActive;
+	touchActive = 1;
+
+	/* Which areas are under the stylus, and how far away each volume is. */
+	uint8_t under[gs_scene.touchAreaCount + 1];
+	float away[gs_scene.touchAreaCount + 1];
+	for (int i = 0; i < gs_scene.touchAreaCount; i++) {
+		const GsTouchArea *area = &gs_scene.touchAreas[i];
+		under[i] = 0;
+		away[i] = 0.0f;
+		if (!gs_world_visible[area->node]) continue;
+		if (area->shape == GS_TOUCH_RECT) {
+			under[i] = gs_touch_x >= area->rect[0] && gs_touch_x < area->rect[0] + area->rect[2] && gs_touch_y >= area->rect[1] && gs_touch_y < area->rect[1] + area->rect[3];
+		} else {
+			away[i] = ray_distance(area, gs_touch_x, gs_touch_y);
+			under[i] = away[i] >= 0.0f;
+		}
+	}
+
+	/* A touch goes to one area: when it goes down, the nearest volume under it (or, among rectangles, the last one in the tree, which is drawn on top). It stays with that
+	   area until the stylus is lifted, so a block being dragged is not lost to another one that ends up nearer, and only one block is picked up at a time. A touch that
+	   went down on no area owns nothing, and then any area it slides over reports it. */
+	if (touchStart) {
+		touchOwner = -1;
+		float nearest = 0.0f;
+		for (int i = 0; i < gs_scene.touchAreaCount; i++) {
+			if (!under[i]) continue;
+			if (gs_scene.touchAreas[i].shape == GS_TOUCH_RECT) {
+				if (touchOwner < 0 || gs_scene.touchAreas[touchOwner].shape == GS_TOUCH_RECT) touchOwner = i;
+			} else if (touchOwner < 0 || gs_scene.touchAreas[touchOwner].shape == GS_TOUCH_RECT || away[i] < nearest) {
+				touchOwner = i;
+				nearest = away[i];
+			}
+		}
+	}
+	for (int i = 0; i < gs_scene.touchAreaCount; i++) touchNow[i] = under[i] && (touchOwner < 0 || i == touchOwner);
+}
+
+int gs_touch_state(int node, int which) {
+	if (node < 0 || node >= gs_scene.nodeCount) return 0;
+	const int i = gs_scene.nodes[node].touch;
+	if (i < 0) return 0;
+	switch (which) {
+	case GS_TOUCH_HELD: return touchNow[i];
+	case GS_TOUCH_PRESSED: return touchNow[i] && touchStart; /* the stylus went down on it this frame (sliding onto it later is not a press) */
+	default: return touchBefore[i] && !touchNow[i] && !gs_touching; /* lifted this frame, having been on it the frame before */
+	}
+}
+
 /* ---- Sound ------------------------------------------------------------------------------------------------------------------------ */
 
 /* A player's live state: the sound hardware channel it is playing on (-1 when it isn't), and the volume and pitch a script can change. */
@@ -192,6 +432,8 @@ typedef struct {
 static AudioState *audioState;
 
 void gs_init_audio(void) {
+	free(audioState);
+	audioState = 0;
 	if (gs_scene.audioPlayerCount == 0) return;
 	audioState = malloc(sizeof(AudioState) * gs_scene.audioPlayerCount);
 	for (int i = 0; i < gs_scene.audioPlayerCount; i++) {
@@ -243,6 +485,29 @@ void gs_audio_set_pitch(int player, int32_t pitch) {
 	AudioState *state = &audioState[player];
 	state->pitch = gs_clamp(pitch, GS_ONE / 4, GS_ONE * 4);
 	if (state->channel >= 0) soundSetFreq(state->channel, audio_frequency(state, &gs_scene.sounds[gs_scene.audioPlayers[player].sound]));
+}
+
+/* Stops every sound the scene is playing and forgets its players. */
+static void audio_shutdown(void) {
+	if (!audioState) return;
+	for (int i = 0; i < gs_scene.audioPlayerCount; i++) {
+		if (audioState[i].channel >= 0) soundKill(audioState[i].channel);
+	}
+	free(audioState);
+	audioState = 0;
+}
+
+void gs_collision_reset(void);
+void gs_animation_reset(void);
+void gs_sprites_reset(void);
+
+void gs_leave_scene(void) {
+	audio_shutdown();
+	gs_collision_reset();
+	gs_animation_reset();
+	gs_sprites_reset();
+	gs_labels_reset();
+	gs_mesh_anim_reset();
 }
 
 /* Starts every audio player that has Autoplay on, once, before the first frame. Sound plays on the DS's sound hardware (the ARM7 runs it);

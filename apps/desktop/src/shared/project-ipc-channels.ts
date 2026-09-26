@@ -11,7 +11,9 @@ export const PROJECT_IPC_CHANNELS = {
 export const ASSETS_IPC_CHANNELS = {
   importMesh: "assets:import-mesh",
   importTexture: "assets:import-texture",
-  pickSound: "assets:pick-sound"
+  importSprite: "assets:import-sprite",
+  pickSound: "assets:pick-sound",
+  pickRiggedModel: "assets:pick-rigged-model"
 } as const;
 
 export const RECENTS_IPC_CHANNELS = {

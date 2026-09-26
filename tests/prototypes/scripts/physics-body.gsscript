@@ -1,0 +1,156 @@
+# Rigid-body physics for a MeshInstance3D: gravity, air drag, bouncing, sliding and rolling friction, walls, ceilings, and a ball that rolls
+# as it moves. Made for a ball (a sphere), but it works on any mesh; set roll = false for a box or a crate so it slides without spinning.
+#
+# Set-up in the editor:
+#   1. A MeshInstance3D (a sphere is best), with a CollisionShape3D under it (its body; a sphere shape with the same radius as the mesh).
+#   2. The floor, walls and ceiling: CollisionShape3D nodes with Solid turned on (a box is easiest). Put the ball above the floor to start.
+#   3. A Camera3D that looks at the floor from above and to one side, and a light.
+#   4. Attach this script to the MeshInstance3D. Set radius below to the mesh's radius (half its scale for a unit sphere).
+#
+#   D-pad  push the ball along the floor (Left/Right = -X/+X, Up/Down = -Z/+Z). The push is a force, so a heavy ball speeds up more slowly.
+#   A      kick it into the air (a real impulse: the heavier the ball, the smaller the jump). Only works while it is touching the floor.
+#   B      put it back where it started, at rest.
+#
+# What it simulates, in scene units (1 unit = 1 metre) and seconds:
+#   * Gravity of 9.81 m/s^2 and a terminal fall speed.
+#   * Air drag: the ball loses a small fraction of its speed every second.
+#   * Bouncing: on impact the speed is multiplied by "bounciness" (1 = perfectly elastic, 0 = a lump of clay), so each bounce is lower than the last.
+#     A bounce slower than rest_speed is not a bounce: the ball settles instead of jittering forever.
+#   * Friction on the floor slows the ball down at a steady rate (which is what real sliding and rolling friction does), and it comes to rest.
+#   * Walls and ceilings reflect the ball with the same bounciness; the part of its motion along a wall is kept, so it slides along it.
+#   * Rolling: on the floor the ball spins at exactly the rate that matches its speed (speed / radius), so it does not look like it is skating.
+#     In the air it keeps the spin it had.
+# Everything is semi-implicit Euler (velocity first, then position), the same integrator most game physics uses.
+#
+# The DS has no floating-point hardware: numbers here are fixed-point (steps of 1/4096), so tiny speeds round to zero. That is what the "at rest"
+# check is for. Change the numbers below to change how the ball behaves.
+
+var gravity = -9.81        # m/s^2, negative = down
+var max_fall = 30.0        # terminal speed: the ball never falls faster than this (also stops it tunnelling through thin floors)
+var mass = 1.0             # kg: pushes and kicks are forces, so more mass means less acceleration
+var bounciness = 0.65      # 0..1, the fraction of speed kept in a bounce (a rubber ball 0.8, a tennis ball 0.7, a bowling ball 0.1)
+var rest_speed = 0.9       # an impact slower than this (m/s) does not bounce
+var ground_friction = 2.5  # m/s^2 the floor takes off the ball's speed while it touches the floor (rubber on wood is about 3 to 6, a ball rolls easier)
+var air_drag = 0.15        # fraction of speed lost per second in the air and on the floor
+var push_force = 14.0      # newtons the D-pad pushes with
+var kick_impulse = 6.0     # newton-seconds an A press kicks upward with (a speed of kick_impulse / mass)
+var radius = 0.5           # the mesh's radius in units (for rolling)
+var roll = true            # spin the mesh as it rolls (false: it slides without turning)
+var launch_x = 3.0         # speed the ball starts with along X and Z, so something happens as soon as the game starts
+var launch_z = 0.0
+
+var vx = 0.0               # velocity (m/s)
+var vy = 0.0
+var vz = 0.0
+var spin_x = 0.0           # angular velocity (degrees per second) about X and Z
+var spin_z = 0.0
+var start_x = 0.0          # where the ball was when the game started (B puts it back)
+var start_y = 0.0
+var start_z = 0.0
+
+func _ready():
+    start_x = position.x
+    start_y = position.y
+    start_z = position.z
+    vx = launch_x
+    vz = launch_z
+
+# Puts the ball back where it started, at rest.
+func reset_ball():
+    position.x = start_x
+    position.y = start_y
+    position.z = start_z
+    rotation.x = 0.0
+    rotation.z = 0.0
+    vx = launch_x
+    vy = 0.0
+    vz = launch_z
+    spin_x = 0.0
+    spin_z = 0.0
+
+# Floor friction takes a steady amount off the speed each second (never below zero) and leaves the direction of travel alone.
+func apply_ground_friction(dt: float):
+    var speed_sq = vx * vx + vz * vz
+    if speed_sq < 0.0025:
+        # Slower than 0.05 m/s: at rest (and too slow for fixed-point maths to slow down any further).
+        vx = 0.0
+        vz = 0.0
+        return
+    var speed = sqrt(speed_sq)
+    var slowed = max(speed - ground_friction * dt, 0.0)
+    var keep = slowed / speed
+    vx *= keep
+    vz *= keep
+
+# Keeps an angle in -360..360 so the spin can run forever without the number overflowing.
+func wrap_degrees(angle: float) -> float:
+    if angle > 360.0:
+        return angle - 360.0
+    if angle < -360.0:
+        return angle + 360.0
+    return angle
+
+func _process(delta):
+    if Input.is_button_pressed("b"):
+        reset_ball()
+
+    # Forces: the D-pad pushes (acceleration = force / mass), A kicks from the floor (a change of speed = impulse / mass).
+    var push_x = 0.0
+    var push_z = 0.0
+    if Input.is_button_down("left"):
+        push_x -= push_force
+    if Input.is_button_down("right"):
+        push_x += push_force
+    if Input.is_button_down("up"):
+        push_z -= push_force
+    if Input.is_button_down("down"):
+        push_z += push_force
+    vx += push_x / mass * delta
+    vz += push_z / mass * delta
+    if is_on_floor() and Input.is_button_pressed("a"):
+        vy = kick_impulse / mass
+
+    # Gravity, and drag: a fraction of the speed goes every second. Then the terminal speed.
+    vy += gravity * delta
+    vx -= vx * air_drag * delta
+    vy -= vy * air_drag * delta
+    vz -= vz * air_drag * delta
+    vy = max(vy, -max_fall)
+
+    # Move, and let the solid shapes stop the move. Where the ball ended up tells which way it was blocked: a sideways
+    # move that got less far than asked ran into a wall (the floor and ceiling are reported by is_on_floor / is_on_ceiling).
+    var dx = vx * delta
+    var dy = vy * delta
+    var dz = vz * delta
+    var before_x = position.x
+    var before_z = position.z
+    move_and_collide(dx, dy, dz)
+    var moved_x = position.x - before_x
+    var moved_z = position.z - before_z
+
+    # Bounce off the floor: reverse the fall and keep a fraction of it. A weak impact just stops the ball.
+    if is_on_floor() and vy < 0.0:
+        if -vy > rest_speed:
+            vy = -vy * bounciness
+        else:
+            vy = 0.0
+    # Bump the ceiling: reverse the rise the same way.
+    if is_on_ceiling() and vy > 0.0:
+        vy = -vy * bounciness
+    # Bounce off a wall along X and/or Z, whichever was blocked.
+    if is_on_wall():
+        if abs(dx) > 0.0005 and abs(moved_x) < abs(dx) * 0.5:
+            vx = -vx * bounciness
+        if abs(dz) > 0.0005 and abs(moved_z) < abs(dz) * 0.5:
+            vz = -vz * bounciness
+
+    # On the floor: friction slows the ball, and it rolls without slipping (spin = speed / radius, in degrees per second).
+    # Rolling toward +X turns the ball clockwise seen from +Z, which is a negative turn about Z; toward +Z is a positive turn about X.
+    if is_on_floor():
+        apply_ground_friction(delta)
+        if roll and radius > 0.01:
+            spin_z = -vx / radius * 57.29578
+            spin_x = vz / radius * 57.29578
+    if roll:
+        rotation.x = wrap_degrees(rotation.x + spin_x * delta)
+        rotation.z = wrap_degrees(rotation.z + spin_z * delta)

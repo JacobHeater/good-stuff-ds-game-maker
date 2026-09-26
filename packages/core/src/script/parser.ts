@@ -152,6 +152,7 @@ class Parser {
       const start = this.current;
       try {
         if (this.isKeyword("var")) this.program.variables.push(this.parseVarDecl());
+        else if (this.current.kind === "ident" && this.current.text === "global") this.program.variables.push(this.parseGlobalDecl());
         else if (this.isKeyword("func")) this.program.functions.push(this.parseFunc());
         else if (this.current.kind === "indent") this.fail(spanOf(this.current), "This line is indented, but nothing above it opens a block.");
         else this.fail(spanOf(this.current), `Only "var" and "func" can start a line at the top of a script, but found ${this.describe(this.current)}.`);
@@ -169,6 +170,14 @@ class Parser {
     const token = this.expectIdent("a type (int, float or bool)");
     if (!TYPE_NAMES.has(token.text)) this.fail(spanOf(token), `"${token.text}" isn't a type; use int, float or bool.`);
     return token.text as ScriptType;
+  }
+
+  /** `global var name = value`. */
+  private parseGlobalDecl(): VarDecl {
+    const start = this.advance(); // global
+    if (!this.isKeyword("var")) this.fail(spanOf(this.current), 'After "global" comes "var", like global var score = 0.');
+    const decl = this.parseVarDecl();
+    return { ...decl, ...spanOf(start), endColumn: decl.endColumn, global: true };
   }
 
   private parseVarDecl(): VarDecl {

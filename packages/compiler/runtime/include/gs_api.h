@@ -36,6 +36,10 @@ static inline int32_t gs_clamp(int32_t v, int32_t lo, int32_t hi) { return v < l
 int32_t gs_sqrt(int32_t f);
 int32_t gs_sin(int32_t degrees);
 int32_t gs_cos(int32_t degrees);
+/* A random whole number from 0 to n - 1 (0 when n is 0 or less), a random float from 0 up to 1, and the angle in degrees (f32, -180 to 180) of the direction (x, y), both f32: the arguments are y then x. */
+int32_t gs_randi(int32_t n);
+int32_t gs_randf(void);
+int32_t gs_atan2(int32_t y, int32_t x);
 
 /* ---- Nodes: what a script reads and writes. The runtime keeps one per node in the scene's node table. */
 typedef struct {
@@ -76,6 +80,18 @@ void gs_audio_set_volume(int player, int32_t volume);
 int32_t gs_audio_get_pitch(int player); /* f32, 0.25..4 */
 void gs_audio_set_pitch(int player, int32_t pitch);
 
+/* Where the stylus points on the flat (horizontal) plane at world height `plane_y` (f32): the ray from the camera through the touched pixel, met with that plane.
+   axis 0 gives the world X, axis 1 the world Z. 0 when the stylus is up or the ray never reaches the plane (looking above the horizon). Only meaningful when the
+   3D scene is on the touch screen. */
+int32_t gs_touch_ground(int axis, int32_t plane_y);
+
+/* ---- Touch areas (requirements/touch/STORY.touch-areas.md). Whether the stylus is on a TouchArea2D / TouchArea3D node: GS_TOUCH_HELD (touching it now), GS_TOUCH_PRESSED
+   (went down on it this frame) or GS_TOUCH_RELEASED (was lifted this frame after touching it). False for a node with no touch area, or a hidden one. */
+#define GS_TOUCH_HELD     0
+#define GS_TOUCH_PRESSED  1
+#define GS_TOUCH_RELEASED 2
+int gs_touch_state(int node, int which);
+
 /* ---- Collision (gs_collision.h): whether the collision shapes of two nodes overlap right now. False when either node has no shape or is hidden. */
 int gs_overlaps(int a, int b);
 
@@ -89,6 +105,18 @@ int gs_overlaps(int a, int b);
 #define GS_BODY_WALL    2
 #define GS_BODY_CEILING 4
 int gs_move_and_collide(int body, int32_t dx, int32_t dy, int32_t dz);
+/*
+ * Which of three points are inside a solid shape that is not under `body`: the points are (x0, y), (x1, y) and (x2, y) in the frame of the body's first collision shape (its
+ * centre, its turn and its scale apply, so "y" is up through the shape and x along its longer horizontal side: its Z when a box is longer in Z than in X, its X otherwise), all f32. Bit 0 is set for the first point, bit 1 for the second, bit 2 for the third. What a block asks to
+ * find out what it is resting on: points just below its bottom at both ends and in the middle. One call builds the list of solid shapes once for all three points.
+ */
+int gs_probe_solid(int body, int32_t y, int32_t x0, int32_t x1, int32_t x2);
+/*
+ * How far along a ray the nearest visible solid shape that is not under `body` is (f32, world units), or -1.0 when none is within `max`. The ray starts at (ox, oy, oz) and goes toward
+ * (dx, dy, dz), which need not be a unit vector (all f32). A ray that starts inside a solid shape hits it at 0. Boxes are exact; the other shapes are found to within 0.03 units.
+ * Like the probe it uses the shapes as they were placed at the start of the frame.
+ */
+int32_t gs_ray_cast(int body, int32_t ox, int32_t oy, int32_t oz, int32_t dx, int32_t dy, int32_t dz, int32_t max);
 int gs_body_state(int body, int mask);
 
 /* ---- Animation (requirements/animation/TASK.compile-and-run-animations.md). `player` is an AnimationPlayer's index, from the node it belongs to (-1 when the node has none: every call is then a no-op); `animation` is an index within that player's animations. */
@@ -99,6 +127,40 @@ int gs_anim_is_playing(int player);
 int32_t gs_anim_get_speed(int player); /* f32 */
 void gs_anim_set_speed(int player, int32_t speed);
 
+/* ---- Sprite animation (requirements/scene-designer/STORY.animated-sprites.md). `node` is an AnimatedSprite2D's node index; `animation` counts among that node's own animations, in the order of its list. A node that isn't drawn as a sprite makes every call a no-op. */
+void gs_sprite_play(int node, int animation);
+void gs_sprite_stop(int node);
+int gs_sprite_is_playing(int node);
+
+/* ---- Global variables and the save file (requirements/scripting/STORY.game-state-and-save.md). `gs_global` holds the project's global variables, one 32-bit number each (a float in 20.12, a bool 0 or 1), in
+   the order the generated script_code.c lists them; they keep their values when the scene changes. `gs_global_signature` says which globals the game has (a hash of their names and types), so a save from
+   another version is not loaded. The three functions return 1 on success (a save existed / was written) and 0 when there is no save memory or no valid save. */
+extern int32_t gs_global[];
+extern const int32_t gs_global_initial[];
+extern const uint16_t gs_global_count;
+extern const uint32_t gs_global_signature;
+int gs_save_game(void);
+int gs_load_game(void);
+int gs_has_save(void);
+
+/* ---- Labels (requirements/scene-designer/STORY.labels-and-text.md). `node` is a Label's node index; a node that isn't a label makes every call a no-op. The value shows where the label's text has `{}`;
+   `text` must stay valid (a string literal). */
+void gs_label_set_value(int node, int32_t value);
+int32_t gs_label_get_value(int node);
+void gs_label_set_text(int node, const char *text);
+
+/* ---- Frame animations of 3D models with several poses (requirements/scene-designer/STORY.animated-3d-models.md). `node` is a MeshInstance3D's node index; `animation` counts among that node's own animations, in the order of
+   its list. A node that isn't an animated mesh makes every call a no-op. */
+void gs_mesh_play(int node, int animation);
+void gs_mesh_stop(int node);
+int gs_mesh_is_playing(int node);
+
+/* ---- Scenes (requirements/scene-designer/STORY.multiple-scenes.md). `scene` is the scene's place in the project's list of scenes (the starting scene is 0). The switch is made when the
+   frame ends, so the scripts of the rest of the frame still see the scene they were called in; a call in the last frame of a scene's life is a no-op. */
+void gs_change_scene(int scene);
+/* The scene a script asked for (-1: none); main.c switches to it when the frame ends. */
+extern int gs_pending_scene;
+
 /* ---- The table the runtime walks each frame: one entry per script attached to a node, in node-table order. */
 typedef struct {
 	void (*ready)(int inst);
@@ -107,7 +169,13 @@ typedef struct {
 	uint16_t inst; /* which copy of the script's variables this node has */
 } GsScriptInstance;
 
-extern const GsScriptInstance gs_script_instances[];
-extern const uint16_t gs_script_instance_count;
+/* One scene's scripts: its instance table (one entry per script attached to a node, in node-table order), how many, and the function that puts every script variable back to where
+   the scene starts them. `gs_scene_scripts` has one entry for each scene of the project, in the order of the project's list (the starting scene first). */
+typedef struct {
+	const GsScriptInstance *instances;
+	const uint16_t *count;
+	void (*reset)(void);
+} GsSceneScripts;
+extern const GsSceneScripts gs_scene_scripts[];
 
 #endif

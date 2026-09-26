@@ -23,10 +23,16 @@ reused, or swapped independently of the Electron shell.
 ## Getting started
 
 ```bash
-pnpm install
-pnpm dev      # launch the Electron app in development mode
-pnpm build    # build all packages, then the desktop app
+pnpm initialize   # installs node modules, plus devkitPro and melonDS (Windows, no admin)
+pnpm dev          # launch the Electron app in development mode
+pnpm build        # build all packages, then the desktop app
 ```
+
+`pnpm initialize` runs `pnpm install` and then
+`tools/ds-toolchain/setup-windows.ps1`, which installs the non-npm pieces the
+compiler and Play button need: devkitARM/libnds (via MSYS2/pacman) and
+melonDS (via winget). It's idempotent — already-installed pieces are skipped
+— so re-running it is safe. See `tools/ds-toolchain/README.md` for details.
 
 ## Status
 

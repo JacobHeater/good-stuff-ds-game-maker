@@ -91,7 +91,13 @@ void gs_anim_set_speed(int player, int32_t speed) {
 	anim_state[player].speed = gs_clamp(speed, 205, GS_ONE * 10) /* 0.05 to 10 */;
 }
 
+void gs_animation_reset(void) {
+	free(anim_state);
+	anim_state = 0;
+}
+
 void gs_init_animation(void) {
+	gs_animation_reset();
 	if (gs_scene.animationPlayerCount == 0) return;
 	anim_state = malloc(sizeof(AnimState) * gs_scene.animationPlayerCount);
 	for (int i = 0; i < gs_scene.animationPlayerCount; i++) {

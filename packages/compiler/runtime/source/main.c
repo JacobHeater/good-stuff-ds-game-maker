@@ -39,8 +39,8 @@ static void load_textures(void) {
 	}
 }
 
-static void draw_mesh(const GsMesh *mesh, int lit) {
-	const GsPrimitive *primitive = &gs_scene.primitives[mesh->primitive];
+static void draw_mesh(const GsMesh *mesh, int index, int lit) {
+	const GsPrimitive *primitive = &gs_scene.primitives[gs_mesh_primitive(index)];
 	const int16_t *p = primitive->positions;
 	const uint32_t *n = primitive->normals;
 	const int16_t *uv = mesh->texture ? primitive->texcoords : 0;
@@ -85,7 +85,22 @@ static void load_view(void) {
 	glLoadMatrix4x4((const m4x4 *)&view);
 }
 
-int main(void) {
+/* The scripts of the scene being shown. */
+static const GsScriptInstance *scriptInstances;
+static uint16_t scriptCount;
+
+/*
+ * Shows scene `index` of the project (the starting scene is 0): the screen the 3D is on, the VRAM banks, the camera's lens, the textures, every table the runtime keeps for a scene, the
+ * scripts' starting values and their `_ready`. `first` is the start of the game; otherwise the scene being shown is put away first (its sounds stopped, its memory given back, its
+ * textures and sprites cleared).
+ */
+static void enter_scene(int index, int first) {
+	if (!first) {
+		gs_leave_scene();
+		glResetTextures();
+	}
+	gs_scene_current = gs_scene_table[index];
+
 	/* The DS can only drive 3D on one screen; the scene says which. */
 	if (gs_scene.screen == 0) {
 		lcdMainOnTop();
@@ -101,15 +116,27 @@ int main(void) {
 	vramSetBankA(VRAM_A_TEXTURE);
 	vramSetBankB(VRAM_B_TEXTURE);
 	vramSetBankC(VRAM_C_TEXTURE);
-	vramSetBankD(VRAM_D_TEXTURE);
+	/* ... unless the 2D screen has sprites: the sub engine's sprite tiles need a bank of their own (D), and textures keep A to C (384 KB, which is the budget the
+	   compiler checks against in that case). */
+	if (gs_scene.sprites2D.spriteCount > 0) {
+		vramSetBankD(VRAM_D_SUB_SPRITE);
+	} else {
+		vramSetBankD(VRAM_D_TEXTURE);
+	}
+	/* Text on the 2D screen is a background of the sub engine, in bank H (32 KB, otherwise unused). */
+	if (gs_scene.sprites2D.labelCount > 0) vramSetBankH(VRAM_H_SUB_BG);
 
-	glInit();
-	glEnable(GL_TEXTURE_2D);
+	if (first) {
+		glInit();
+		glEnable(GL_TEXTURE_2D);
+		glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 31); /* opaque: a visible backdrop, so a picture of the screen shows where its edges are */
+		glClearPolyID(63);
+		glClearDepth(0x7FFF);
+		glViewport(0, 0, 255, 191);
+	}
+	free(textureNames);
+	textureNames = 0;
 	load_textures();
-	glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 31); /* opaque: a visible backdrop, so a picture of the screen shows where its edges are */
-	glClearPolyID(63);
-	glClearDepth(0x7FFF);
-	glViewport(0, 0, 255, 191);
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -117,14 +144,26 @@ int main(void) {
 	glMatrixMode(GL_MODELVIEW);
 
 	gs_init_nodes();
+	gs_init_mesh_anim();
+	gs_init_touch();
+	gs_init_sprites();
+	gs_init_labels();
 	gs_init_audio();
 	gs_start_audio();
 	gs_init_animation();
 	gs_update_nodes();
-	for (int i = 0; i < gs_script_instance_count; i++) {
-		const GsScriptInstance *script = &gs_script_instances[i];
+	const GsSceneScripts *scripts = &gs_scene_scripts[index];
+	scripts->reset();
+	scriptInstances = scripts->instances;
+	scriptCount = *scripts->count;
+	for (int i = 0; i < scriptCount; i++) {
+		const GsScriptInstance *script = &scriptInstances[i];
 		if (script->ready) script->ready(script->inst);
 	}
+}
+
+int main(void) {
+	enter_scene(0, 1);
 
 	/* 60 fps waits one vertical blank per frame, 30 fps waits two. */
 	const int framesPerPresent = gs_scene.fps == 30 ? 2 : 1;
@@ -133,10 +172,12 @@ int main(void) {
 
 	while (pmMainLoop()) {
 		gs_read_input();
-		for (int i = 0; i < gs_script_instance_count; i++) {
-			const GsScriptInstance *script = &gs_script_instances[i];
+		gs_update_touch(); /* before the scripts, which ask the touch areas */
+		for (int i = 0; i < scriptCount; i++) {
+			const GsScriptInstance *script = &scriptInstances[i];
 			if (script->process) script->process(script->inst, delta);
 		}
+		gs_update_mesh_anim();
 		gs_update_animation(delta); /* after the scripts: an animation wins over a script that writes the same property */
 		gs_update_nodes();
 
@@ -164,12 +205,23 @@ int main(void) {
 		glPolyFmt(polyFormat);
 		for (int i = 0; i < gs_scene.meshCount; i++) {
 			const GsMesh *mesh = &gs_scene.meshes[i];
-			if (gs_world_visible[mesh->node]) draw_mesh(mesh, active > 0);
+			if (gs_world_visible[mesh->node]) draw_mesh(mesh, i, active > 0);
 		}
 
 		glFlush(0);
 		for (int i = 0; i < framesPerPresent; i++) {
 			swiWaitForVBlank();
+			if (i == 0) {
+				gs_update_sprites(); /* right after the vertical blank, where the sprite table can be copied */
+				gs_update_labels();
+			}
+		}
+
+		/* A script asked for another scene: it is shown from the next frame on. */
+		if (gs_pending_scene >= 0) {
+			const int next = gs_pending_scene;
+			gs_pending_scene = -1;
+			if (next < gs_scene_table_count) enter_scene(next, 0);
 		}
 	}
 

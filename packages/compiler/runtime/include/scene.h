@@ -92,6 +92,77 @@ typedef struct {
 	int32_t speed;
 } GsAnimationPlayer;
 
+/*
+ * A touch area (a TouchArea2D or TouchArea3D), with the node it belongs to. `shape` is a GS_TOUCH_* below. A rectangle is on the touch screen: `rect` is its left,
+ * top, width and height in screen pixels. A box or sphere is a volume in the 3D scene, placed and scaled by its node (the world matrix and scale in the node table):
+ * `p` is f32, a box's half extents or a sphere's radius in p[0]. A touch on the screen is turned into a ray from the camera (see gs_update_touch).
+ */
+#define GS_TOUCH_RECT   0
+#define GS_TOUCH_BOX    1
+#define GS_TOUCH_SPHERE 2
+typedef struct {
+	uint16_t node;
+	uint8_t shape;
+	int16_t rect[4];
+	int32_t p[3];
+} GsTouchArea;
+
+/*
+ * Sprites on the 2D screen (the sub engine; the 3D engine is the main one). Identical to the types of the 2D runtime's scene2d.h. Each image takes one of the sub engine's
+ * 16 extended palettes, in order, and the screen's sprite list is in hardware order (the first is drawn over the others).
+ */
+typedef struct {
+	uint16_t width;  /* one frame: one of the DS's sprite sizes */
+	uint16_t height;
+	uint16_t frameCount; /* 1 for a picture, more for a sprite sheet: the frames share the palette */
+	const uint16_t *palette; /* 256 RGB15 entries, entry 0 transparent, 4-byte aligned */
+	const uint8_t *tiles;    /* frameCount frames of width * height bytes, palette indices in the order the sprite engine reads them (8 x 8 tiles), 4-byte aligned */
+} GsSpriteImage;
+
+/* One animation of an AnimatedSprite2D: frames of its sheet in order. `step` is animation frames per game frame in 20.12 (4096 = one every game frame). */
+typedef struct {
+	const uint16_t *frames;
+	uint16_t length;
+	uint8_t loop;
+	uint32_t step;
+} GsSpriteAnimation;
+
+typedef struct {
+	int16_t x; /* top-left corner in screen pixels as the sprite starts (with a rotation matrix: of the doubled box the picture is drawn in) */
+	int16_t y;
+	uint16_t image; /* index into the images */
+	int16_t node;   /* index into the node table: its position (x, y pixels), rotation (third slot, degrees clockwise), scale (x, y) and visibility are the sprite's; -1: none */
+	uint8_t dynamic; /* 1: a script can change it, so it follows its node every frame */
+	int8_t affine;  /* the rotation matrix (0..31) it is drawn with, or -1 */
+	int32_t rotation; /* as it starts: degrees clockwise, f32 */
+	int32_t scaleX;   /* and the scale on each axis, f32 (negative flips) */
+	int32_t scaleY;
+	int16_t animation;         /* an AnimatedSprite2D: the animation (index into the screen's animations) that plays when the scene starts, or -1 for none (it shows frame 0) */
+	uint16_t animationFirst;   /* and its own animations are this many entries of the table from the first... */
+	uint16_t animationCount;   /* ...this many of them, in the order a script's play("name") counts them */
+} GsSprite;
+
+/* One Label: text on the screen's 8 x 8 grid (column 0..31, row 0..23), in a console color (0 black, 1 red ... 7 white), with `{}` in the text standing for the label's value. */
+typedef struct {
+	uint8_t column;
+	uint8_t row;
+	uint8_t color;
+	uint8_t visible; /* whether it shows when the scene starts */
+	int16_t node;    /* index into the node table: its visibility is the node's; -1: none (no script can reach it) */
+	const char *text;
+} GsLabel;
+
+typedef struct {
+	uint16_t imageCount;
+	uint16_t spriteCount;
+	const GsSpriteImage *images;
+	const GsSprite *sprites;
+	uint16_t animationCount;
+	const GsSpriteAnimation *animations;
+	uint16_t labelCount;
+	const GsLabel *labels;
+} GsScreen2D;
+
 /* One mesh source's triangles (for a textured mesh, one table per geometry and texture), shared by every mesh that uses it. */
 typedef struct {
 	uint16_t triangleCount;
@@ -113,6 +184,7 @@ typedef struct {
 	int16_t audio;       /* index into GsScene.audioPlayers, or -1 */
 	int16_t collider;    /* index into GsScene.colliders, or -1 */
 	int16_t animPlayer;  /* index into GsScene.animationPlayers, or -1 */
+	int16_t touch;       /* index into GsScene.touchAreas, or -1 */
 	int32_t position[3]; /* local, f32 */
 	int32_t rotation[3]; /* local, degrees, f32 */
 	int32_t scale[3];    /* local, f32 */
@@ -125,6 +197,13 @@ typedef struct {
 	uint16_t diffuse;   /* RGB15 */
 	uint16_t texture;   /* 0 = none, otherwise 1 + an index into GsScene.textures */
 	uint16_t node;      /* index into GsScene.nodes: where and how it is drawn */
+	/* A model with several poses that has frame animations: its poses' primitives are frameCount entries of GsScene.meshFrames from frameStart (the first is `primitive`), `animation` is the animation
+	   (an index into GsScene.meshAnimations) that plays at the start or -1, and its own animations are animationCount entries from animationFirst. frameCount 0: not animated. */
+	uint16_t frameStart;
+	uint16_t frameCount;
+	int16_t animation;
+	uint16_t animationFirst;
+	uint16_t animationCount;
 } GsMesh;
 
 /* The DS only has parallel lights. */
@@ -140,6 +219,7 @@ typedef struct {
 	float fovDegrees;
 	float nearPlane;
 	float farPlane;
+	float tanHalfFov; /* tan(fovDegrees / 2), for turning a touched point into a ray */
 	GsMatrix view; /* world -> camera, as the scene starts */
 	uint16_t cameraNode; /* index into nodes: a moving camera's view is the inverse of its node's world transform */
 	uint16_t nodeCount;
@@ -154,6 +234,7 @@ typedef struct {
 	uint16_t animationCount;
 	uint16_t animTrackCount;
 	uint16_t animKeyCount;
+	uint16_t touchAreaCount;
 	const GsNode *nodes;
 	const GsPrimitive *primitives;
 	const GsMesh *meshes;
@@ -166,8 +247,20 @@ typedef struct {
 	const GsAnimation *animations;
 	const GsAnimTrack *animTracks;
 	const GsAnimKey *animKeys;
+	const GsTouchArea *touchAreas;
+	GsScreen2D sprites2D; /* with sprites, VRAM bank D holds their tiles and textures use banks A to C */
+	uint16_t meshAnimationCount;
+	const uint16_t *meshFrames;
+	const GsSpriteAnimation *meshAnimations;
 } GsScene;
 
-extern const GsScene gs_scene;
+/*
+ * A project can have several scenes; the runtime shows one at a time. `gs_scene` is the one it is showing (the code reads it as if it were the only scene). The generated scene_table.c
+ * lists them, the starting scene first, and starts `gs_scene_current` on the first. Switching is main.c's `enter_scene`.
+ */
+extern const GsScene *gs_scene_current;
+#define gs_scene (*gs_scene_current)
+extern const GsScene *const gs_scene_table[];
+extern const uint16_t gs_scene_table_count;
 
 #endif

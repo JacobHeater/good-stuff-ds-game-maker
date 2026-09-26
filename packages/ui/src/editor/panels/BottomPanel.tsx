@@ -20,7 +20,7 @@ function BudgetBar({ used, limit }: { used: number; limit: number }): JSX.Elemen
 
 function HardwareBudgetTab(): JSX.Element {
   const { state } = useEditorStore();
-  const budget = computeSceneBudget(state.sceneRoot, state.project?.meshes, state.project?.textures, state.project?.sounds);
+  const budget = computeSceneBudget(state.sceneRoot, state.project?.meshes, state.project?.textures, state.project?.sounds, state.project?.sprites);
 
   return (
     <div className="grid grid-cols-2 gap-4 p-3 text-xs">
@@ -35,6 +35,20 @@ function HardwareBudgetTab(): JSX.Element {
               </span>
             </div>
             <BudgetBar used={screen.spritesUsed} limit={screen.spritesLimit} />
+            <div className="flex items-center justify-between">
+              <span className="text-editor-text-muted">Sprite memory</span>
+              <span>
+                {screen.spriteBytesUsed} / {screen.spriteBytesLimit} bytes
+              </span>
+            </div>
+            <BudgetBar used={screen.spriteBytesUsed} limit={screen.spriteBytesLimit} />
+            <div className="flex items-center justify-between">
+              <span className="text-editor-text-muted">Sprite palettes</span>
+              <span>
+                {screen.spritePalettesUsed} / {screen.spritePalettesLimit}
+              </span>
+            </div>
+            <BudgetBar used={screen.spritePalettesUsed} limit={screen.spritePalettesLimit} />
           </div>
         ))}
       </div>

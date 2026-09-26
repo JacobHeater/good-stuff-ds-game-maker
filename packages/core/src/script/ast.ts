@@ -21,29 +21,45 @@ export type ExprType = ScriptType | "void" | "string" | "vec3" | "node" | "unkno
 /** A node a script refers to: the node it is attached to, or another node found by name. */
 export type NodeTarget = { kind: "self" } | { kind: "node"; nodeId: string; name: string };
 
-export type NodeProp = "position" | "rotation" | "scale" | "visible" | "volume" | "pitch" | "speed_scale";
+export type NodeProp = "position" | "rotation" | "scale" | "visible" | "volume" | "pitch" | "speed_scale" | "value";
 export type ButtonName = "a" | "b" | "x" | "y" | "l" | "r" | "start" | "select" | "up" | "down" | "left" | "right";
 
 /** What a name, member access or call resolved to. Set by the checker. */
 export type Resolution =
   | { kind: "local"; name: string }
   | { kind: "member"; name: string }
+  /** A project-wide variable (`global var score = 0`): one copy for the whole game, kept when the scene changes. */
+  | { kind: "global"; name: string }
+  /** `save_game()`, `load_game()` or `has_save()`: the game's save file. */
+  | { kind: "saveCall"; fn: "save_game" | "load_game" | "has_save" }
   | { kind: "function"; name: string }
-  | { kind: "builtin"; name: "abs" | "min" | "max" | "clamp" | "sqrt" | "sin" | "cos" | "int" | "float" }
+  | { kind: "builtin"; name: "abs" | "min" | "max" | "clamp" | "sqrt" | "sin" | "cos" | "int" | "float" | "randi" | "randf" | "atan2" }
   | { kind: "input"; fn: "is_button_down" | "is_button_pressed" | "is_button_released"; button: ButtonName }
   | { kind: "touch"; fn: "is_touching" | "touch_x" | "touch_y" }
+  /** `Input.touch_ground_x(height)` / `touch_ground_z(height)`: where the stylus points on the horizontal plane at that height (axis 0 = x, 1 = z). */
+  | { kind: "touchGround"; axis: 0 | 1 }
   /** `position`, `rotation` or `scale` of a node: a vector, only ever the base of `.x` `.y` `.z`. */
   | { kind: "nodeVector"; target: NodeTarget; prop: "position" | "rotation" | "scale" }
   /** `position.x` etc. */
   | { kind: "nodeAxis"; target: NodeTarget; prop: "position" | "rotation" | "scale"; axis: 0 | 1 | 2 }
-  | { kind: "nodeProp"; target: NodeTarget; prop: "visible" | "volume" | "pitch" | "speed_scale" }
+  | { kind: "nodeProp"; target: NodeTarget; prop: "visible" | "volume" | "pitch" | "speed_scale" | "value" }
+  /** `$Label.text`: the text of a Label node, which a script can only set (to a string in quotes). */
+  | { kind: "labelText"; target: NodeTarget }
   | { kind: "audioCall"; target: NodeTarget; method: "play" | "stop" }
-  /** `player.play("name")` (with the animation's place among the player's animations), `stop()` and `is_playing()` on an AnimationPlayer. */
-  | { kind: "animCall"; target: NodeTarget; method: "play" | "stop" | "is_playing"; animation: number }
+  /** `player.play("name")` (with the animation's place among the node's animations), `stop()` and `is_playing()` on an AnimationPlayer, or (`sprite`) an AnimatedSprite2D. */
+  | { kind: "animCall"; target: NodeTarget; method: "play" | "stop" | "is_playing"; animation: number; sprite?: boolean; mesh?: boolean }
+  /** `change_scene("Level2")`: switch to another scene of the project (with its place in the project's list of scenes, the starting scene first). */
+  | { kind: "sceneCall"; scene: number }
   /** `a.overlaps(b)`: whether two collision shapes touch. */
   | { kind: "overlapsCall"; a: NodeTarget; b: NodeTarget }
   /** `body.move_and_collide(dx, dy, dz)`: moves a node, stopped by solid shapes. */
   | { kind: "moveCall"; target: NodeTarget }
+  /** `area.is_touched()` / `is_touch_pressed()` / `is_touch_released()` on a TouchArea2D or TouchArea3D. */
+  | { kind: "touchState"; target: NodeTarget; state: "held" | "pressed" | "released" }
+  /** `body.probe_solid(y, x0, x1, x2)`: which of three points, in the body's own frame, are inside a solid shape (a bit mask). */
+  | { kind: "probeCall"; target: NodeTarget }
+  /** `body.ray_cast(ox, oy, oz, dx, dy, dz, max)`: how far along a ray to the nearest solid shape that is not under the body (a float; -1 for none). */
+  | { kind: "rayCall"; target: NodeTarget }
   /** `body.is_on_floor()` etc.: what the body's last move ran into. */
   | { kind: "bodyState"; target: NodeTarget; state: "floor" | "wall" | "ceiling" }
   | { kind: "nodeRef"; target: NodeTarget };
@@ -177,6 +193,8 @@ export interface FuncDecl extends SourceSpan {
 }
 
 export interface VarDecl extends SourceSpan {
+  /** `global var x = 0`: shared by every script and kept across scenes. */
+  global?: boolean;
   name: string;
   nameSpan: SourceSpan;
   declaredType?: ScriptType;

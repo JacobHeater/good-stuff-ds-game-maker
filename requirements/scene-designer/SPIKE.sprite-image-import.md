@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: done
 component: scene-designer
 related: [SPIKE.custom-mesh-and-sprite-import.md, EPIC.scene-designer.md, compiler/STORY.compile-2d-scene-to-nds-rom.md, file-browser]
 ---
@@ -39,3 +39,8 @@ Scenario: Spike produces a written recommendation
 
 ## Notes
 - Do not implement image import as part of this spike.
+
+## Outcome
+Answered by building it, with the product owner's decisions: see `STORY.import-sprite-image.md` (256-color paletted PNG, exact DS sprite sizes,
+embedded and already converted, per-screen sprite memory and palette budget, compiled by `compiler/TASK.compile-2d-sprites.md`). Still open and
+not part of that slice: sprite sheets and `AnimatedSprite2D`, 16-color images, tile maps and their tiles, and how the file browser lists assets.

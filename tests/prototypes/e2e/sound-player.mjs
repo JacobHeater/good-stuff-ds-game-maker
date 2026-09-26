@@ -532,7 +532,7 @@ try {
   assert.equal(Buffer.from(mono.samples, "base64").length, 66150, "22050 Hz x 1.5 s x 2 bytes");
   assert.equal(Buffer.from(saved.sounds.find((s) => s.sampleRate === 32000).samples, "base64").length, 64000);
   const players = saved.scene.children.filter((c) => c.kind === "AudioStreamPlayer");
-  assert.deepEqual(players.map((c) => c.name), ["AudioStreamPlayer", "stereo-44k", "stereo-44k"], "the original and its copy");
+  assert.deepEqual(players.map((c) => c.name), ["AudioStreamPlayer", "stereo-44k", "stereo-44k2"], "the original and its copy, which has a name of its own");
   assert.equal(players[1].audio.soundId, players[2].audio.soundId, "the copy shares the sound");
   assert.deepEqual({ ...players[0].audio, soundId: undefined }, { soundId: undefined, autoplay: true, volume: 0.4, pitch: 1.5, loop: false });
   assert.deepEqual([players[1].audio.autoplay, players[2].audio.autoplay], [false, false]);
@@ -600,7 +600,7 @@ try {
   await waitText("Exported ROM to", 120000);
   out = await body();
   assert.match(out, /Warning \[stereo-44k\]: Autoplay is off and no script calls play\(\) on this player, so nothing starts this sound; it stays silent\./);
-  assert.equal((out.match(/Warning \[stereo-44k\]: Autoplay is off/g) ?? []).length, 2, "one warning for each silent player");
+  assert.equal((out.match(/Warning \[stereo-44k2?\]: Autoplay is off/g) ?? []).length, 2, "one warning for each silent player");
   assert.equal(readFileSync(ROM_PATH).subarray(0, 8).toString(), "HOMEBREW");
   const run = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", METER, "-Rom", ROM_PATH, "-Seconds", "8"], { encoding: "utf-8", timeout: 90000 });
   assert.equal(run.status, 0, run.stderr);

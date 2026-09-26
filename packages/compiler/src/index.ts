@@ -12,4 +12,6 @@ export * from "./run/node-emulator";
 export * from "./run/play-session";
 export * from "./run/ports";
 export * from "./scene-data-writer";
+export * from "./translate-scene-2d";
+export * from "./translate-project";
 export * from "./translate-scene-3d";

@@ -8,7 +8,7 @@ export function MenuItem({
   onSelect
 }: {
   label: string;
-  icon?: string;
+  icon?: ReactNode;
   /** The keyboard shortcut to show at the right, e.g. "Ctrl+Z". Display only: the shortcut itself is handled elsewhere. */
   shortcut?: string;
   disabled?: boolean;
@@ -19,13 +19,15 @@ export function MenuItem({
       type="button"
       disabled={disabled}
       onClick={onSelect}
+      aria-keyshortcuts={shortcut}
       className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs ${
         disabled ? "cursor-not-allowed text-editor-text-muted/40" : "text-editor-text hover:bg-editor-accent/20"
       }`}
     >
       {icon && <span className="w-4 text-center">{icon}</span>}
       <span className="flex-1 truncate">{label}</span>
-      {shortcut && <span className="shrink-0 text-[10px] text-editor-text-muted">{shortcut}</span>}
+      {/* Drawn by CSS from data-shortcut so the button's own text stays just its label (its accessible name, and what tests click by); aria-keyshortcuts tells assistive tech the key. */}
+      {shortcut && <span aria-hidden="true" data-shortcut={shortcut} className="shrink-0 text-[10px] text-editor-text-muted after:content-[attr(data-shortcut)]" />}
     </button>
   );
 }

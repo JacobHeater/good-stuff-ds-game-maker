@@ -1,4 +1,4 @@
-import type { ImportedMesh, ImportedSound, ImportedTexture, ProjectScript, SceneNode } from "@goodstuff/core";
+import type { ImportedMesh, ImportedSound, ImportedSprite, ImportedTexture, ProjectScript, SceneEntry, SceneNode } from "@goodstuff/core";
 
 /**
  * Undo/redo bookkeeping for scene edits (requirements/scene-designer/TASK.undo-redo-for-scene-edits.md).
@@ -19,9 +19,14 @@ export interface EditState {
   textures: ImportedTexture[] | undefined;
   /** The project's imported sounds (an import adds one, so undoing it has to take it out again). */
   sounds: ImportedSound[] | undefined;
+  /** The project's imported sprite images (an import adds one, so undoing it has to take it out again). */
+  sprites: ImportedSprite[] | undefined;
   /** The project's scripts (creating, deleting or editing one is an edit, and so is undoable). */
   scripts: ProjectScript[] | undefined;
   selectedNodeId: string;
+  /** The project's scenes as they were (the scene being edited with its tree as `sceneRoot`), and which one that is: adding, renaming, deleting a scene is an edit, and undoing an edit takes you back to the scene it was made in. */
+  sceneEntries?: SceneEntry[];
+  activeSceneId?: string;
 }
 
 export interface EditEntry extends EditState {

@@ -1,12 +1,14 @@
 import {
   createProjectSnapshot,
   createSceneNode,
+  createSpriteFromRgba,
   createTextureFromRgba,
   encodeSamples,
   getAudioPlayer,
   parseObj,
   type AudioPlayerData,
   type ImportedSound,
+  type ImportedSprite,
   type ImportedTexture,
   type MeshPrimitive,
   type ProjectSnapshot,
@@ -335,4 +337,97 @@ export function scriptedProject(
     }
   });
   return built;
+}
+
+// ---- 2D sprites ---------------------------------------------------------------------------------------------------------------
+
+/** A picture built from a function of the pixel, as 8-bit RGBA (row 0 on top). */
+function rgbaPicture(width: number, height: number, pixel: (x: number, y: number) => [number, number, number, number]): Uint8Array {
+  const out = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out.set(pixel(x, y), (y * width + x) * 4);
+  return out;
+}
+
+const CLEAR: [number, number, number, number] = [0, 0, 0, 0];
+
+/** The sprite images of `spritesProject`, each with the picture it was made from (so a test can compare what the DS draws with it). */
+export const SPRITE_FIXTURE_PICTURES: Record<string, { id: string; width: number; height: number; rgba: Uint8Array }> = {
+  // 32 x 32: four colored quadrants inside a 4-pixel transparent border.
+  quadrants: {
+    id: "spr-quadrants",
+    width: 32,
+    height: 32,
+    rgba: rgbaPicture(32, 32, (x, y) => {
+      if (x < 4 || y < 4 || x >= 28 || y >= 28) return CLEAR;
+      return y < 16 ? (x < 16 ? [255, 0, 0, 255] : [0, 255, 0, 255]) : x < 16 ? [0, 128, 255, 255] : [255, 255, 0, 255];
+    })
+  },
+  // 16 x 16: a white diamond on magenta, so it reads against the quadrants where they overlap.
+  diamond: {
+    id: "spr-diamond",
+    width: 16,
+    height: 16,
+    rgba: rgbaPicture(16, 16, (x, y) => (Math.abs(x - 7.5) + Math.abs(y - 7.5) < 5 ? [255, 255, 255, 255] : [255, 0, 255, 255]))
+  },
+  // 8 x 32: a tall stripe of alternating cyan and orange bands (checks the sprite shapes other than square).
+  stripe: {
+    id: "spr-stripe",
+    width: 8,
+    height: 32,
+    rgba: rgbaPicture(8, 32, (_x, y) => (Math.floor(y / 4) % 2 === 0 ? [0, 255, 255, 255] : [255, 128, 0, 255]))
+  },
+  // 64 x 32: wide, with a gradient in the red channel and a transparent hole in the middle.
+  wide: {
+    id: "spr-wide",
+    width: 64,
+    height: 32,
+    rgba: rgbaPicture(64, 32, (x, y) => (x >= 24 && x < 40 && y >= 8 && y < 24 ? CLEAR : [255 - Math.floor(x * 3.9), 40, 200, 255]))
+  }
+};
+
+function spriteImage(key: keyof typeof SPRITE_FIXTURE_PICTURES): ImportedSprite {
+  const { id, width, height, rgba } = SPRITE_FIXTURE_PICTURES[key];
+  const converted = createSpriteFromRgba(rgba, width, height, { name: key });
+  if (!converted.ok) throw new Error(`The ${key} sprite fixture didn't convert: ${converted.errors.join(" ")}`);
+  return { id, ...converted.sprite };
+}
+
+function spriteNode(name: string, image: keyof typeof SPRITE_FIXTURE_PICTURES, screen: "top" | "bottom", x: number, y: number): SceneNode {
+  const node = createSceneNode({ name, kind: "Sprite2D", screen, position: { x, y } });
+  node.spriteId = SPRITE_FIXTURE_PICTURES[image].id;
+  return node;
+}
+
+/**
+ * A 2D project with sprites on both screens. Top: the quadrants at (64, 64), the diamond over it at (76, 76) (later in the tree, so on top),
+ * the stripe at (30, 150), and the wide one at (200, 40); a quadrants sprite at (10, 100) is partly off the left edge. Bottom: the quadrants
+ * at (128, 96) and the same wide image at (60, 160) (each screen holds its own copy of an image).
+ */
+export function spritesProject(): ProjectSnapshot {
+  const nodes = [
+    spriteNode("Quad", "quadrants", "top", 64, 64),
+    spriteNode("Diamond", "diamond", "top", 76, 76),
+    spriteNode("Stripe", "stripe", "top", 30, 150),
+    spriteNode("Wide", "wide", "top", 200, 40),
+    spriteNode("Clipped", "quadrants", "top", 10, 100),
+    spriteNode("BottomQuad", "quadrants", "bottom", 128, 96),
+    spriteNode("BottomWide", "wide", "bottom", 60, 160)
+  ];
+  const project2D = createProjectSnapshot({ name: "Sprites", mode: "2D", scene: createSceneNode({ name: "Main", kind: "Node2D", children: nodes }) });
+  return { ...project2D, sprites: (["quadrants", "diamond", "stripe", "wide"] as const).map(spriteImage) };
+}
+
+/**
+ * The cube fixture (3D on the top screen) with sprites on its 2D screen (the bottom one): the quadrants at (128, 96) with the diamond over it at (140, 108), the wide one at
+ * (60, 160) and the stripe at (220, 40). See requirements/scene-designer/STORY.sprites-on-the-2d-screen-of-a-3d-project.md.
+ */
+export function cubeWithSpritesProject(): ProjectSnapshot {
+  const base = cubeProject();
+  const nodes = [
+    spriteNode("Quad", "quadrants", "bottom", 128, 96),
+    spriteNode("Diamond", "diamond", "bottom", 140, 108),
+    spriteNode("Wide", "wide", "bottom", 60, 160),
+    spriteNode("Stripe", "stripe", "bottom", 220, 40)
+  ];
+  return { ...base, scene: { ...base.scene, children: [...base.scene.children, ...nodes] }, sprites: (["quadrants", "diamond", "stripe", "wide"] as const).map(spriteImage) };
 }

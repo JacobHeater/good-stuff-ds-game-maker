@@ -250,7 +250,7 @@ try {
   await waitText("Exported ROM to", 120000);
   const log = await body();
   assert.match(log, /Label/);
-  assert.match(log, /top \(2D\) screen, and the ROM doesn't draw 2D nodes yet/);
+  assert.match(log, /top \(2D\) screen, and the ROM only draws Sprite2D there so far/);
   assert.equal(readFileSync(ROM_PATH).subarray(0, 8).toString(), "HOMEBREW");
   assert.ok(existsSync(ROM_PATH));
   console.log(`SAVED ${PROJECT_PATH}`);

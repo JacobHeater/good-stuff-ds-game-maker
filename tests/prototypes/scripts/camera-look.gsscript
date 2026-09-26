@@ -1,0 +1,42 @@
+# Look around the scene with the D-pad: the camera turns left and right on the spot. It never tilts up or down.
+#
+# Set-up in the editor: attach this script to the Camera3D. That's all.
+#
+#   D-pad  Left / Right  turn left / right
+#   B      hold to turn faster
+#   Select put the view back to where it started
+#
+# Up and Down do nothing here. The camera turns around the world's up axis only, so the horizon stays level and the picture never leans.
+# Angles are in degrees; the numbers below are the ones to change to change how it feels.
+
+var turn_speed = 70.0       # degrees per second when you hold a direction
+var fast_multiplier = 2.5   # how much faster holding B is
+
+var yaw = 0.0               # where the camera is turned, in degrees (0 looks along -Z, the way a new camera does)
+var start_yaw = 0.0         # the view the scene starts with, for Select
+
+func _ready():
+    yaw = rotation.y
+    start_yaw = yaw
+
+func _process(delta):
+    if Input.is_button_pressed("select"):
+        yaw = start_yaw
+
+    var speed = turn_speed
+    if Input.is_button_down("b"):
+        speed = turn_speed * fast_multiplier
+
+    # Turning right is a turn the other way round about the up axis, hence the minus.
+    if Input.is_button_down("left"):
+        yaw += speed * delta
+    if Input.is_button_down("right"):
+        yaw -= speed * delta
+
+    # A full turn is the same as none, so the number never grows.
+    if yaw > 360.0:
+        yaw -= 360.0
+    if yaw < -360.0:
+        yaw += 360.0
+
+    rotation.y = yaw

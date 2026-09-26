@@ -29,7 +29,7 @@ CFLAGS	+=	$(INCLUDE) -DARM9
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=ds_arm9.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS	:= -lnds9
+LIBS	:= -lfat -lnds9
 LIBDIRS	:=	$(LIBNDS)
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
