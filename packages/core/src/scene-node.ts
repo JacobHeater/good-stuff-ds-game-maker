@@ -110,6 +110,8 @@ export interface MeshInstance3DData {
   textureId?: string;
   /** "#rrggbb": the mesh's diffuse color (see `mesh-color.ts`); absent for the default (grey, or white with a texture). */
   color?: string;
+  /** True: this mesh ignores the scene's lights and always shows its own color at full brightness, as if unaffected by DirectionalLight3D. Absent (the default) is lit normally. */
+  unlit?: boolean;
   /**
    * Triangles this instance contributes to the DS's per-frame 3D budget, as of when the node was
    * created or its mesh last changed. A record of the count only: the budget and the compiler always

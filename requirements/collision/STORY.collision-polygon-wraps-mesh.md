@@ -1,0 +1,29 @@
+---
+status: done
+component: collision
+related: [STORY.collision-shapes-and-overlap-checks.md, STORY.solid-shapes-and-move-and-collide.md, STORY.ray-casts.md]
+---
+
+# Story: A collision shape that wraps a mesh (convex hull)
+
+## Context
+The four collision primitives (box, sphere, capsule, cylinder) are a rough stand-in for a character or prop's real shape. For anything that isn't
+close to one of those (an L-shaped prop, an irregular rock), the choice was either a loose box that lets things poke through gaps, or hand-placing
+several primitives. Fourth step of making the engine good enough for a full 3D game: a `CollisionShape3D` whose shape is `convexHull` wraps its
+parent `MeshInstance3D`'s own geometry instead of a hand-set size.
+
+## Decisions (owner delegated; say if any is wrong)
+- **A new `CollisionShapeKind`, `"convexHull"`.** Its parent must be a `MeshInstance3D` with geometry; a compile error (`collision-hull-needs-mesh`) names the shape when it isn't (no parent, the wrong kind, or a mesh with no geometry). `size`, `radius` and `height` are unused for it.
+- **Approximate, not exact: a "26-DOP".** The hull is the mesh's own vertices that are farthest out along 26 fixed directions (the 6 axes, 8 cube-corner diagonals and 12 edge diagonals) — every point returned is a real vertex of the mesh, never invented, so the result is always genuinely convex and always inside the mesh's true hull. This is a well-known, cheap approximation, not a full quickhull: a very thin spike that doesn't point along one of the 26 directions can be clipped a little short. Exact (arbitrary-direction) hulls and concave (dents, holes) shapes are explicitly out of scope — see "Still out" below.
+- **Computed at compile time, every build**, from the mesh's real triangle vertices (already available for imported OBJ and glTF models, and every built-in primitive) — not baked once by hand and left to go stale. It's derived in the collision shape node's own local space (the mesh's world transform, then the shape node's own undone), so it still follows the mesh correctly if the shape node has its own offset or turn relative to it. Like a box's half extents, the stored points are **pre-scale** (the runtime applies the shape node's own Scale, exactly as it does for every other shape kind), so they don't change if you just resize the mesh's node.
+- **Works everywhere the other four shapes do**: `overlaps()`, `move_and_collide()` (as a solid), `ray_cast()`, `probe_solid()`. The runtime treats a hull exactly like the others through the same GJK support-function search (`gs_shapes_overlap` in `gs_collision.c`); the only new code is the hull's own "support point" (the farthest of its own points along a direction, an O(point count) lookup instead of the O(1) formula a box or sphere has) and its bounding radius (precomputed once at compile time and reused exactly like a sphere's radius, so the broad-phase reject stays cheap).
+- **Editor-side**: "Convex Hull (wraps the mesh)" in the Inspector's shape picker. **Not built**: a wireframe preview of the actual hull in the viewport (it shows nothing for this shape kind yet, unlike the other four); rename to something shorter than "Convex Hull" isn't ruled out later.
+- **Still out**: an exact hull (arbitrary precision, not the 26-DOP approximation), a concave/exact-mesh collider (dents and holes kept faithfully — a materially different, much more expensive algorithm with no existing runtime support), and `CollisionShape2D` (a sprite-wrapping polygon for the 2D screen): `CollisionShape2D` still does nothing at all, as before this story; a sprite's real per-pixel alpha is available at import time (`imported-sprite.ts`) for whenever that's picked up, but building 2D collision from scratch is its own separate piece of work.
+
+## Notes (built and verified)
+- Core: `approximateConvexHull` (`core/src/convex-hull.ts`); `CollisionShapeKind` gains `"convexHull"` (`core/src/collision-shape.ts`).
+- Compiler: `translate-scene-3d.ts` builds the hull from the parent mesh's resolved geometry, transformed into the shape node's local space (`transformPoint`/`invertAffine` in `matrix.ts`); `DsCollider.hull` (`ds-scene.ts`); emission in `scene-data-writer.ts` (a shared flat `hull_points` array, each collider's own `hullStart`/`hullCount`); diagnostic `collision-hull-needs-mesh` (`diagnostics.ts`).
+- Runtime: `GS_SHAPE_HULL`, `GsShapeInst.hull`/`hullCount`, `GsCollider.hullStart`/`hullCount`, `GsScene.hullPoints`/`hullPointCount` (`gs_collision.h`, `scene.h`); `local_support`'s hull case, `bound_radius`/`spread_of` reusing the sphere case (the precomputed bounding radius), `shape_raw` filling in the hull pointer (`gs_collision.c`).
+- UI: shape picker and its own description in `CollisionShapeField.tsx`.
+- Unit tests: `core/src/convex-hull.test.ts` (8 cases: box corners, flat/degenerate shapes, never invents a point, never exceeds the direction count, an interior point is never picked). `compiler/src/collision-hull.test.ts` (6 cases: a cube's hull is its corners, unaffected by the mesh's own scale/position, follows the shape node's own offset, and the three ways to get `collision-hull-needs-mesh`). `compiler/src/matrix.test.ts` gained `transformPoint` coverage.
+- On the DS (emulator): `compiler/src/testing/collision-hull.rom.test.ts`, 6 cases proven against hand-checked box geometry (the "cube" mesh's hull is, up to floating point, exactly its 8 corners — so its answers can be checked against ordinary box math): a sphere overlapping and clearing the hull, a ray meeting its near face (and missing when aimed past it) and a solid hull stopping a falling body. The existing 102-case collision oracle (`collision.rom.test.ts`, box/sphere/capsule/cylinder) still passes unchanged, confirming the new shape didn't disturb the other four.

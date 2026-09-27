@@ -421,6 +421,43 @@ describe("nodes", () => {
   });
 });
 
+describe("global $Name", () => {
+  const checkWith = (source: string, allowUnresolvedGlobalNodes: boolean): ScriptCheckResult =>
+    checkScript(source, { root: scene(), attached: attachedTo("MeshInstance3D"), allowUnresolvedGlobalNodes });
+
+  it("resolves exactly like $Name when the node is there", () => {
+    const r = checkWith("func f():\n    global $Cam.position.x = 1.0\n", false);
+    expect(errors(r)).toEqual([]);
+  });
+
+  it("is still an error when missing and unresolved globals aren't allowed (a real compile)", () => {
+    const r = checkWith("func f():\n    global $Nobody.visible = true\n", false);
+    expect(where(r)).toEqual([[2, 5, 'There is no node named "Nobody" anywhere in this scene, and "global $Nobody" needs one once the game actually runs; add one, or check the name.']]);
+  });
+
+  it("isn't an error when missing and unresolved globals are allowed (editing a scene made to be instanced elsewhere)", () => {
+    const r = checkWith("func f():\n    global $Nobody.visible = true\n", true);
+    expect(errors(r)).toEqual([]);
+  });
+
+  it("allows any member on an unresolved global, since its kind isn't known yet", () => {
+    const r = checkWith("func f():\n    var a = global $Nobody.position.x\n    global $Nobody.rotation.y = 90.0\n    global $Nobody.play()\n", true);
+    expect(errors(r)).toEqual([]);
+  });
+
+  it("still reports an ambiguous name, even when unresolved globals are allowed", () => {
+    const twice = scene();
+    twice.children.push(createSceneNode({ name: "Player", kind: "MeshInstance3D" }));
+    const r = checkScript("func f():\n    global $Player.visible = true\n", { root: twice, attached: attachedTo("MeshInstance3D"), allowUnresolvedGlobalNodes: true });
+    expect(where(r)[0][2]).toMatch(/2 nodes are named "Player"/);
+  });
+
+  it("a plain $Name is unaffected: still an error when missing, even with unresolved globals allowed", () => {
+    const r = checkWith("func f():\n    $Nobody.visible = true\n", true);
+    expect(where(r)).toEqual([[2, 5, 'There is no node named "Nobody" in the scene.']]);
+  });
+});
+
 describe("Input", () => {
   it("accepts every button and the touch functions", () => {
     const buttons = ["a", "b", "x", "y", "l", "r", "start", "select", "up", "down", "left", "right"];

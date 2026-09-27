@@ -56,6 +56,7 @@ const VERTEX_SHADER = /* glsl */ `
   uniform int uLightCount;
   uniform float uAmbient;
   uniform vec3 uDiffuse;
+  uniform bool uUnlit;
   varying vec3 vColor;
   varying vec2 vUv;
 
@@ -65,8 +66,8 @@ const VERTEX_SHADER = /* glsl */ `
     vec3 n = normalize(mat3(normalize(m[0]), normalize(m[1]), normalize(m[2])) * normal);
 
     vec3 color;
-    if (uLightCount == 0) {
-      color = uDiffuse; // no lights: nothing is lit, the mesh shows its own color
+    if (uUnlit || uLightCount == 0) {
+      color = uDiffuse; // unlit (this mesh, or no lights in the scene at all): nothing is lit, the mesh shows its own color
     } else {
       color = vec3(0.0);
       for (int i = 0; i < ${DS_MAX_LIGHTS}; i++) {
@@ -107,6 +108,8 @@ export interface DsMaterialOptions {
   map?: Texture | null;
   /** Which faces are drawn. The DS runtime draws every face (culling off), so a mesh that can be seen from behind is double-sided. */
   side: Side;
+  /** This mesh ignores the scene's lights and always shows `diffuse` at full brightness, regardless of how many lights are in the scene. */
+  unlit?: boolean;
 }
 
 /** A material that shades with the DS's lighting. Dispose it when done. */
@@ -116,6 +119,7 @@ export function createDsMaterial(options: DsMaterialOptions): ShaderMaterial {
       ...sharedUniforms,
       uAmbient: { value: DS_AMBIENT },
       uDiffuse: { value: new Vector3(...options.diffuse) },
+      uUnlit: { value: options.unlit ?? false },
       uTint: { value: new Vector3(...(options.tint ?? [1, 1, 1])) },
       map: { value: options.map ?? blank },
       uUseMap: { value: options.map ? 1 : 0 }

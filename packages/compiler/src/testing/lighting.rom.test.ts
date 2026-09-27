@@ -102,4 +102,10 @@ describe.skipIf(!toolchain.found)("the DS lighting in a real ROM matches the for
   it("a scene with no light is unlit, not black: the plane shows its own grey at full brightness", async () => {
     within(await measure("unlit", lightProbeProject(null)), expected(null));
   }, 90_000);
+
+  it("a mesh set unlit shows its own grey at full brightness even with a light on it, however the light is angled", async () => {
+    // A light edge-on (90 degrees) leaves the plane nearly black when it's lit normally (see the earlier case) -- proof enough that if this
+    // mesh reads full brightness here too, the light is genuinely being ignored, not just a light that happens not to dim it much.
+    within(await measure("unlit-with-light", lightProbeProject(90, { unlit: true })), expected(null));
+  }, 90_000);
 });

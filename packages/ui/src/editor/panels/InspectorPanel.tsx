@@ -205,7 +205,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -276,6 +276,12 @@ export function InspectorPanel(): JSX.Element {
                   Default
                 </button>
               </div>
+            )}
+            {node.mesh && (
+              <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="mesh-unlit">
+                <input type="checkbox" checked={node.mesh.unlit === true} onChange={(event) => setMeshUnlit(node.id, event.target.checked)} aria-label="Unlit" />
+                Unlit (ignores the scene's lights; always shown at full brightness)
+              </label>
             )}
             {node.mesh && (
               <Field label="Mesh">

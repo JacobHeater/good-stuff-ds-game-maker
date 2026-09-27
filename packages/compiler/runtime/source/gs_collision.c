@@ -86,7 +86,7 @@ static V local_support(const GsShapeInst *s, V dl) {
 		p.y += dl.y >= 0 ? s->p[1] : -(i64)s->p[1];
 		return p;
 	}
-	default: { /* cylinder */
+	case GS_SHAPE_CYLINDER: {
 		i64 len = (i64)isqrt64((u64)(dl.x * dl.x + dl.z * dl.z));
 		V p = mk(0, dl.y >= 0 ? s->p[1] : -(i64)s->p[1], 0);
 		if (len != 0) {
@@ -94,6 +94,21 @@ static V local_support(const GsShapeInst *s, V dl) {
 			p.z = div64(dl.z * s->p[0], (s32)len);
 		}
 		return p;
+	}
+	default: { /* GS_SHAPE_HULL: the point of the hull itself farthest along dl -- an O(point count) lookup, not a formula. */
+		if (s->hullCount <= 0) return mk(0, 0, 0);
+		const int32_t *hp = s->hull;
+		V best = mk(hp[0], hp[1], hp[2]);
+		i64 bestDot = vdot(dl, best);
+		for (int i = 1; i < s->hullCount; i++) {
+			V p = mk(hp[i * 3], hp[i * 3 + 1], hp[i * 3 + 2]);
+			i64 d = vdot(dl, p);
+			if (d > bestDot) {
+				bestDot = d;
+				best = p;
+			}
+		}
+		return best;
 	}
 	}
 }
@@ -124,6 +139,7 @@ static u64 bound_radius(const GsShapeInst *s) {
 		return isqrt64(x * x + y * y + z * z) + 1;
 	}
 	case GS_SHAPE_SPHERE:
+	case GS_SHAPE_HULL: /* p[0] is already its own bounding radius, computed once when the hull was built */
 		return (((u64)s->p[0] * smax) >> 12) + 1;
 	case GS_SHAPE_CAPSULE:
 		return ((((u64)s->p[1] * sy) >> 12) + (((u64)s->p[0] * smax) >> 12)) + 1;
@@ -526,6 +542,8 @@ static int shape_raw(int node, GsShapeInst *out) {
 	}
 	for (int row = 0; row < 3; row++)
 		for (int col = 0; col < 3; col++) out->rotation[row][col] = gs_world_matrix[node].m[col * 4 + row];
+	out->hull = c->shape == GS_SHAPE_HULL ? &gs_scene.hullPoints[c->hullStart * 3] : 0;
+	out->hullCount = c->hullCount;
 	return 1;
 }
 
@@ -622,6 +640,7 @@ static int32_t spread_of(int shape, const int32_t p[3], const int32_t scale[3]) 
 	case GS_SHAPE_BOX:
 		return mul12(p[0], sx) + mul12(p[1], sy) + mul12(p[2], sz);
 	case GS_SHAPE_SPHERE:
+	case GS_SHAPE_HULL:
 		return mul12(p[0], smax);
 	case GS_SHAPE_CAPSULE:
 		return mul12(p[1], sy) + mul12(p[0], smax);

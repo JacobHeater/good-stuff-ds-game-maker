@@ -12,7 +12,7 @@ import type { DsScene2D, DsScene3D, DsScreen2D } from "./ds-scene";
 const PER_LINE = 12;
 
 /** `GS_SHAPE_*` in the runtime's gs_collision.h. */
-const SHAPE_CODES = { box: 0, sphere: 1, capsule: 2, cylinder: 3 } as const;
+const SHAPE_CODES = { box: 0, sphere: 1, capsule: 2, cylinder: 3, convexHull: 4 } as const;
 
 /** `GS_ANIM_*` in the runtime's scene.h. */
 /** `GS_TOUCH_*` in the runtime's scene.h. */
@@ -118,10 +118,20 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
 
+  // A convex hull's points, one flat array shared by every hull collider: each one's hullStart/hullCount says which stretch of it is its own.
+  const hullPoints: number[] = [];
+  const hullRanges = scene.colliders.map((c) => {
+    const start = hullPoints.length / 3;
+    for (const [x, y, z] of c.hull ?? []) hullPoints.push(x, y, z);
+    return { start, count: c.hull?.length ?? 0 };
+  });
+  out.push(`static const int32_t hull_points[] = {\n${numbers(hullPoints)}\n};`);
+  out.push("");
   out.push("static const GsCollider colliders[] = {");
-  if (scene.colliders.length === 0) out.push("  { 0, 0, { 0, 0, 0 } }");
+  if (scene.colliders.length === 0) out.push("  { 0, 0, { 0, 0, 0 }, 0, 0 }");
   scene.colliders.forEach((c, i) => {
-    out.push(`  { ${SHAPE_CODES[c.shape]}, ${c.solid ? 1 : 0}, { ${c.params.join(", ")} } }${i < scene.colliders.length - 1 ? "," : ""}`);
+    const { start, count } = hullRanges[i];
+    out.push(`  { ${SHAPE_CODES[c.shape]}, ${c.solid ? 1 : 0}, { ${c.params.join(", ")} }, ${start}, ${count} }${i < scene.colliders.length - 1 ? "," : ""}`);
   });
   out.push("};");
   out.push("");
@@ -197,9 +207,9 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
   out.push("static const GsMesh meshes[] = {");
-  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0 }");
+  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0 }");
   scene.meshes.forEach((m, i) => {
-    out.push(`  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount} }${i < scene.meshes.length - 1 ? "," : ""}`);
+    out.push(`  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0} }${i < scene.meshes.length - 1 ? "," : ""}`);
   });
   out.push("};");
   out.push("");
@@ -220,10 +230,10 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${matrix(scene.camera.view)}, /* view */`);
   out.push(`  ${scene.camera.node}, ${scene.nodes.length}, /* camera node, node count */`);
   out.push(`  ${scene.primitives.length}, ${scene.meshes.length}, ${scene.lights.length}, ${scene.textures.length}, /* primitive, mesh, light, texture counts */`);
-  out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.colliders.length}, /* sound, audio player, collider counts */`);
+  out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.colliders.length}, ${hullPoints.length / 3}, /* sound, audio player, collider, hull point counts */`);
   out.push(`  ${scene.animationPlayers.length}, ${scene.animations.length}, ${scene.animationTracks.length}, ${scene.animationKeys.length}, /* animation player, animation, track, key counts */`);
   out.push(`  ${scene.touchAreas.length}, /* touch area count */`);
-  out.push(`  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations`);
+  out.push(`  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations`);
   out.push("};");
   out.push("");
   return out.join("\n");

@@ -26,6 +26,7 @@ import {
   playbackFrequency,
   resolveMeshGeometry,
   resolveMeshFrameGeometry,
+  approximateConvexHull,
   getMeshFrameCount,
   getMeshDiffuseLevels,
   getSpriteAnimations,
@@ -37,6 +38,7 @@ import {
   type ProjectSnapshot,
   type SceneNode,
   type ScriptCheckResult,
+  type Vector3,
   sceneNamesOf,
   collectProjectGlobals,
   type ProjectGlobal
@@ -47,7 +49,7 @@ import { hasErrors } from "./diagnostics";
 import { collectSprites } from "./translate-scene-2d";
 import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
 import { FixedPointRangeError, packNormal, rgb15, toF32, toT16, toV10, toV16 } from "./fixed-point";
-import { axisDirection, composeTransform, IDENTITY, invertAffine, multiply, splitScale, withoutScale, type Mat4 } from "./matrix";
+import { axisDirection, composeTransform, IDENTITY, invertAffine, multiply, splitScale, transformPoint, withoutScale, type Mat4 } from "./matrix";
 import { generateScriptCode, type CompiledScript } from "./script-codegen";
 
 /** The DS's geometry engine has four hardware lights (defined once in core, with the rest of the DS lighting model). */
@@ -557,7 +559,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         texture: texture ? indexOfTexture(texture) : 0,
         diffuse: ((levels) => rgb15(levels[0], levels[1], levels[2]))(getMeshDiffuseLevels(node.mesh!, texture !== undefined)),
         world: matrixF32(rigid),
-        scale: scale.map(toF32) as [number, number, number]
+        scale: scale.map(toF32) as [number, number, number],
+        unlit: node.mesh!.unlit === true
       };
     });
     if (built) dsMeshes.push(built);
@@ -611,8 +614,45 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   // Collision shapes, in tree order. A shape's size is in the DS's number format: half extents for a box, and for a capsule half the straight part.
   const colliders: DsCollider[] = [];
   const colliderIndexByNode = new Map<string, number>();
-  for (const { node } of shapeNodes) {
+  for (const { node, world, index } of shapeNodes) {
     const data = getCollisionShape(node);
+    // A hull wraps its parent's mesh (requirements/collision/STORY.collision-polygon-wraps-mesh.md): the mesh's own vertices, moved into the
+    // shape's local space (the parent's world transform, then this shape node's own undone), so the hull follows the mesh wherever this node
+    // is placed or turned relative to it.
+    if (data.shape === "convexHull") {
+      const parentIndex = kept[index].parent;
+      const parentEntry = parentIndex >= 0 ? kept[parentIndex] : undefined;
+      const geometry = parentEntry?.node.kind === "MeshInstance3D" && parentEntry.node.mesh ? resolveMeshGeometry(parentEntry.node.mesh, project.meshes) : undefined;
+      if (!parentEntry || parentEntry.node.kind !== "MeshInstance3D" || !geometry) {
+        diagnostics.push({
+          severity: "error",
+          code: "collision-hull-needs-mesh",
+          nodeName: node.name,
+          message: `This shape is set to wrap a mesh (Convex Hull), which needs a MeshInstance3D with geometry as its parent, and ${
+            !parentEntry || parentEntry.node.kind !== "MeshInstance3D" ? "its parent isn't one" : "its parent mesh has no geometry"
+          }.`
+        });
+        continue;
+      }
+      const toLocal = invertAffine(world);
+      const localPoints: Vector3[] = [];
+      for (let i = 0; i + 2 < geometry.positions.length; i += 3) {
+        const meshLocal: Vector3 = { x: geometry.positions[i], y: geometry.positions[i + 1], z: geometry.positions[i + 2] };
+        localPoints.push(transformPoint(toLocal, transformPoint(parentEntry.world, meshLocal)));
+      }
+      const hullPoints = approximateConvexHull(localPoints);
+      const built = guard(node, (): DsCollider => ({
+        shape: "convexHull",
+        solid: data.solid,
+        params: [toF32(Math.max(0, ...hullPoints.map((p) => Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z)))), 0, 0],
+        hull: hullPoints.map((p): [number, number, number] => [toF32(p.x), toF32(p.y), toF32(p.z)])
+      }));
+      if (built) {
+        colliderIndexByNode.set(node.id, colliders.length);
+        colliders.push(built);
+      }
+      continue;
+    }
     const built = guard(node, (): DsCollider => {
       switch (data.shape) {
         case "box":
@@ -623,6 +663,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
           return { shape: "capsule", solid: data.solid, params: [toF32(data.radius), toF32(Math.max(0, data.height / 2 - data.radius)), 0] };
         case "cylinder":
           return { shape: "cylinder", solid: data.solid, params: [toF32(data.radius), toF32(data.height / 2), 0] };
+        case "convexHull":
+          throw new Error("unreachable: convexHull is handled, and continue's, above");
       }
     });
     if (built) {

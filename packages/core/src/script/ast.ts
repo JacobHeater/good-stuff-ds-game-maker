@@ -95,6 +95,9 @@ export interface NameExpr extends ExprBase {
 export interface NodeRefExpr extends ExprBase {
   kind: "nodeRef";
   name: string;
+  /** `global $Name`: while editing a scene made to be instanced elsewhere (a name tag, a coin), it doesn't need to be found there, since its future siblings aren't known yet.
+   * It's still required for real: compiling the project checks it against wherever this scene actually ends up, and reports an error if it isn't there either. */
+  isGlobal?: boolean;
 }
 export interface UnaryExpr extends ExprBase {
   kind: "unary";

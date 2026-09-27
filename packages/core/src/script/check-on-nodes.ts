@@ -34,10 +34,12 @@ export function checkScriptOnNodes(
   root: SceneNode,
   nodes: readonly SceneNode[],
   sceneNames?: readonly string[],
-  globals?: ScriptSceneContext["globals"]
+  globals?: ScriptSceneContext["globals"],
+  options?: { allowUnresolvedGlobalNodes?: boolean }
 ): { perNode: ScriptNodeCheck[]; diagnostics: ScriptDiagnostic[] } {
-  if (nodes.length === 0) return { perNode: [], diagnostics: checkScript(source, { root, attached: [], sceneNames, globals }).diagnostics };
-  const perNode = nodes.map((node) => ({ node, result: checkScript(source, { root, attached: [attachedInfo(node)], scope: node, sceneNames, globals }) }));
+  const allowUnresolvedGlobalNodes = options?.allowUnresolvedGlobalNodes;
+  if (nodes.length === 0) return { perNode: [], diagnostics: checkScript(source, { root, attached: [], sceneNames, globals, allowUnresolvedGlobalNodes }).diagnostics };
+  const perNode = nodes.map((node) => ({ node, result: checkScript(source, { root, attached: [attachedInfo(node)], scope: node, sceneNames, globals, allowUnresolvedGlobalNodes }) }));
   const seen = new Set<string>();
   const diagnostics: ScriptDiagnostic[] = [];
   for (const { result } of perNode) {

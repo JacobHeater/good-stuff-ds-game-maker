@@ -1,0 +1,21 @@
+# Billboard that stays where it's placed and just turns to face the camera -- for a flat plane with a texture on it
+# (a tree, a bush, a cloud) instead of true 3D geometry. Unlike billboard-3d.gsscript, this one doesn't hover over
+# another node, so it needs no per-scene setup at all: it works from the moment it's placed, in any scene, even one
+# built and tested entirely on its own with nothing else in it.
+#
+# Facing the camera reads camera_world_yaw, a global var written every frame by the player's own script (see
+# tests/prototypes/scripts/flight-8way.gsscript / flight-8way-free.gsscript). A global var always exists (0.0
+# until the player's script has run), so this compiles and runs fine even in a scene with no player in it -- unlike
+# a node reference such as "global $Player", which needs that actual node to be there. That's what makes it safe to
+# reuse in a scene made to be instanced many times over (many trees), and one the project also has to be able to
+# build on its own (every scene does, in case the game ever switches to it directly).
+#
+# Set-up in the editor: attach this script to the Node3D (or MeshInstance3D, shaped like a flat quad) with the
+# texture on it. Nothing else needs to be named or set up.
+
+func _process(delta):
+    # A camera looks along its own -Z, so facing it means turning half way round from its heading. Only yaw is
+    # matched, so the billboard stays upright as the camera moves above or below it.
+    rotation.y = camera_world_yaw + 180.0
+    rotation.x = 0.0
+    rotation.z = 0.0

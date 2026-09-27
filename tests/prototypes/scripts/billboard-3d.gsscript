@@ -1,0 +1,38 @@
+# Billboard for a Node3D: it hangs over another 3D node and always faces the camera, however the target turns
+# and however the camera orbits. Handy for a name tag, health bar or "!" marker above a 3D character.
+#
+# Facing the camera reads camera_world_yaw, a global var written every frame by the player's own script (see
+# tests/prototypes/scripts/flight-8way.gsscript / flight-8way-free.gsscript). A global var always exists (0.0
+# until the player's script has run), even in a scene that has no player in it at all -- unlike a node reference,
+# which needs the actual node to be there. That's what makes this safe to use from any scene, including one that's
+# only ever instanced inside another (a reusable Billboard scene put into a Main level), and one the project also
+# has to be able to build on its own (every scene does, in case the game ever switches to it directly).
+#
+# Following the target's position is different: each billboard hovers over ONE particular character, so that part
+# genuinely does need a per-placement node reference. "global $Target" is for exactly that: while editing this
+# scene alone, it doesn't need to be found yet (it's expected once this scene is actually instanced somewhere with
+# a Target in it); building the whole project checks it for real, against wherever this scene actually ends up.
+# A scene that uses this billboard purely to face the camera in place, with nothing to hover over (a billboarded
+# tree, say), doesn't need $Target at all -- see billboard-face-camera-3d.gsscript for that simpler case.
+#
+# Set-up in the editor: attach this script to the Node3D (or MeshInstance3D, shaped like a flat quad) that is the
+# billboard, in its own Billboard scene. Wherever Billboard is actually instanced, there must be exactly one node
+# named Target (what it hovers over) -- rename it below to match yours.
+#
+# The billboard follows the target's position plus the offset below, turns to always face the camera, and hides
+# when the target does. Positions are in world units; the numbers below are the ones to change.
+
+var offset_x = 0.0     # units to the right of the target (negative = left)
+var offset_y = 1.5     # units above the target (negative = below it)
+var offset_z = 0.0     # units in front of the target (negative = behind it)
+
+func _process(delta):
+    position.x = global $Target.position.x + offset_x
+    position.y = global $Target.position.y + offset_y
+    position.z = global $Target.position.z + offset_z
+    # A camera looks along its own -Z, so facing it means turning half way round from its heading. Only yaw is
+    # matched, so the billboard stays upright.
+    rotation.y = camera_world_yaw + 180.0
+    rotation.x = 0.0
+    rotation.z = 0.0
+    visible = global $Target.visible

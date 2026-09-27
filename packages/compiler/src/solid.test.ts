@@ -25,7 +25,7 @@ describe("solid shapes in the scene description", () => {
   it("writes the solid flag into the collider and the generated C", () => {
     const r = game("    move_and_collide(0.0, -0.1, 0.0)\n", [shape("Floor", { solid: true, shape: "box", size: { x: 4, y: 1, z: 4 } }), shape("Air")]);
     expect(r.scene!.colliders.map((c) => c.solid)).toEqual([false, true, false]);
-    expect(writeSceneDataC(r.scene!)).toContain("{ 0, 1, { 8192, 2048, 8192 } }");
+    expect(writeSceneDataC(r.scene!)).toContain("{ 0, 1, { 8192, 2048, 8192 }, 0, 0 }");
   });
 
   it("compiles move_and_collide to a runtime call with the node index and three floats, and is_on_floor to a state query", () => {

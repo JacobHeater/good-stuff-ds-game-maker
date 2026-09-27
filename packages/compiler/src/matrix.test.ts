@@ -11,6 +11,7 @@ import {
   lookAtEulerXYZ,
   multiply,
   rotationFromEulerXYZ,
+  transformPoint,
   withoutScale,
   type Mat4
 } from "./matrix";
@@ -157,6 +158,26 @@ describe("aiming a camera", () => {
     expect(x).toBeCloseTo(0, 9);
     expect(y).toBeCloseTo(0, 9);
     expect(z).toBeCloseTo(-Math.hypot(3, 2.5, 4), 9);
+  });
+});
+
+describe("transformPoint", () => {
+  it("moves, turns and scales a point the same way a matrix built by composeTransform does", () => {
+    const m = composeTransform({ x: 5, y: -2, z: 1 }, { x: 0, y: 90, z: 0 }, { x: 2, y: 1, z: 1 });
+    const p = transformPoint(m, { x: 1, y: 0, z: 0 });
+    // A +90 degree turn about Y sends +X to -Z (rotationFromEulerXYZ's own convention), then it's moved by the translation. Scale (x2) applies before the turn.
+    expect(p.x).toBeCloseTo(5, 9);
+    expect(p.y).toBeCloseTo(-2, 9);
+    expect(p.z).toBeCloseTo(-1, 9);
+  });
+
+  it("is undone by transforming with the inverse", () => {
+    const m = composeTransform({ x: 3, y: 4, z: -5 }, { x: 20, y: 40, z: 60 }, { x: 2, y: 0.5, z: 3 });
+    const original = { x: 1.5, y: -2.5, z: 0.25 };
+    const back = transformPoint(invertAffine(m), transformPoint(m, original));
+    expect(back.x).toBeCloseTo(original.x, 9);
+    expect(back.y).toBeCloseTo(original.y, 9);
+    expect(back.z).toBeCloseTo(original.z, 9);
   });
 });
 

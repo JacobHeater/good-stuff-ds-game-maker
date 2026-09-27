@@ -6,7 +6,9 @@ import type { Vector3 } from "./scene-node";
  * a box's `size` is its full width, height and depth, and a capsule's or cylinder's `height` is its full height along the node's own Y axis
  * (for a capsule, including its round ends).
  */
-export type CollisionShapeKind = "box" | "sphere" | "capsule" | "cylinder";
+/** "convexHull" wraps a sibling MeshInstance3D's own geometry (requirements/collision/STORY.collision-polygon-wraps-mesh.md): its `size`, `radius` and
+ * `height` are unused, since its shape comes from the mesh instead. It needs a MeshInstance3D as its parent. */
+export type CollisionShapeKind = "box" | "sphere" | "capsule" | "cylinder" | "convexHull";
 
 export interface CollisionShapeData {
   shape: CollisionShapeKind;
@@ -20,7 +22,7 @@ export interface CollisionShapeData {
   solid: boolean;
 }
 
-export const COLLISION_SHAPE_KINDS: readonly CollisionShapeKind[] = ["box", "sphere", "capsule", "cylinder"];
+export const COLLISION_SHAPE_KINDS: readonly CollisionShapeKind[] = ["box", "sphere", "capsule", "cylinder", "convexHull"];
 export const COLLISION_SIZE_MIN = 0.01;
 export const COLLISION_SIZE_MAX = 1000;
 

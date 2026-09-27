@@ -34,6 +34,12 @@ var vz = 0.0
 var cam_angle = 0.0           # which way the camera looks, in degrees (0 looks toward +Z)
 var anim_state = -1           # which animation is playing: 0 the "Ground" one, 1 the "Fly" one (-1: none yet)
 
+# The camera's true heading in the world, shared with any other script in any scene that needs to face the camera
+# (a billboard name tag, a billboarded tree) without needing to know this player's own node names or structure.
+# A plain global var always exists (0.0 until this script has run), so it works even in a scene that never has
+# this player in it at all -- unlike a node reference, which needs the actual node to be there.
+global var camera_world_yaw = 0.0
+
 func _ready():
     cam_angle = rotation.y
     update_camera()
@@ -72,7 +78,10 @@ func update_camera():
     $Camera3D.position.y = camera_height
     $Camera3D.position.z = back_x * sin(yaw) + back_z * cos(yaw)
     # A camera looks along its own -Z, so it needs to be turned half way round to look toward +Z.
-    $Camera3D.rotation.y = wrap_angle(a + 180.0 - yaw)
+    var cam_local_yaw = wrap_angle(a + 180.0 - yaw)
+    $Camera3D.rotation.y = cam_local_yaw
+    # $Camera3D's rotation is relative to this node (its parent), so its true world heading is the two added together.
+    camera_world_yaw = wrap_angle(cam_local_yaw + yaw)
 
 func _process(delta):
     var up = Input.is_button_down("x")

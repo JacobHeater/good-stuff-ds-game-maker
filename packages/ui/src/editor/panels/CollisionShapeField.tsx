@@ -2,7 +2,7 @@ import { COLLISION_SHAPE_KINDS, getCollisionShape, type CollisionShapeKind, type
 import type { CollisionShapeChange } from "../state/editor-store";
 import { Field, inputClasses, NumberInput } from "./inspector-fields";
 
-const SHAPE_LABELS: Record<CollisionShapeKind, string> = { box: "Box", sphere: "Sphere", capsule: "Capsule", cylinder: "Cylinder" };
+const SHAPE_LABELS: Record<CollisionShapeKind, string> = { box: "Box", sphere: "Sphere", capsule: "Capsule", cylinder: "Cylinder", convexHull: "Convex Hull (wraps the mesh)" };
 
 /**
  * The shape of a CollisionShape3D in the Inspector (requirements/collision/TASK.collision-shape-inspector-and-viewport.md): which shape, and
@@ -28,7 +28,7 @@ export function CollisionShapeField({ node, onChange }: { node: SceneNode; onCha
           <NumberInput label="Size Z" value={shape.size.z} onChange={(z) => onChange({ size: { z } })} />
         </div>
       )}
-      {shape.shape !== "box" && (
+      {shape.shape !== "box" && shape.shape !== "convexHull" && (
         <div className="grid grid-cols-2 gap-2">
           <NumberInput label="Radius" value={shape.radius} onChange={(radius) => onChange({ radius })} />
           {shape.shape !== "sphere" && <NumberInput label="Height" value={shape.height} onChange={(height) => onChange({ height })} />}
@@ -38,10 +38,17 @@ export function CollisionShapeField({ node, onChange }: { node: SceneNode; onCha
         <input type="checkbox" checked={shape.solid} onChange={(event) => onChange({ solid: event.target.checked })} aria-label="Solid" />
         Solid (a body moved with move_and_collide() is stopped by it: ground, walls, ceilings)
       </label>
-      <div className="text-[10px] text-editor-text-muted">
-        This shape does nothing until a script passes it to overlaps(), like <span className="font-mono">$Player.overlaps($Coin)</span>. Its node's Scale
-        (and its parents') scales it.
-      </div>
+      {shape.shape === "convexHull" ? (
+        <div className="text-[10px] text-editor-text-muted">
+          Wraps this node's parent mesh (it must be a MeshInstance3D) with a shape that hugs it from 26 directions — tight for most meshes, but a very
+          thin spike can be clipped a little short. Recomputed every build, so it always matches the mesh as it is now.
+        </div>
+      ) : (
+        <div className="text-[10px] text-editor-text-muted">
+          This shape does nothing until a script passes it to overlaps(), like <span className="font-mono">$Player.overlaps($Coin)</span>. Its node's Scale
+          (and its parents') scales it.
+        </div>
+      )}
     </div>
   );
 }

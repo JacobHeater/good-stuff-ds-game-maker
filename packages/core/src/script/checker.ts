@@ -25,6 +25,10 @@ export const MAX_SCRIPT_INT = 2147483647;
 
 export const BUTTON_NAMES: readonly ButtonName[] = ["a", "b", "x", "y", "l", "r", "start", "select", "up", "down", "left", "right"];
 
+/** A node id no real node ever has, standing in for an unresolved `global $Name` (see `ScriptSceneContext.allowUnresolvedGlobalNodes`): every lookup against the real
+ * scene tree naturally misses it, which is exactly what leaves its kind unknown and its member accesses permissive. */
+const PENDING_GLOBAL_NODE_ID_PREFIX = "\u0000pending-global:";
+
 /** Names that mean something built in, so a script's own variables and functions can't use them. */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set([
   "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "randi", "randf", "atan2", "bool", "void",
@@ -45,6 +49,12 @@ export interface ScriptSceneContext {
   sceneNames?: readonly string[];
   /** The project's global variables (see `collectProjectGlobals`): every script can use them by name. Left out when not known; the script's own `global var`s are used then. */
   globals?: ReadonlyArray<{ name: string; type: ScriptType }>;
+  /**
+   * Whether a `global $Name` that isn't found in `root` is left unresolved instead of reported as an error (its member accesses are all allowed too, since its
+   * real kind isn't known here). For editing a scene in isolation before it's placed somewhere else (an instance) that actually has the node; a real compile of
+   * the whole project checks it against the scene it's really in and should leave this off, so a `global $Name` that's never placed near what it names is still caught.
+   */
+  allowUnresolvedGlobalNodes?: boolean;
   /** The nodes the script is attached to; empty when it isn't attached yet, in which case `self` may use every member. */
   attached: ReadonlyArray<{
     name: string;
@@ -606,7 +616,7 @@ class Checker {
       case "string":
         return "string";
       case "nodeRef": {
-        const target = this.resolveNodeRef(expr.name, expr);
+        const target = this.resolveNodeRef(expr.name, expr, expr.isGlobal === true);
         if (!target) return "unknown";
         expr.res = { kind: "nodeRef", target };
         return "node";
@@ -719,7 +729,7 @@ class Checker {
   }
 
   /** Resolves `$Name` against the scene; reports a missing or ambiguous name. */
-  private resolveNodeRef(name: string, at: SourceSpan): NodeTarget | null {
+  private resolveNodeRef(name: string, at: SourceSpan, isGlobal: boolean): NodeTarget | null {
     const scope = this.context.scope;
     if (scope) {
       const under = flattenSceneTree(scope).filter((node) => node.id !== scope.id && node.name === name);
@@ -734,7 +744,17 @@ class Checker {
     }
     const nodes = this.nodesByName.get(name) ?? [];
     if (nodes.length === 0) {
-      this.error(at, `There is no node named "${name}" in the scene.`);
+      if (isGlobal && this.context.allowUnresolvedGlobalNodes) {
+        // Not found here, but that's fine: this scene doesn't have to have it (it's expected to turn up once this scene is placed somewhere that does). Its kind is
+        // unknown, so every member access on it is allowed for now; a real compile checks it against the scene it actually ends up in.
+        return { kind: "node", nodeId: PENDING_GLOBAL_NODE_ID_PREFIX + name, name };
+      }
+      this.error(
+        at,
+        isGlobal
+          ? `There is no node named "${name}" anywhere in this scene, and "global $${name}" needs one once the game actually runs; add one, or check the name.`
+          : `There is no node named "${name}" in the scene.`
+      );
       return null;
     }
     if (nodes.length > 1) {

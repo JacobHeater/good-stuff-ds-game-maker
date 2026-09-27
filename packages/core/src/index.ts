@@ -14,6 +14,7 @@ export * from "./imported-sprite";
 export * from "./animation";
 export * from "./audio-player";
 export * from "./collision-shape";
+export * from "./convex-hull";
 export * from "./touch-area";
 export * from "./sprite-animation";
 export * from "./sprite-transform";

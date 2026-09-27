@@ -525,6 +525,11 @@ class Parser {
         this.advance();
         return { kind: "nodeRef", ...spanOf(token), name: token.text };
       case "ident":
+        if (token.text === "global" && this.tokens[this.position + 1]?.kind === "nodeRef") {
+          this.advance();
+          const nameToken = this.advance();
+          return { kind: "nodeRef", ...spanOf(token), endColumn: nameToken.endColumn, name: nameToken.text, isGlobal: true };
+        }
         this.advance();
         return { kind: "name", ...spanOf(token), name: token.text };
       case "keyword":

@@ -22,4 +22,4 @@ needs a color per object.
 
 ## Notes (built and verified)
 - Unit tests: `core/src/mesh-color.test.ts`, `compiler/src/mesh-colors.test.ts`, `ui/.../mesh-color-edits.test.ts`. The example game's screenshot in melonDS shows the colors (green ground, blue player, red chaser, yellow coins, brown crate).
-- **Not verified:** the color picker in the real app (no E2E). **Not built:** per-vertex colors, emissive/unlit materials, colors for imported models' own materials (.mtl), a color palette UI.
+- **Not verified:** the color picker in the real app (no E2E). **Not built:** per-vertex colors, colors for imported models' own materials (.mtl), a color palette UI. (Unlit materials: see `STORY.unlit-meshes.md`.)

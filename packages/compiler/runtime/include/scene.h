@@ -48,11 +48,15 @@ typedef struct {
 } GsAudioPlayer;
 
 /* One collision shape (a CollisionShape3D), with the node it belongs to; the placement comes from that node. `shape` is a GS_SHAPE_* of gs_collision.h and
-   `p` is its size in f32: a box's half extents; a sphere's radius; a capsule's radius and half the straight part's length; a cylinder's radius and half height. */
+   `p` is its size in f32: a box's half extents; a sphere's radius; a capsule's radius and half the straight part's length; a cylinder's radius and half
+   height; a convex hull's own bounding radius in its local space (p[1] and p[2] unused), so it can be bounded exactly like a sphere before its points
+   are ever looked at. `hullStart`/`hullCount` (GS_SHAPE_HULL only) are the shape's own points, a run of GsScene.hullPoints (3 int32 per point). */
 typedef struct {
 	uint8_t shape;
 	uint8_t solid; /* 1: a body moved with gs_move_and_collide is stopped by it */
 	int32_t p[3];
+	uint16_t hullStart;
+	uint16_t hullCount;
 } GsCollider;
 
 /* Animation (requirements/animation/TASK.compile-and-run-animations.md). A key is a time (seconds) and a value; a vector's X/Y/Z, or a bool or a number in `value[0]`. */
@@ -204,6 +208,7 @@ typedef struct {
 	int16_t animation;
 	uint16_t animationFirst;
 	uint16_t animationCount;
+	uint8_t unlit; /* 1: ignores the scene's lights, always shown at `diffuse`'s full brightness */
 } GsMesh;
 
 /* The DS only has parallel lights. */
@@ -230,6 +235,7 @@ typedef struct {
 	uint16_t soundCount;
 	uint16_t audioPlayerCount;
 	uint16_t colliderCount;
+	uint16_t hullPointCount; /* total across every GS_SHAPE_HULL collider (each takes hullCount of them) */
 	uint16_t animationPlayerCount;
 	uint16_t animationCount;
 	uint16_t animTrackCount;
@@ -243,6 +249,7 @@ typedef struct {
 	const GsSound *sounds;
 	const GsAudioPlayer *audioPlayers;
 	const GsCollider *colliders;
+	const int32_t *hullPoints; /* flat, 3 per point (x, y, z), f32 (20.12), in each hull collider's own local space */
 	const GsAnimationPlayer *animationPlayers;
 	const GsAnimation *animations;
 	const GsAnimTrack *animTracks;

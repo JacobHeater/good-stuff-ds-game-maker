@@ -156,9 +156,10 @@ function MeshView({
         diffuse: selected && !map ? SELECTED_DIFFUSE : ownDiffuse,
         tint: map && selected ? TEXTURED_SELECTED_TINT : undefined,
         map,
-        side: doubleSided ? DoubleSide : FrontSide
+        side: doubleSided ? DoubleSide : FrontSide,
+        unlit: mesh.unlit === true
       }),
-    [map, selected, doubleSided, ownDiffuse]
+    [map, selected, doubleSided, ownDiffuse, mesh.unlit]
   );
   useEffect(() => () => material.dispose(), [material]);
   if (!geometry) return null;

@@ -352,6 +352,7 @@ export type Action =
   | { type: "IMPORT_RIGGED_MODEL"; model: RiggedModel; warnings: string[] }
   | { type: "SET_MESH_TEXTURE"; id: string; textureId: string | null }
   | { type: "SET_MESH_COLOR"; id: string; color: string | null; at: number }
+  | { type: "SET_MESH_UNLIT"; id: string; unlit: boolean }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
@@ -718,6 +719,13 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if ((target.mesh.color ?? null) === next) return state;
       const { color: _cleared, ...withoutColor } = target.mesh;
       const chosen: MeshInstance3DData = next === null ? withoutColor : { ...withoutColor, color: next };
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
+    }
+    case "SET_MESH_UNLIT": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target?.mesh || (target.mesh.unlit ?? false) === action.unlit) return state;
+      const { unlit: _cleared, ...withoutUnlit } = target.mesh;
+      const chosen: MeshInstance3DData = action.unlit ? { ...withoutUnlit, unlit: true } : withoutUnlit;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
     }
     case "SET_MESH_TEXTURE": {
@@ -1419,6 +1427,8 @@ interface EditorStoreValue {
   setMeshTexture: (id: string, textureId: string | null) => void;
   /** Sets a mesh's color ("#rrggbb", or null for the default). Dragging in a color picker is one undo step per pause. No-op for a node without a mesh. */
   setMeshColor: (id: string, color: string | null) => void;
+  /** Sets whether a mesh ignores the scene's lights and always shows its own color at full brightness. No-op for a node without a mesh. */
+  setMeshUnlit: (id: string, unlit: boolean) => void;
   /**
    * Asks for a .png file and, if the DS can use it, adds it to the project and puts it on the mesh `nodeId`. A refused
    * file changes nothing and is explained in the Output log; cancelling does nothing.
@@ -1566,6 +1576,8 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Change texture of ${nameOf(action.id)}` };
     case "SET_MESH_COLOR":
       return { label: `Change color of ${nameOf(action.id)}`, mergeKey: `mesh-color:${action.id}`, at: action.at };
+    case "SET_MESH_UNLIT":
+      return { label: `${action.unlit ? "Make" : "Stop making"} ${nameOf(action.id)} unlit` };
     case "ANIM_CREATE":
       return { label: `Add animation to ${nameOf(action.playerId)}` };
     case "ANIM_RENAME":
@@ -1961,6 +1973,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   }, [state.project, state.sceneRoot, state.activeSceneId]);
 
   const setMeshColor = useCallback((id: string, color: string | null) => dispatch({ type: "SET_MESH_COLOR", id, color, at: Date.now() }), []);
+  const setMeshUnlit = useCallback((id: string, unlit: boolean) => dispatch({ type: "SET_MESH_UNLIT", id, unlit }), []);
   const setMeshTexture = useCallback(
     (id: string, textureId: string | null) => dispatch({ type: "SET_MESH_TEXTURE", id, textureId }),
     []
@@ -2331,6 +2344,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setMeshSource,
       setMeshTexture,
       setMeshColor,
+      setMeshUnlit,
       selectScript,
       createScript,
       renameScript,

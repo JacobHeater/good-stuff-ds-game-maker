@@ -142,13 +142,17 @@ export interface DsAnimationPlayer {
 
 /**
  * A collision shape (a `CollisionShape3D`), placed by its node. `params` are `f32` (20.12): a box's half extents; a sphere's radius; a capsule's radius
- * and half the length of its straight part (its height less the two round ends, halved); a cylinder's radius and half its height.
+ * and half the length of its straight part (its height less the two round ends, halved); a cylinder's radius and half its height; a convex hull's
+ * bounding radius in its own local space (params[1] and params[2] unused) — the runtime bounds it exactly like a sphere of that radius before it
+ * ever looks at `hull`, since it's cheap and always big enough.
  */
 export interface DsCollider {
-  shape: "box" | "sphere" | "capsule" | "cylinder";
+  shape: "box" | "sphere" | "capsule" | "cylinder" | "convexHull";
   /** Bodies moved by `move_and_collide` are stopped by this shape. */
   solid: boolean;
   params: [number, number, number];
+  /** `shape: "convexHull"` only: the hull's own points (f32, 20.12), in the collider node's local space — what its parent mesh's real geometry approximates to. */
+  hull?: readonly [number, number, number][];
 }
 
 export interface DsMesh {
@@ -177,6 +181,8 @@ export interface DsMesh {
   animation: number;
   animationFirst: number;
   animationCount: number;
+  /** This mesh ignores the scene's lights and always shows `diffuse` at full brightness. */
+  unlit: boolean;
 }
 
 /** The DS has only parallel (directional) lights. */

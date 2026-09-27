@@ -1,0 +1,17 @@
+# Billboard for a Sprite2D: the sprite hangs over another sprite and always stays upright, however the other one turns.
+# Handy for a name tag, health bar or "!" marker above a character.
+#
+# Set-up in the editor: attach this script to the Sprite2D that is the billboard, and put a Sprite2D called "Target" in the scene
+# (rename the $Target below to use another name). Both sprites must be on the same screen.
+#
+# The billboard follows the target's position plus the offset below, keeps its rotation at 0, and hides when the target does.
+# Positions are in pixels on the screen; the numbers below are the ones to change.
+
+var offset_x = 0.0      # pixels to the right of the target (negative = left)
+var offset_y = -20.0    # pixels below the target (negative = above it)
+
+func _process(delta):
+    position.x = $Target.position.x + offset_x
+    position.y = $Target.position.y + offset_y
+    rotation = 0.0
+    visible = $Target.visible

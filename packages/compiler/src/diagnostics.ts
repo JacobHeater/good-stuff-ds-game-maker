@@ -45,6 +45,7 @@ export type DiagnosticCode =
   | "script-warning"
   | "missing-script"
   | "collision-shape-unused"
+  | "collision-hull-needs-mesh"
   | "touch-area-unused"
   | "touch-area-not-touchable"
   | "player-without-animations"

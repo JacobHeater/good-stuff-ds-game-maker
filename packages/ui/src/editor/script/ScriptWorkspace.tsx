@@ -44,7 +44,16 @@ function useScriptDiagnostics(script: ProjectScript | undefined): ScriptDiagnost
       () =>
         setChecked({
           id: script.id,
-          list: checkScriptOnNodes(script.source, state.sceneRoot, attached, state.project ? sceneNamesOf(withSceneTree(state.project, state.activeSceneId, state.sceneRoot)) : undefined, projectGlobals(state.project?.scripts, script)).diagnostics
+          list: checkScriptOnNodes(
+            script.source,
+            state.sceneRoot,
+            attached,
+            state.project ? sceneNamesOf(withSceneTree(state.project, state.activeSceneId, state.sceneRoot)) : undefined,
+            projectGlobals(state.project?.scripts, script),
+            // A `global $Name` may only exist once this scene is instanced somewhere else (a name tag, a coin); editing this scene alone can't see that, so it
+            // isn't reported as an error here. A real compile checks it against wherever this scene actually ends up.
+            { allowUnresolvedGlobalNodes: true }
+          ).diagnostics
         }),
       CHECK_DELAY_MS
     );

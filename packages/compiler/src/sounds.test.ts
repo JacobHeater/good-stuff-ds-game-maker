@@ -133,7 +133,7 @@ describe("the generated C for sounds", () => {
     expect(text).toMatch(/static const int16_t sound_0_samples\[\] __attribute__\(\(aligned\(4\)\)\) = \{\n  [-\d, ]+\n\};/);
     expect(text).toContain("static const GsSound sounds[] = {\n  { 8, 8000, sound_0_samples }\n};");
     expect(text).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 16000, 64, 1, 1 },\n  { 0, 8000, 127, 0, 0 }\n};");
-    expect(text).toContain("  1, 2, 0, /* sound, audio player, collider counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
+    expect(text).toContain("  1, 2, 0, 0, /* sound, audio player, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
   });
 
   it("is data only, and the same scene gives the same text", () => {
@@ -145,6 +145,6 @@ describe("the generated C for sounds", () => {
     const empty = writeSceneDataC(sceneOf(soundProbeProject([], [])).scene!);
     expect(empty).toContain("static const GsSound sounds[] = {\n  { 0, 0, 0 }\n};");
     expect(empty).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 0, 0, 0, 0 }\n};");
-    expect(empty).toContain("  0, 0, 0, /* sound, audio player, collider counts */");
+    expect(empty).toContain("  0, 0, 0, 0, /* sound, audio player, collider, hull point counts */");
   });
 });

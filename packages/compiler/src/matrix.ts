@@ -77,6 +77,15 @@ export function invertAffine(m: Mat4): Mat4 {
   ];
 }
 
+/** The point `p` carried by the affine transform `m` (rotated, scaled and translated, in that order if `m` was built by `composeTransform`). */
+export function transformPoint(m: Mat4, p: Vector3): Vector3 {
+  return {
+    x: m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+    y: m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+    z: m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14]
+  };
+}
+
 /** The world-space direction a transform's local axis points in, normalized (scale removed). */
 export function axisDirection(m: Mat4, axis: "x" | "y" | "z"): [number, number, number] {
   const o = axis === "x" ? 0 : axis === "y" ? 4 : 8;

@@ -267,14 +267,13 @@ export function texturedPrimitivesProject(): ProjectSnapshot {
  */
 export function lightProbeProject(
   incidenceDegrees: number | null,
-  options: { scale?: Vector3; intensity?: number } = {}
+  options: { scale?: Vector3; intensity?: number; unlit?: boolean } = {}
 ): ProjectSnapshot {
   const scale = options.scale ?? { x: 3, y: 3, z: 3 };
-  const children = [
-    // A plane faces +Y; turning it 90 degrees about X makes it face the camera (+Z).
-    mesh("Plane", "plane", { rotation: { x: 90, y: 0, z: 0 }, scale }),
-    camera("Camera", { x: 0, y: 0, z: 4 })
-  ];
+  // A plane faces +Y; turning it 90 degrees about X makes it face the camera (+Z).
+  const plane = mesh("Plane", "plane", { rotation: { x: 90, y: 0, z: 0 }, scale });
+  if (options.unlit) plane.mesh = { ...plane.mesh!, unlit: true };
+  const children = [plane, camera("Camera", { x: 0, y: 0, z: 4 })];
   if (incidenceDegrees !== null) {
     // A light travels along its local -Z; turning it about Y by -angle makes it travel (sin a, 0, -cos a), so it meets the
     // plane's +Z normal at `a` degrees.
