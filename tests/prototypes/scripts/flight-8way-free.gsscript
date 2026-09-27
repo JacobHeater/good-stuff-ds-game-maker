@@ -1,0 +1,162 @@
+# 3D 8-way flight and walking with an orbiting camera, for a plain Node3D with NO collision shape.
+# Same controls and feel as flight-8way.gsscript (which needs a CollisionShape3D under the node); this one moves the node by writing its position, so nothing stops it
+# except a flat ground at height ground_y.
+# Attach it to a Node3D (your player or butterfly). The camera is a Camera3D child of it, named "Camera3D"; the script places and turns it every frame.
+# The model's front is taken to be -Z (how Godot models face). If yours faces +Z, set model_front_yaw to 0.
+#
+# Controls:
+#   D-pad         : walk on the ground, fly in the air, in 8 directions relative to where the camera looks
+#   X (hold)      : fly up (this also takes off from the ground)
+#   B (hold)      : fly down (touching the ground lands and goes back to walking)
+#   L / R         : orbit the camera around the player
+
+# --- Tuning ---
+var ground_y = 0.0            # the height of the ground: the node can't go below it
+var flight_speed = 7.0        # flying speed sideways (units a second)
+var walk_speed = 4.0          # walking speed on the ground (0 turns walking off)
+var ground_drag = 10.0        # how fast it stops walking when the D-pad is let go
+var climb_speed = 4.0         # how fast X lifts it
+var descend_speed = 4.0       # how fast B lowers it
+var takeoff_lift = 2.0        # the little hop when X first lifts it off the ground
+var fall_gravity = -7.5       # gravity when walking or falling
+var acceleration = 10.0       # how fast it reaches the wanted speed
+var air_drag = 3.0            # how fast it slows when let go in the air
+var model_front_yaw = 180.0   # the turn that points the model's front along its travel: 180 for a model that faces -Z, 0 for one that faces +Z
+var camera_turn_speed = 90.0  # degrees a second the camera orbits
+var camera_dist = 3.5         # how far behind the player the camera is
+var camera_height = 1.2       # how far above the player
+
+# --- State ---
+var is_flying = false
+var vx = 0.0
+var vy = 0.0
+var vz = 0.0
+var cam_angle = 0.0           # which way the camera looks, in degrees (0 looks toward +Z)
+var anim_state = -1           # which animation is playing: 0 the "Ground" one, 1 the "Fly" one (-1: none yet)
+
+func _ready():
+    cam_angle = rotation.y
+    update_camera()
+    update_animation()
+
+# Plays "Ground" while on the ground and "Fly" in the air. play() starts an animation over from its first frame, so it is only called when the choice CHANGES:
+# calling it every frame would hold the animation on its first frame.
+func update_animation():
+    var want = 0
+    if is_flying:
+        want = 1
+    if want != anim_state:
+        anim_state = want
+        if want == 1:
+            $AnimationPlayer.play("Fly")
+        else:
+            $AnimationPlayer.play("Ground")
+
+# Keeps an angle between -180 and 180.
+func wrap_angle(deg: float) -> float:
+    if deg > 180.0:
+        return deg - 360.0
+    if deg < -180.0:
+        return deg + 360.0
+    return deg
+
+# Puts the camera behind the player on its orbit, looking at the player.
+# sin() and cos() take degrees. The camera is a child, so it follows the player's own turn: its place and heading are worked out
+# in the player's space (the world offset turned back by the player's heading).
+func update_camera():
+    var a = cam_angle
+    var yaw = rotation.y
+    var back_x = -sin(a) * camera_dist
+    var back_z = -cos(a) * camera_dist
+    $Camera3D.position.x = back_x * cos(yaw) - back_z * sin(yaw)
+    $Camera3D.position.y = camera_height
+    $Camera3D.position.z = back_x * sin(yaw) + back_z * cos(yaw)
+    # A camera looks along its own -Z, so it needs to be turned half way round to look toward +Z.
+    $Camera3D.rotation.y = wrap_angle(a + 180.0 - yaw)
+
+func _process(delta):
+    var up = Input.is_button_down("x")
+    var down = Input.is_button_down("b")
+    var on_ground = position.y <= ground_y + 0.01
+
+    # 1. Taking off and landing: X lifts it off the ground; touching the ground (without X held) lands it.
+    if up and not is_flying:
+        is_flying = true
+        vy = takeoff_lift
+    if is_flying and on_ground and not up and vy <= 0.0:
+        is_flying = false
+
+    # 2. L and R orbit the camera.
+    if Input.is_button_down("l"):
+        cam_angle -= camera_turn_speed * delta
+    if Input.is_button_down("r"):
+        cam_angle += camera_turn_speed * delta
+    cam_angle = wrap_angle(cam_angle)
+
+    # 3. The D-pad as a direction: up is forward, right is to the right of the camera's view.
+    var input_x = 0.0
+    var input_z = 0.0
+    if Input.is_button_down("up"):
+        input_z += 1.0
+    if Input.is_button_down("down"):
+        input_z -= 1.0
+    if Input.is_button_down("left"):
+        input_x -= 1.0
+    if Input.is_button_down("right"):
+        input_x += 1.0
+
+    # A diagonal is not faster (1 / sqrt(2) is about 0.7071).
+    var input_len_sq = input_x * input_x + input_z * input_z
+    if input_len_sq > 1.0:
+        input_x *= 0.7071
+        input_z *= 0.7071
+
+    # 4. That direction in the world. A camera that looks toward (sin a, cos a) has its right-hand side toward (-cos a, sin a).
+    var sin_a = sin(cam_angle)
+    var cos_a = cos(cam_angle)
+    var target_vx = (-input_x * cos_a + input_z * sin_a) * flight_speed
+    var target_vz = (input_x * sin_a + input_z * cos_a) * flight_speed
+
+    if is_flying:
+        # Flying: sideways with the D-pad, up with X, down with B, and it hangs in the air when neither is held.
+        var target_vy = 0.0
+        if up:
+            target_vy = climb_speed
+        if down:
+            target_vy = -descend_speed
+        vy += (target_vy - vy) * acceleration * delta
+        if input_len_sq > 0.01:
+            vx += (target_vx - vx) * acceleration * delta
+            vz += (target_vz - vz) * acceleration * delta
+            # Face the way it is flying (atan2 gives degrees).
+            rotation.y = wrap_angle(atan2(vx, vz) + model_front_yaw)
+        else:
+            vx -= vx * air_drag * delta
+            vz -= vz * air_drag * delta
+    else:
+        vy += fall_gravity * delta
+        if on_ground and walk_speed > 0.0:
+            # Walking on the ground: the same D-pad, at walking speed, still relative to the camera.
+            if input_len_sq > 0.01:
+                var walk = walk_speed / flight_speed
+                vx += (target_vx * walk - vx) * acceleration * delta
+                vz += (target_vz * walk - vz) * acceleration * delta
+                rotation.y = wrap_angle(atan2(vx, vz) + model_front_yaw)
+            else:
+                vx -= vx * ground_drag * delta
+                vz -= vz * ground_drag * delta
+        else:
+            vx -= vx * air_drag * delta
+            vz -= vz * air_drag * delta
+
+    update_animation()
+
+    # 5. Move by writing the position, stop at the ground, then put the camera where it belongs.
+    position.x += vx * delta
+    position.y += vy * delta
+    position.z += vz * delta
+    if position.y < ground_y:
+        position.y = ground_y
+        if vy < 0.0:
+            vy = 0.0
+    update_camera()

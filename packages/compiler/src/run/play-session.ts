@@ -4,6 +4,7 @@ import type { ProjectSnapshot } from "@goodstuff/core";
 
 import type { BuildFileSystem } from "../build/ports";
 import type { CompileResult } from "../compile-project";
+import type { TranslateOptions } from "../translate-scene-3d";
 import { describeCompileResult } from "../compile-report";
 import type { EmulatorLauncher, EmulatorLocator, EmulatorProcess } from "./ports";
 
@@ -17,7 +18,7 @@ export interface PlayResult {
 
 export interface PlaySessionDeps {
   /** Compiles a project to a `.nds` at the given path (the real one is `compileProject` + a `RomBuilder`). */
-  compile: (project: ProjectSnapshot, outputPath: string) => Promise<CompileResult>;
+  compile: (project: ProjectSnapshot, outputPath: string, options?: TranslateOptions) => Promise<CompileResult>;
   locator: EmulatorLocator;
   launcher: EmulatorLauncher;
   fs: BuildFileSystem;
@@ -43,7 +44,8 @@ export class PlaySession {
     return this.building;
   }
 
-  async play(project: ProjectSnapshot): Promise<PlayResult> {
+  /** `options` are what the editor knows that the project file doesn't: the frame rate the game is to run at. */
+  async play(project: ProjectSnapshot, options: TranslateOptions = {}): Promise<PlayResult> {
     if (this.building) return { outcome: "error", lines: ["A build is already running; wait for it to finish."] };
     this.building = true;
     try {
@@ -51,7 +53,7 @@ export class PlaySession {
 
       await fs.ensureDir(romDirectory);
       const romPath = join(romDirectory, `play-${Date.now()}-${++this.counter}.nds`);
-      const compiled = await compile(project, romPath);
+      const compiled = await compile(project, romPath, options);
       const lines = describeCompileResult(compiled, "Play");
       if (!compiled.ok) return { outcome: "error", lines };
 

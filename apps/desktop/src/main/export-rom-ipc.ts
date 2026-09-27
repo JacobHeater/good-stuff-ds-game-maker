@@ -1,6 +1,6 @@
 import { dialog, ipcMain } from "electron";
 import { dirname, join } from "node:path";
-import type { ExportRomResult, ProjectSnapshot } from "@goodstuff/core";
+import type { ExportRomResult, FpsTarget, ProjectSnapshot } from "@goodstuff/core";
 import { checkProject, compileProject, describeCompileResult, hasErrors } from "@goodstuff/compiler";
 
 import { PROJECT_IPC_CHANNELS } from "../shared/project-ipc-channels";
@@ -23,7 +23,9 @@ let exporting = false;
 export function registerExportRomIpcHandler(): void {
   ipcMain.handle(
     PROJECT_IPC_CHANNELS.exportRom,
-    async (_event, snapshot: ProjectSnapshot, projectFilePath: string | null): Promise<ExportRomResult> => {
+    async (_event, snapshot: ProjectSnapshot, projectFilePath: string | null, fpsTarget?: FpsTarget): Promise<ExportRomResult> => {
+      // The frame rate is the editor's setting (the project file doesn't keep it); anything but 30 or 60 is the default.
+      const options = fpsTarget === 30 || fpsTarget === 60 ? { fpsTarget } : {};
       if (exporting) {
         return { outcome: "error", lines: ["An export is already running; wait for it to finish."] };
       }
@@ -44,7 +46,7 @@ export function registerExportRomIpcHandler(): void {
         });
         if (choice.canceled || !choice.filePath) return { outcome: "canceled", lines: [] };
 
-        const result = await compileProject(snapshot, choice.filePath, builder);
+        const result = await compileProject(snapshot, choice.filePath, builder, options);
         return {
           outcome: result.ok ? "ok" : "error",
           romPath: result.ok ? result.romPath : undefined,

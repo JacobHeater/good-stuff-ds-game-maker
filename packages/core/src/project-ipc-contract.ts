@@ -1,3 +1,4 @@
+import type { FpsTarget } from "./hardware";
 import type { ImportedMesh } from "./imported-mesh";
 import type { ImportedSprite } from "./imported-sprite";
 import type { ImportedTexture } from "./imported-texture";
@@ -139,13 +140,13 @@ export interface GoodStuffWindowApi {
      * file. `projectFilePath` only picks the save dialog's starting folder. A second call while one is
      * running resolves immediately with an "error" saying so.
      */
-    exportRom(snapshot: ProjectSnapshot, projectFilePath: string | null): Promise<ExportRomResult>;
+    exportRom(snapshot: ProjectSnapshot, projectFilePath: string | null, fpsTarget?: FpsTarget): Promise<ExportRomResult>;
     /**
      * Builds `snapshot` (as it is in the editor, saved or not; the project file is never written) and runs
      * the ROM in an emulator, replacing any previous run. Resolves once the emulator has been started (or
      * the build or launch failed), not when the game ends.
      */
-    play(snapshot: ProjectSnapshot): Promise<PlayProjectResult>;
+    play(snapshot: ProjectSnapshot, fpsTarget?: FpsTarget): Promise<PlayProjectResult>;
   };
   /** Bringing files into a project. Reading and parsing happen in the main process; the renderer gets the result. */
   assets: {

@@ -2145,13 +2145,13 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     setExporting(true);
     try {
       const snapshot = savedProjectOf(state);
-      const result = await window.goodstuff.project.exportRom(snapshot, state.projectFilePath);
+      const result = await window.goodstuff.project.exportRom(snapshot, state.projectFilePath, state.fpsTarget);
       for (const line of result.lines) dispatch({ type: "LOG", message: line });
     } finally {
       exportingRef.current = false;
       setExporting(false);
     }
-  }, [state.project, state.projectFilePath, state.sceneRoot]);
+  }, [state.project, state.projectFilePath, state.sceneRoot, state.fpsTarget]);
 
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
@@ -2162,13 +2162,13 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     setPlaying(true);
     try {
       const snapshot = savedProjectOf(state);
-      const result = await window.goodstuff.project.play(snapshot);
+      const result = await window.goodstuff.project.play(snapshot, state.fpsTarget);
       for (const line of result.lines) dispatch({ type: "LOG", message: line });
     } finally {
       playingRef.current = false;
       setPlaying(false);
     }
-  }, [state.project, state.sceneRoot]);
+  }, [state.project, state.sceneRoot, state.fpsTarget]);
 
   // --- Unsaved-changes guard: one prompt for every action that would discard edits. ---
   const [unsavedPrompt, setUnsavedPrompt] = useState<UnsavedChangesPrompt | null>(null);

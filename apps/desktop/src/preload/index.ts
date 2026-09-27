@@ -20,8 +20,8 @@ const api: GoodStuffWindowApi = {
     saveAs: (snapshot) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.saveAs, snapshot),
     open: (filePath) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.open, filePath),
     listDirectory: (filePath) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.listDirectory, filePath),
-    exportRom: (snapshot, projectFilePath) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.exportRom, snapshot, projectFilePath),
-    play: (snapshot) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.play, snapshot)
+    exportRom: (snapshot, projectFilePath, fpsTarget) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.exportRom, snapshot, projectFilePath, fpsTarget),
+    play: (snapshot, fpsTarget) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.play, snapshot, fpsTarget)
   },
   assets: {
     importMesh: (poses?: boolean) => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importMesh, poses),

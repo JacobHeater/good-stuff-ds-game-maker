@@ -61,9 +61,11 @@ function setup(options: { lookup?: EmulatorLookup; compile?: (rom: string) => Co
   const launcher = new FakeLauncher();
   const fs = new FakeFs();
   const compiled: string[] = [];
+  const optionsSeen: unknown[] = [];
   const locator: EmulatorLocator = { locate: async () => options.lookup ?? found };
   const session = new PlaySession({
-    compile: async (_project, rom) => {
+    compile: async (_project, rom, translateOptions) => {
+      optionsSeen.push(translateOptions);
       compiled.push(rom);
       return (options.compile ?? okResult)(rom);
     },
@@ -72,7 +74,7 @@ function setup(options: { lookup?: EmulatorLookup; compile?: (rom: string) => Co
     fs,
     romDirectory: "C:\\tmp\\gsds-play"
   });
-  return { session, launcher, fs, compiled };
+  return { session, launcher, fs, compiled, optionsSeen };
 }
 
 describe("PlaySession", () => {
@@ -85,6 +87,13 @@ describe("PlaySession", () => {
     expect(compiled[0]).toMatch(/^C:\\tmp\\gsds-play\\play-.*\.nds$/);
     expect(launcher.launched.map((p) => p.romPath)).toEqual(compiled);
     expect(result.lines.at(-1)).toBe("Running in melonDS.");
+  });
+
+  it("builds for the frame rate the editor is set to (the project file doesn't keep it)", async () => {
+    const { session, optionsSeen } = setup();
+    await session.play(cubeProject(), { fpsTarget: 30 });
+    await session.play(cubeProject());
+    expect(optionsSeen).toEqual([{ fpsTarget: 30 }, {}]);
   });
 
   it("launches nothing when the build fails, and says why", async () => {
