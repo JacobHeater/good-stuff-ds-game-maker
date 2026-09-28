@@ -20,6 +20,9 @@ const TOUCH_SHAPE_CODES = { rect: 0, box: 1, sphere: 2 } as const;
 
 const ANIM_PROPERTY_CODES = { position: 0, rotation: 1, scale: 2, visible: 3, volume: 4, pitch: 5 } as const;
 
+/** `GS_CULL_*` in the runtime's scene.h. */
+const CULL_CODES = { none: 0, back: 1, front: 2 } as const;
+
 function numbers(values: readonly number[]): string {
   if (values.length === 0) return "0"; // C doesn't allow an empty array; the count says how many are real
   const lines: string[] = [];
@@ -207,9 +210,11 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
   out.push("static const GsMesh meshes[] = {");
-  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0 }");
+  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0 }");
   scene.meshes.forEach((m, i) => {
-    out.push(`  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0} }${i < scene.meshes.length - 1 ? "," : ""}`);
+    out.push(
+      `  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0}, ${CULL_CODES[m.cull]} }${i < scene.meshes.length - 1 ? "," : ""}`
+    );
   });
   out.push("};");
   out.push("");

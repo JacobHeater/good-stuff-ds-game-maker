@@ -14,6 +14,14 @@ export type ObjImportResult =
 export interface ObjImportOptions {
   /** The model's name, usually the file's name without its extension. */
   name: string;
+  /**
+   * Ignores the file's own normals (`vn`) and uses each triangle's own normal (computed from its actual corners) instead.
+   * Fixes a model whose normals disagree with its real shape — usually seen as part of it going dark from some camera
+   * angles but not others, since a face's own (wrong) normal only reads as unlit once the light ends up on what that
+   * normal treats as its far side. The trade-off is flat, per-face shading instead of whatever smooth shading the file's
+   * own normals gave it (fine for something faceted like rocky terrain; a smooth, rounded model may look faceted after).
+   */
+  recalculateNormals?: boolean;
 }
 
 /** Coordinates are rounded to this many decimals: finer than the DS's 4.12 fixed point (about 0.00024) can hold. */
@@ -238,7 +246,7 @@ export function parseObj(text: string, options: ObjImportOptions): ObjImportResu
   for (const triangle of triangles) {
     for (const corner of triangle.corners) {
       let normal = triangle.normal as Vec3;
-      if (corner.normal !== undefined) {
+      if (corner.normal !== undefined && !options.recalculateNormals) {
         const given = normals[corner.normal];
         const len = length(given);
         if (len > 0) normal = [given[0] / len, given[1] / len, given[2] / len];
@@ -270,7 +278,11 @@ export function parseObj(text: string, options: ObjImportOptions): ObjImportResu
   if (sawLinesOrPoints) warnings.push("Line and point elements were ignored.");
   if (degenerate > 0) warnings.push(`${degenerate} zero-area triangle${degenerate === 1 ? " was" : "s were"} dropped.`);
   const usedNormalCount = faces.some((face) => face.corners.some((corner) => corner.normal !== undefined));
-  if (!usedNormalCount) warnings.push("The file has no normals, so each face is shaded flat.");
+  if (options.recalculateNormals && usedNormalCount) {
+    warnings.push("The file's own normals were ignored and recalculated from each triangle's shape, so it is flat, per-face shaded.");
+  } else if (!usedNormalCount) {
+    warnings.push("The file has no normals, so each face is shaded flat.");
+  }
 
   return {
     ok: true,

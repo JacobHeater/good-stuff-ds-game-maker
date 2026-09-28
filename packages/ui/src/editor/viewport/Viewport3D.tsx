@@ -24,6 +24,7 @@ import { OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useFrame, type ThreeEvent } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BackSide,
   BufferGeometry,
   DataTexture,
   DoubleSide,
@@ -143,10 +144,10 @@ function MeshView({
   }, [stored]);
   useEffect(() => () => map?.dispose(), [map]);
 
-  // The DS's lighting, not three.js's (ds-lighting-material.ts). The runtime draws with culling off, so a model wound
-  // the "wrong" way is still solid in the ROM; drawing imported models double-sided keeps the editor agreeing with it.
-  // The primitives are all wound correctly (a plane is one sheet, seen from both sides).
-  const doubleSided = mesh.primitive === "plane" || mesh.importedMeshId !== undefined;
+  // The DS's lighting, not three.js's (ds-lighting-material.ts). Which side(s) are drawn follows the mesh's own cull
+  // setting (scene-designer/STORY.mesh-face-culling.md), the same as the ROM: "none" (the default) draws both, matching
+  // the runtime's own default of culling off (forgiving of a model whose winding wasn't checked on the way in).
+  const side = mesh.cull === "back" ? FrontSide : mesh.cull === "front" ? BackSide : DoubleSide;
   // The mesh's own color as the DS holds it (5 bits a channel), or the default grey / white for a textured one.
   const levels = getMeshDiffuseLevels(mesh, map !== null);
   const ownDiffuse = useMemo(() => [levels[0] / 31, levels[1] / 31, levels[2] / 31] as const, [levels[0], levels[1], levels[2]]);
@@ -156,10 +157,10 @@ function MeshView({
         diffuse: selected && !map ? SELECTED_DIFFUSE : ownDiffuse,
         tint: map && selected ? TEXTURED_SELECTED_TINT : undefined,
         map,
-        side: doubleSided ? DoubleSide : FrontSide,
+        side,
         unlit: mesh.unlit === true
       }),
-    [map, selected, doubleSided, ownDiffuse, mesh.unlit]
+    [map, selected, side, ownDiffuse, mesh.unlit]
   );
   useEffect(() => () => material.dispose(), [material]);
   if (!geometry) return null;

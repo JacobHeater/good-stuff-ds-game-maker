@@ -1,5 +1,5 @@
-import { listScenes, withSceneTree } from "@goodstuff/core";
-import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type Vector3 } from "@goodstuff/core";
+import { listScenes, MESH_CULL_MODES, withSceneTree } from "@goodstuff/core";
+import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshCullMode, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type Vector3 } from "@goodstuff/core";
 import { findSceneNode, flattenSceneTree, getImportedTriangleCount, getLightIntensity, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry } from "@goodstuff/core";
 import { useEditorStore, type Transform3DField } from "../state/editor-store";
 import { AnimationPlayerField } from "./AnimationPlayerField";
@@ -13,6 +13,12 @@ import { NameField } from "./NameField";
 import { ScriptField } from "./ScriptField";
 import { spriteDataUrl } from "../viewport/sprite-image";
 import { buttonClasses, Field, inputClasses } from "./inspector-fields";
+
+const CULL_LABELS: Record<MeshCullMode, string> = {
+  none: "Both sides (default)",
+  back: "Cull back faces (a solid, correctly-wound mesh)",
+  front: "Cull front faces (seen from the inside, or a backward winding)"
+};
 
 function Vector3Field({
   label,
@@ -205,7 +211,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshCull, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -282,6 +288,23 @@ export function InspectorPanel(): JSX.Element {
                 <input type="checkbox" checked={node.mesh.unlit === true} onChange={(event) => setMeshUnlit(node.id, event.target.checked)} aria-label="Unlit" />
                 Unlit (ignores the scene's lights; always shown at full brightness)
               </label>
+            )}
+            {node.mesh && (
+              <Field label="Face culling">
+                <select
+                  data-testid="mesh-cull"
+                  value={node.mesh.cull ?? "none"}
+                  onChange={(event) => setMeshCull(node.id, event.target.value as MeshCullMode)}
+                  className={inputClasses}
+                  aria-label="Face culling"
+                >
+                  {MESH_CULL_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {CULL_LABELS[mode]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             )}
             {node.mesh && (
               <Field label="Mesh">

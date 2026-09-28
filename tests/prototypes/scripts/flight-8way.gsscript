@@ -24,6 +24,11 @@ var model_front_yaw = 180.0   # the turn that points the model's front along its
 var camera_turn_speed = 90.0  # degrees a second the camera orbits
 var camera_dist = 3.5         # how far behind the player the camera is
 var camera_height = 1.2       # how far above the player
+var shadow_max_fall = 50.0    # how far down $Shadow looks for ground; no ground within this and it hides
+var shadow_lift = 0.02        # how far above the ground $Shadow sits, so it doesn't flicker into the floor
+var shadow_full_size_height = 1.0  # at this height or less above the ground, $Shadow is full size
+var shadow_min_scale = 0.4    # the smallest $Shadow shrinks to, high in the air
+var shadow_fade_height = 6.0  # the height above the ground at which $Shadow is at its smallest
 
 # --- State ---
 var is_flying = false
@@ -39,10 +44,21 @@ var anim_state = -1           # which animation is playing: 0 the "Ground" one, 
 # this player in it at all -- unlike a node reference, which needs the actual node to be there.
 global var camera_world_yaw = 0.0
 
+# The player's own position and heading in the world, shared the same way -- for anything that needs to track the REAL
+# player, such as a minimap. This matters because the D-pad's own direction is relative to the camera (see step 3 in
+# _process), not a fixed compass direction: a minimap that just watched the D-pad itself (as if up always meant north)
+# would drift out of step with the player the moment the camera is orbited with L/R, since the same D-pad press then
+# sends the player a different way in the world. Reading the player's actual position here instead can't disagree with it.
+global var player_world_x = 0.0
+global var player_world_z = 0.0
+global var player_world_yaw = 0.0
+
 func _ready():
     cam_angle = rotation.y
     update_camera()
     update_animation()
+    update_shadow()
+    update_world_position()
 
 # Plays "Ground" while on the ground and "Fly" in the air. play() starts an animation over from its first frame, so it is only called when the choice CHANGES:
 # calling it every frame would hold the animation on its first frame.
@@ -81,6 +97,49 @@ func update_camera():
     $Camera3D.rotation.y = cam_local_yaw
     # $Camera3D's rotation is relative to this node (its parent), so its true world heading is the two added together.
     camera_world_yaw = wrap_angle(cam_local_yaw + yaw)
+
+# A flat shadow under the player: sits right on the ground (found with a ray straight down, so it works over uneven ground and while flying,
+# not just a fixed floor height), shrinks the higher up it is (a common depth cue: with no real-time shadows on the DS, size is what says how
+# far above the ground the player is), doesn't turn with the player (a round blob shadow doesn't need to), and hides over a drop with no floor
+# under it at all, instead of floating in the air.
+func update_shadow():
+    # position is taken as this node's world position: true as long as it is a top-level node (not nested under another that moves or turns it),
+    # which is how this script expects to be used.
+    var fall = ray_cast(position.x, position.y, position.z, 0.0, -1.0, 0.0, shadow_max_fall)
+    if fall < 0.0:
+        $Shadow.visible = false
+        return
+    $Shadow.visible = true
+    # Directly below the player: (0, 0) in this node's own space is still (0, 0) however this node is turned, since turning doesn't move a
+    # point that sits on the turning axis.
+    $Shadow.position.x = 0.0
+    $Shadow.position.z = 0.0
+    # This node's own height plus the shadow's local offset must land it on the ground the ray found, a little above it so it doesn't flicker.
+    $Shadow.position.y = -fall + shadow_lift
+    # Staying flat on the ground regardless of the player's own turn (undoing this node's own yaw): a round shadow doesn't need this, but an
+    # oval or a directional one would otherwise spin with the player.
+    $Shadow.rotation.x = 0.0
+    $Shadow.rotation.y = wrap_angle(-rotation.y)
+    $Shadow.rotation.z = 0.0
+    # Smaller the higher up the player is, between full size at shadow_full_size_height or less and shadow_min_scale at shadow_fade_height or more.
+    var height_above_ground = fall
+    var shadow_scale = 1.0
+    if height_above_ground > shadow_full_size_height:
+        var t = (height_above_ground - shadow_full_size_height) / (shadow_fade_height - shadow_full_size_height)
+        if t > 1.0:
+            t = 1.0
+        shadow_scale = 1.0 - t * (1.0 - shadow_min_scale)
+    $Shadow.scale.x = shadow_scale
+    $Shadow.scale.y = shadow_scale
+    $Shadow.scale.z = shadow_scale
+
+# Publishes this node's own position and heading (see player_world_x/z/yaw above). position is taken as this node's world
+# position: true as long as it is a top-level node (not nested under another that moves or turns it), which is how this
+# script expects to be used.
+func update_world_position():
+    player_world_x = position.x
+    player_world_z = position.z
+    player_world_yaw = rotation.y
 
 func _process(delta):
     var up = Input.is_button_down("x")
@@ -158,6 +217,8 @@ func _process(delta):
 
     update_animation()
 
-    # 5. Move, then put the camera where it belongs.
+    # 5. Move, then put the camera and the shadow where they belong, and publish the new position.
     move_and_collide(vx * delta, vy * delta, vz * delta)
     update_camera()
+    update_shadow()
+    update_world_position()

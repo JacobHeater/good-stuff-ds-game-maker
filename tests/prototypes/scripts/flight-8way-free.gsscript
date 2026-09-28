@@ -40,10 +40,20 @@ var anim_state = -1           # which animation is playing: 0 the "Ground" one, 
 # this player in it at all -- unlike a node reference, which needs the actual node to be there.
 global var camera_world_yaw = 0.0
 
+# The player's own position and heading in the world, shared the same way -- for anything that needs to track the REAL
+# player, such as a minimap. This matters because the D-pad's own direction is relative to the camera (see step 3 in
+# _process), not a fixed compass direction: a minimap that just watched the D-pad itself (as if up always meant north)
+# would drift out of step with the player the moment the camera is orbited with L/R, since the same D-pad press then
+# sends the player a different way in the world. Reading the player's actual position here instead can't disagree with it.
+global var player_world_x = 0.0
+global var player_world_z = 0.0
+global var player_world_yaw = 0.0
+
 func _ready():
     cam_angle = rotation.y
     update_camera()
     update_animation()
+    update_world_position()
 
 # Plays "Ground" while on the ground and "Fly" in the air. play() starts an animation over from its first frame, so it is only called when the choice CHANGES:
 # calling it every frame would hold the animation on its first frame.
@@ -82,6 +92,14 @@ func update_camera():
     $Camera3D.rotation.y = cam_local_yaw
     # $Camera3D's rotation is relative to this node (its parent), so its true world heading is the two added together.
     camera_world_yaw = wrap_angle(cam_local_yaw + yaw)
+
+# Publishes this node's own position and heading (see player_world_x/z/yaw above). position is taken as this node's world
+# position: true as long as it is a top-level node (not nested under another that moves or turns it), which is how this
+# script expects to be used.
+func update_world_position():
+    player_world_x = position.x
+    player_world_z = position.z
+    player_world_yaw = rotation.y
 
 func _process(delta):
     var up = Input.is_button_down("x")
@@ -160,7 +178,7 @@ func _process(delta):
 
     update_animation()
 
-    # 5. Move by writing the position, stop at the ground, then put the camera where it belongs.
+    # 5. Move by writing the position, stop at the ground, then put the camera where it belongs, and publish the new position.
     position.x += vx * delta
     position.y += vy * delta
     position.z += vz * delta
@@ -169,3 +187,4 @@ func _process(delta):
         if vy < 0.0:
             vy = 0.0
     update_camera()
+    update_world_position()

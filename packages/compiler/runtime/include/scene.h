@@ -196,6 +196,11 @@ typedef struct {
 	GsMatrix world;      /* baked world rotation + translation, no scale */
 } GsNode;
 
+/* A GsMesh.cull: which side(s) of its triangles main.c's draw_mesh actually draws (the geometry engine's own cull modes). */
+#define GS_CULL_NONE  0 /* both sides -- the default: forgiving of a model whose winding wasn't checked on the way in */
+#define GS_CULL_BACK  1 /* only the side a correctly-wound triangle's winding faces outward from */
+#define GS_CULL_FRONT 2 /* only the other side (seen from inside, or a winding that turned out backward) */
+
 typedef struct {
 	uint16_t primitive; /* index into GsScene.primitives */
 	uint16_t diffuse;   /* RGB15 */
@@ -209,6 +214,7 @@ typedef struct {
 	uint16_t animationFirst;
 	uint16_t animationCount;
 	uint8_t unlit; /* 1: ignores the scene's lights, always shown at `diffuse`'s full brightness */
+	uint8_t cull;  /* a GS_CULL_* above */
 } GsMesh;
 
 /* The DS only has parallel lights. */

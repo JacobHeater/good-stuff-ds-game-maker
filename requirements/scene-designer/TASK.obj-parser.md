@@ -98,6 +98,9 @@ Scenario: Windows line endings and extra whitespace
   "...and N more".
 - When a model has no normals the result carries a warning saying so ("each face is shaded flat"), so the
   Output log tells the user why a smooth-looking model has facets.
+- `recalculateNormals` (`STORY.recalculate-normals-on-import.md`): ignores a face's own `vn` and always uses its own
+  computed flat normal instead, fixing a model whose normals partially disagree with its real shape (reads dark from some
+  angles but not others). Asked once per import in the desktop app, before the file is parsed.
 - The mesh shape (`ImportedMesh`) is defined with the project format in
   `persistence/TASK.embed-imported-meshes-in-project-file.md`.
 - No file I/O and no Electron here: the caller reads the file and passes the text.

@@ -560,7 +560,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         diffuse: ((levels) => rgb15(levels[0], levels[1], levels[2]))(getMeshDiffuseLevels(node.mesh!, texture !== undefined)),
         world: matrixF32(rigid),
         scale: scale.map(toF32) as [number, number, number],
-        unlit: node.mesh!.unlit === true
+        unlit: node.mesh!.unlit === true,
+        cull: node.mesh!.cull ?? "none"
       };
     });
     if (built) dsMeshes.push(built);

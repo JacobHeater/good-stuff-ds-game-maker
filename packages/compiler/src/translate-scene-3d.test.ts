@@ -248,7 +248,7 @@ describe("determinism and the generated C", () => {
     const p = cubeProject();
     p.scene.children = p.scene.children.filter((c) => c.kind === "Camera3D");
     const text = writeSceneDataC(translateScene3D(p).scene!);
-    expect(text).toContain("static const GsMesh meshes[] = {\n  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0 }\n};");
+    expect(text).toContain("static const GsMesh meshes[] = {\n  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0 }\n};");
     expect(text).toContain("static const GsLight lights[] = {\n  { 0, { 0, 0, 0 }, 0 }\n};");
   });
 });

@@ -101,6 +101,15 @@ export function getLightIntensity(node: { light?: LightData }): number {
   return node.light?.intensity ?? 1;
 }
 
+/**
+ * Which side(s) of a mesh's triangles are drawn: "none" draws both (the DS's own default, and the most forgiving of a
+ * model whose winding is wrong or unknown), "back" draws only the side a correctly-wound triangle's winding faces
+ * outward from (the usual choice for a solid, fully enclosed mesh), "front" draws only the other side (a mesh meant to
+ * be seen from the inside, or one whose winding turned out to be backward).
+ */
+export type MeshCullMode = "none" | "back" | "front";
+export const MESH_CULL_MODES: readonly MeshCullMode[] = ["none", "back", "front"];
+
 export interface MeshInstance3DData {
   /** A built-in shape. Exactly one of `primitive` and `importedMeshId` is set. */
   primitive?: MeshPrimitive;
@@ -112,6 +121,14 @@ export interface MeshInstance3DData {
   color?: string;
   /** True: this mesh ignores the scene's lights and always shows its own color at full brightness, as if unaffected by DirectionalLight3D. Absent (the default) is lit normally. */
   unlit?: boolean;
+  /**
+   * Which of a triangle's two sides are drawn, going by which way it winds (see `MeshCullMode`). Absent (the default) is
+   * "none": both sides are always drawn, which is forgiving of a model whose winding wasn't checked on the way in (an
+   * import), at the cost of a wrongly-facing normal on the far side sometimes reading as an unlit dark patch instead of
+   * being hidden outright. "back" is the usual choice for a correctly-wound, fully enclosed mesh (a box, an imported prop):
+   * only the side actually facing the camera is ever drawn, so a stray inward-facing normal is culled away instead of shown.
+   */
+  cull?: MeshCullMode;
   /**
    * Triangles this instance contributes to the DS's per-frame 3D budget, as of when the node was
    * created or its mesh last changed. A record of the count only: the budget and the compiler always
@@ -176,6 +193,23 @@ let nodeCounter = 0;
 function nextNodeId(prefix: string): string {
   nodeCounter += 1;
   return `${prefix}-${nodeCounter}`;
+}
+
+/**
+ * Advances the node id counter so a freshly created or duplicated node's id can never collide with one already in a loaded project. Ids end in
+ * "-<n>" (`nextNodeId`); the counter is a single one shared by every kind and every scene, and it only ever counts up for as long as the app runs,
+ * so opening a project (started in an earlier session, with its own count) without this would let a later duplicate or new node reuse a number
+ * already taken — two different nodes sharing an id, which confuses anything that looks a node up by id (a scene instance among them: it's what
+ * showed up as one node's contents merged into another's). Call this with every id in the project being opened, before anything in it can be
+ * duplicated or added to.
+ */
+export function ensureNodeIdsAbove(ids: Iterable<string>): void {
+  for (const id of ids) {
+    const match = /-(\d+)$/.exec(id);
+    if (!match) continue;
+    const n = Number(match[1]);
+    if (n > nodeCounter) nodeCounter = n;
+  }
 }
 
 export function createSceneNode(partial: {

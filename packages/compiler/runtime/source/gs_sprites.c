@@ -55,22 +55,36 @@ static void set_matrix(int matrix, int32_t degrees, int32_t scale_x, int32_t sca
 	oamRotateScale(&oamSub, matrix, angle, (int)(1048576 / sx), (int)(1048576 / sy));
 }
 
-/* Brings a sprite up to date with its node: where it is, whether it is shown, and (with a rotation matrix) its angle and scale. */
+/*
+ * Brings a sprite up to date with its node: where it is, whether it is shown, and (with a rotation matrix) its angle and scale.
+ *
+ * A rotate/scale sprite can't be hidden with oamSetHidden: the hardware's "hidden" bit is the same bit as "double size" for one of these (they
+ * share the position; only one meaning applies, depending on the sprite's own rotate/scale flag), so libnds refuses and asserts. Hiding one
+ * instead means dropping it out of rotate/scale mode for the frame (oamSetAffineIndex with a negative index makes it an ordinary sprite, which
+ * oamSetHidden can then hide) and putting it back when it's shown again; its angle and scale live in a separate matrix slot, so they're
+ * untouched by leaving and re-entering rotate/scale mode.
+ */
 static void follow(int index, const GsSprite *sprite, const GsSpriteImage *image) {
 	const GsNodeState *state = &gs_node_state[sprite->node];
 	int x = round_px(state->position[0]);
 	int y = round_px(state->position[1]);
 	if (sprite->affine >= 0) {
-		set_matrix(sprite->affine, state->rotation[2], state->scale[0], state->scale[1]);
+		if (state->visible) {
+			oamSetAffineIndex(&oamSub, index, sprite->affine, true);
+			set_matrix(sprite->affine, state->rotation[2], state->scale[0], state->scale[1]);
+		} else {
+			oamSetAffineIndex(&oamSub, index, -1, false);
+			oamSetHidden(&oamSub, index, true);
+		}
 		/* The hardware draws a rotating sprite in a box twice its size, centred on the picture. */
 		x -= image->width;
 		y -= image->height;
 	} else {
 		x -= image->width / 2;
 		y -= image->height / 2;
+		oamSetHidden(&oamSub, index, !state->visible);
 	}
 	oamSetXY(&oamSub, index, x, y);
-	oamSetHidden(&oamSub, index, !state->visible);
 }
 
 /* Gives back the sprite memory of the scene being shown and hides its sprites (the next scene sets up its own). */

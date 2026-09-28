@@ -66,6 +66,20 @@ describe("parseObj: what it accepts", () => {
     expect(r.warnings.join(" ")).not.toMatch(/no normals/);
   });
 
+  it("ignores the file's own normals when recalculateNormals is set, using each triangle's own shape instead", () => {
+    // This winding's own shape gives a normal of (0, 0, 1) (the previous test); the file's vn here is deliberately
+    // the opposite of that, as if the model's own normals disagreed with its actual geometry.
+    const text = "v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 -1\nf 1//1 2//1 3//1\n";
+    const trusting = parseObj(text, { name: "thing" });
+    if (!trusting.ok) throw new Error("expected success");
+    expect(trusting.mesh.normals).toEqual([0, 0, -1, 0, 0, -1, 0, 0, -1]); // trusts the file, wrong as it is
+
+    const recalculated = parseObj(text, { name: "thing", recalculateNormals: true });
+    if (!recalculated.ok) throw new Error("expected success");
+    expect(recalculated.mesh.normals).toEqual([0, 0, 1, 0, 0, 1, 0, 0, 1]); // ignores it, uses the triangle's own shape
+    expect(recalculated.warnings.join(" ")).toMatch(/recalculated from each triangle's shape/);
+  });
+
   it("makes flat normals that agree with the winding when the file has none", () => {
     const ccw = ok(TRIANGLE); // counter-clockwise seen from +Z
     expect(ccw.mesh.normals.slice(0, 3)).toEqual([0, 0, 1]);

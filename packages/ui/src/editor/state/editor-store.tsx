@@ -11,6 +11,7 @@ import type {
   ImportedTexture,
   SpriteAnimation,
   SpriteAnimationsData,
+  MeshCullMode,
   MeshInstance3DData,
   MeshPrimitive,
   ProjectMode,
@@ -50,6 +51,7 @@ import {
   type CollisionShapeData,
   type CollisionShapeKind,
   duplicateSceneNode,
+  ensureNodeIdsAbove,
   findSceneNode,
   flattenSceneTree,
   formatSoundTime,
@@ -97,7 +99,7 @@ import {
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
 import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
-import { DEFAULT_START_SCENE_ID, instanceWouldCycle, listScenes, newSceneId, outerNodeId, pruneUnusedAssets, uniqueSceneName, withSceneEntries, withSceneTree, type SceneEntry } from "@goodstuff/core";
+import { DEFAULT_START_SCENE_ID, flattenAllScenes, instanceWouldCycle, listScenes, newSceneId, outerNodeId, pruneUnusedAssets, uniqueSceneName, withSceneEntries, withSceneTree, type SceneEntry } from "@goodstuff/core";
 import { EMPTY_HISTORY, endGesture, recordEdit, redoStep, undoStep, type EditHistory, type EditState } from "./edit-history";
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 
@@ -353,6 +355,7 @@ export type Action =
   | { type: "SET_MESH_TEXTURE"; id: string; textureId: string | null }
   | { type: "SET_MESH_COLOR"; id: string; color: string | null; at: number }
   | { type: "SET_MESH_UNLIT"; id: string; unlit: boolean }
+  | { type: "SET_MESH_CULL"; id: string; cull: MeshCullMode }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
@@ -432,6 +435,8 @@ export function createInitialState(): EditorState {
 
 /** Loads `project` into the editor already configured for its committed mode. */
 function loadProject(state: EditorState, project: ProjectSnapshot, filePath: string, logMessage: string): EditorState {
+  // Ids from an earlier session (or none, for a brand-new project) mustn't collide with ones this session creates later: see ensureNodeIdsAbove.
+  ensureNodeIdsAbove(flattenAllScenes(project).map((node) => node.id));
   return {
     ...state,
     sceneRoot: project.scene,
@@ -726,6 +731,13 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (!target?.mesh || (target.mesh.unlit ?? false) === action.unlit) return state;
       const { unlit: _cleared, ...withoutUnlit } = target.mesh;
       const chosen: MeshInstance3DData = action.unlit ? { ...withoutUnlit, unlit: true } : withoutUnlit;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
+    }
+    case "SET_MESH_CULL": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target?.mesh || (target.mesh.cull ?? "none") === action.cull) return state;
+      const { cull: _cleared, ...withoutCull } = target.mesh;
+      const chosen: MeshInstance3DData = action.cull === "none" ? withoutCull : { ...withoutCull, cull: action.cull };
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
     }
     case "SET_MESH_TEXTURE": {
@@ -1429,6 +1441,8 @@ interface EditorStoreValue {
   setMeshColor: (id: string, color: string | null) => void;
   /** Sets whether a mesh ignores the scene's lights and always shows its own color at full brightness. No-op for a node without a mesh. */
   setMeshUnlit: (id: string, unlit: boolean) => void;
+  /** Sets which side(s) of a mesh's triangles are drawn ("none": both, the default). No-op for a node without a mesh. */
+  setMeshCull: (id: string, cull: MeshCullMode) => void;
   /**
    * Asks for a .png file and, if the DS can use it, adds it to the project and puts it on the mesh `nodeId`. A refused
    * file changes nothing and is explained in the Output log; cancelling does nothing.
@@ -1578,6 +1592,8 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Change color of ${nameOf(action.id)}`, mergeKey: `mesh-color:${action.id}`, at: action.at };
     case "SET_MESH_UNLIT":
       return { label: `${action.unlit ? "Make" : "Stop making"} ${nameOf(action.id)} unlit` };
+    case "SET_MESH_CULL":
+      return { label: `Change face culling of ${nameOf(action.id)}` };
     case "ANIM_CREATE":
       return { label: `Add animation to ${nameOf(action.playerId)}` };
     case "ANIM_RENAME":
@@ -1974,6 +1990,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
 
   const setMeshColor = useCallback((id: string, color: string | null) => dispatch({ type: "SET_MESH_COLOR", id, color, at: Date.now() }), []);
   const setMeshUnlit = useCallback((id: string, unlit: boolean) => dispatch({ type: "SET_MESH_UNLIT", id, unlit }), []);
+  const setMeshCull = useCallback((id: string, cull: MeshCullMode) => dispatch({ type: "SET_MESH_CULL", id, cull }), []);
   const setMeshTexture = useCallback(
     (id: string, textureId: string | null) => dispatch({ type: "SET_MESH_TEXTURE", id, textureId }),
     []
@@ -2345,6 +2362,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setMeshTexture,
       setMeshColor,
       setMeshUnlit,
+      setMeshCull,
       selectScript,
       createScript,
       renameScript,

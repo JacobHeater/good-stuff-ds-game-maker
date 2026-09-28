@@ -1,0 +1,49 @@
+# Minimap: moves and turns $PlayerIcon (a small marker Sprite2D) to match the REAL player, over the minimap picture.
+# Attach this to the minimap's own Sprite2D (or any node on the same screen); $PlayerIcon is a sibling Sprite2D drawn on top of it.
+# Needs tests/prototypes/scripts/flight-8way.gsscript (or flight-8way-free.gsscript) on the player, which publishes
+# player_world_x/z/yaw for exactly this: nothing here reads the D-pad itself any more (see why below).
+#
+# Bug fixed from the original: it moved the icon straight off the D-pad (up/down/left/right), as if those were fixed
+# compass directions. They aren't -- the player's own script moves the player RELATIVE TO THE CAMERA (so "up" is
+# whichever way the camera is currently looking), which is why the map drifted out of step with the player the moment
+# the camera was orbited with L/R: the same D-pad press then sent the real player a different way in the world than it
+# sent the icon on the map. Reading the player's actual world position instead (below) can't ever disagree with it.
+
+# The player's real-world area this map picture covers: change these four to match your own world's layout. world_min_z
+# is the world Z where the FIRST (top) place-square starts, world_max_z is where the LAST one ends.
+var world_min_x = -32.0
+var world_max_x = 32.0
+var world_min_z = 0.0
+var world_max_z = 192.0
+# Turns the icon to face the way the map's "up" points, if it isn't the same as the world's own 0 degrees heading.
+var icon_rotation_offset = 0.0
+
+# Each place on the map is its own 64 x 64 square, stacked in one column: change square_count to how many places there are.
+var map_square_size = 64.0
+var map_square_count = 3.0
+var map_min_x = 0.0
+var map_max_x = 0.0
+var map_min_y = 0.0
+var map_max_y = 0.0
+
+func _ready():
+    map_max_x = map_square_size
+    map_max_y = map_square_size * map_square_count
+
+func _process(delta):
+    # Where the player is, as a fraction of the map's own area (0 at the near edge, 1 at the far edge), clamped so it
+    # can't wander off the picture if the player goes outside the area the map covers.
+    var t_x = (player_world_x - world_min_x) / (world_max_x - world_min_x)
+    var t_z = (player_world_z - world_min_z) / (world_max_z - world_min_z)
+    if t_x < 0.0:
+        t_x = 0.0
+    if t_x > 1.0:
+        t_x = 1.0
+    if t_z < 0.0:
+        t_z = 0.0
+    if t_z > 1.0:
+        t_z = 1.0
+
+    $PlayerIcon.position.x = map_min_x + t_x * (map_max_x - map_min_x)
+    $PlayerIcon.position.y = map_min_y + t_z * (map_max_y - map_min_y)
+    $PlayerIcon.rotation = player_world_yaw + icon_rotation_offset

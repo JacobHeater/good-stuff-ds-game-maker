@@ -106,6 +106,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         textureId: { type: "string", minLength: 1 },
         color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
         unlit: { type: "boolean" },
+        cull: { enum: ["none", "back", "front"] },
         triangleCount: { type: "number", minimum: 0 }
       },
       oneOf: [{ required: ["primitive"] }, { required: ["importedMeshId"] }]

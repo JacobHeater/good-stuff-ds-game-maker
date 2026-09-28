@@ -33,7 +33,8 @@ export function registerAssetsIpcHandlers(): void {
       filters: [{ name: "Wavefront OBJ model", extensions: ["obj"] }]
     });
     if (choice.canceled || choice.filePaths.length === 0) return { outcome: "canceled", warnings: [], errors: [] };
-    if (choice.filePaths.length > 1) return importPoses(choice.filePaths);
+    const recalculateNormals = await askRecalculateNormals();
+    if (choice.filePaths.length > 1) return importPoses(choice.filePaths, recalculateNormals);
     const filePath = choice.filePaths[0];
     const fileName = basename(filePath);
 
@@ -43,13 +44,34 @@ export function registerAssetsIpcHandlers(): void {
         return { outcome: "error", fileName, warnings: [], errors: [`"${fileName}" is ${(size / 1024 / 1024).toFixed(1)} MB; a model the DS can draw is far smaller than that.`] };
       }
       const text = await readFile(filePath, "utf-8");
-      const parsed = parseObj(text, { name: basename(filePath, extname(filePath)) });
+      const parsed = parseObj(text, { name: basename(filePath, extname(filePath)), recalculateNormals });
       if (!parsed.ok) return { outcome: "error", fileName, warnings: [], errors: parsed.errors };
       return { outcome: "ok", fileName, mesh: { id: randomUUID(), ...parsed.mesh }, warnings: parsed.warnings, errors: [] };
     } catch (error) {
       return { outcome: "error", fileName, warnings: [], errors: [`Couldn't read "${fileName}": ${error instanceof Error ? error.message : String(error)}`] };
     }
   });
+}
+
+/**
+ * Asked once per import (before the file is even read): whether to keep the .obj's own normals (the default, and what
+ * every import did before this question existed) or recompute them from the model's actual shape. Recalculating fixes a
+ * model whose normals disagree with its real geometry — usually seen as part of it reading unlit/dark from some camera
+ * angles but not others — at the cost of flat, per-face shading instead of whatever smooth shading the file's own normals
+ * gave it.
+ */
+async function askRecalculateNormals(): Promise<boolean> {
+  const result = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Use the file's own normals", "Recalculate from the model's shape"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Model normals",
+    message: "Use the file's own normals, or recalculate them from the model's shape?",
+    detail:
+      "Recalculating fixes a model that looks unlit or dark from some camera angles but not others (its own normals disagree with its actual shape), at the cost of flat, per-face shading instead of smooth shading."
+  });
+  return result.response === 1;
 }
 
 /** A rigged model can be big (a glb with textures); past this it isn't a model the DS can draw. */
@@ -91,7 +113,7 @@ const byName = (a: string, b: string): number => basename(a).localeCompare(basen
  * Several .obj files as the poses of one animated model (requirements/scene-designer/STORY.animated-3d-models.md): each is parsed like a single import, and they are put together
  * in the order of their names. The model is named for what the files have in common (walk1.obj, walk2.obj: "walk").
  */
-async function importPoses(filePaths: string[]): Promise<ImportMeshResult> {
+async function importPoses(filePaths: string[], recalculateNormals: boolean): Promise<ImportMeshResult> {
   const ordered = [...filePaths].sort(byName);
   const warnings: string[] = [];
   const meshes = [];
@@ -100,7 +122,7 @@ async function importPoses(filePaths: string[]): Promise<ImportMeshResult> {
     try {
       const size = (await stat(filePath)).size;
       if (size > MAX_OBJ_BYTES) return { outcome: "error", fileName, warnings: [], errors: [`"${fileName}" is ${(size / 1024 / 1024).toFixed(1)} MB; a model the DS can draw is far smaller than that.`] };
-      const parsed = parseObj(await readFile(filePath, "utf-8"), { name: basename(filePath, extname(filePath)) });
+      const parsed = parseObj(await readFile(filePath, "utf-8"), { name: basename(filePath, extname(filePath)), recalculateNormals });
       if (!parsed.ok) return { outcome: "error", fileName, warnings: [], errors: parsed.errors.map((error) => `${fileName}: ${error}`) };
       warnings.push(...parsed.warnings.map((warning) => `${fileName}: ${warning}`));
       meshes.push({ id: randomUUID(), ...parsed.mesh });

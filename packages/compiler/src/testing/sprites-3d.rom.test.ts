@@ -91,6 +91,26 @@ describe.skipIf(!toolchain.found || !haveMelon)("sprites on the 2D screen of a 3
     expect(ratio).toBeGreaterThanOrEqual(0.97);
   }, 180_000);
 
+  it("a sprite a script rotates and hides doesn't crash the hardware (oamSetHidden on a rotate/scale sprite), and is actually hidden", async () => {
+    // A script writing rotation makes the sprite affine ("rotate/scale"); a script writing visible then has to hide an affine sprite. The DS's
+    // OAM reuses the same bit for "hidden" (ordinary sprites) and "double size" (affine ones), so libnds refuses to touch it on an affine sprite
+    // (an assertion, printed right on the DS screen and halting) unless the runtime drops the sprite out of affine mode first.
+    const base = cubeWithSpritesProject();
+    const quad = base.scene.children.find((n) => n.name === "Quad")!;
+    quad.scriptId = "spin-hide";
+    const project: ProjectSnapshot = { ...base, scripts: [{ id: "spin-hide", name: "SpinHide", source: "func _ready():\n    rotation = 45.0\n    visible = false\n" }] };
+    const { diagnostics, screens } = await run(project, "spin-hide", "top");
+    expect(diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    // What the screen should show: the same project, but with Quad hidden (its rotation doesn't matter once it's invisible) -- this is what
+    // the script does by the time the first frame is captured, so the actual screen should match it closely if nothing crashed or mis-hid it.
+    const expectedProject: ProjectSnapshot = { ...base, scene: { ...base.scene, children: base.scene.children.map((n) => (n.name === "Quad" ? { ...n, visible: false } : n)) } };
+    const expectedBottom = drawReference(expectedProject, { top: BACKDROP_BLACK, bottom: BACKDROP_BLACK }).bottom;
+    const ratio = matchRatio(screens.bottom, expectedBottom);
+    console.info(`[sprites-3d] rotated + hidden sprite: no crash, matches the hidden-Quad reference by ${ratio.toFixed(4)}`);
+    expect(covered(screens.bottom, BACKDROP_BLACK), "the other three sprites are still on the bottom screen").toBeGreaterThan(500);
+    expect(ratio).toBeGreaterThanOrEqual(0.99);
+  }, 180_000);
+
   it("textures still work next to the sprites: a textured mesh keeps its picture with bank D given to the sprites", async () => {
     const { texturedProject } = await import("../fixtures");
     const textured = texturedProject();

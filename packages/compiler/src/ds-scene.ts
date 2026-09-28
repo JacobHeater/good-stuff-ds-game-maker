@@ -183,6 +183,8 @@ export interface DsMesh {
   animationCount: number;
   /** This mesh ignores the scene's lights and always shows `diffuse` at full brightness. */
   unlit: boolean;
+  /** Which side(s) of the mesh's triangles are drawn (see core's `MeshCullMode`). */
+  cull: "none" | "back" | "front";
 }
 
 /** The DS has only parallel (directional) lights. */

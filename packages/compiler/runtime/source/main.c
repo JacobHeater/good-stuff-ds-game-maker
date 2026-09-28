@@ -200,16 +200,18 @@ int main(void) {
 			active++;
 		}
 
-		uint32_t unlitPolyFormat = POLY_ALPHA(31) | POLY_CULL_NONE;
-		uint32_t polyFormat = unlitPolyFormat;
-		for (int i = 0; i < active; i++) polyFormat |= POLY_FORMAT_LIGHT0 << i;
+		uint32_t litBits = 0;
+		for (int i = 0; i < active; i++) litBits |= POLY_FORMAT_LIGHT0 << i;
+		/* Each mesh's own cull mode (GS_CULL_NONE/BACK/FRONT, scene.h) -> the geometry engine's own POLY_CULL_* bits. */
+		static const uint32_t CULL_BITS[3] = { POLY_CULL_NONE, POLY_CULL_BACK, POLY_CULL_FRONT };
 		/* An unlit mesh's polygons carry no light bits at all (not just an emission trick): with a light bit set, the geometry engine would
 		   still add that light's diffuse/specular contribution on top of the emission color, brightening it depending on the mesh's own
 		   turn relative to the light instead of leaving it at a flat, constant color. */
 		for (int i = 0; i < gs_scene.meshCount; i++) {
 			const GsMesh *mesh = &gs_scene.meshes[i];
 			if (!gs_world_visible[mesh->node]) continue;
-			glPolyFmt(mesh->unlit ? unlitPolyFormat : polyFormat);
+			const uint32_t cull = CULL_BITS[mesh->cull < 3 ? mesh->cull : 0];
+			glPolyFmt(POLY_ALPHA(31) | cull | (mesh->unlit ? 0 : litBits));
 			draw_mesh(mesh, i, !mesh->unlit && active > 0);
 		}
 
