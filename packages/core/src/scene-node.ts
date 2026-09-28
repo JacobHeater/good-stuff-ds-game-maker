@@ -102,6 +102,27 @@ export function getLightIntensity(node: { light?: LightData }): number {
 }
 
 /**
+ * What a Camera3D has beyond a transform. A scene has exactly one active camera -- the compiled ROM's view comes
+ * from it, and the editor's "view through the camera" mode (if switched to) would too. `current` absent on every
+ * Camera3D in a scene (every project saved before this existed, or a scene with only one camera) means the first
+ * Camera3D found in the scene's tree is the active one, so nothing changes for a project that never had to choose.
+ */
+export interface CameraData {
+  current?: boolean;
+}
+
+/**
+ * Whether `node` is its scene's active camera: explicitly marked so, or -- when none of `camerasInScene` is --
+ * the first one in tree order (today's compiler default, kept for a project saved before `current` existed).
+ * `camerasInScene` is every Camera3D node in the same scene, in tree order (`flattenSceneTreeInOrder`, filtered).
+ */
+export function isCurrentCamera(node: { id: string; camera?: CameraData }, camerasInScene: readonly { id: string; camera?: CameraData }[]): boolean {
+  if (node.camera?.current === true) return true;
+  if (camerasInScene.some((camera) => camera.camera?.current === true)) return false;
+  return camerasInScene[0]?.id === node.id;
+}
+
+/**
  * Which side(s) of a mesh's triangles are drawn: "none" draws both (the DS's own default, and the most forgiving of a
  * model whose winding is wrong or unknown), "back" draws only the side a correctly-wound triangle's winding faces
  * outward from (the usual choice for a solid, fully enclosed mesh), "front" draws only the other side (a mesh meant to
@@ -129,6 +150,13 @@ export interface MeshInstance3DData {
    * only the side actually facing the camera is ever drawn, so a stray inward-facing normal is culled away instead of shown.
    */
   cull?: MeshCullMode;
+  /**
+   * This mesh's opacity, 0 (invisible) to 1 (fully opaque, the default when absent). Compiled to the DS's 0..31 polygon
+   * alpha (`mesh-color.ts`'s `alphaLevelFromOpacity`, the same 31-level scale as a light's intensity). Below full, the
+   * geometry engine blends the mesh with what's behind it instead of writing depth, so it never occludes anything
+   * drawn after it.
+   */
+  alpha?: number;
   /**
    * Triangles this instance contributes to the DS's per-frame 3D budget, as of when the node was
    * created or its mesh last changed. A record of the count only: the budget and the compiler always
@@ -161,6 +189,8 @@ export interface SceneNode {
   mesh?: MeshInstance3DData;
   /** Light properties; only meaningful on a DirectionalLight3D. Absent means the defaults (full intensity). */
   light?: LightData;
+  /** Whether this is the scene's active camera; only meaningful on a Camera3D. Absent means the default (see `isCurrentCamera`). */
+  camera?: CameraData;
   /** Sound and playback settings; only meaningful on an AudioStreamPlayer. Absent means the defaults (see `getAudioPlayer`). */
   audio?: AudioPlayerData;
   /** Shape and size; only meaningful on a CollisionShape3D. Absent means the defaults (see `getCollisionShape`). */

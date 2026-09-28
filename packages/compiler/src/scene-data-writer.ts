@@ -210,10 +210,10 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
   out.push("static const GsMesh meshes[] = {");
-  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0 }");
+  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 31 }");
   scene.meshes.forEach((m, i) => {
     out.push(
-      `  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0}, ${CULL_CODES[m.cull]} }${i < scene.meshes.length - 1 ? "," : ""}`
+      `  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0}, ${CULL_CODES[m.cull]}, ${m.alpha} }${i < scene.meshes.length - 1 ? "," : ""}`
     );
   });
   out.push("};");

@@ -28,6 +28,7 @@ import {
   resolveMeshFrameGeometry,
   approximateConvexHull,
   getMeshFrameCount,
+  alphaLevelFromOpacity,
   getMeshDiffuseLevels,
   getSpriteAnimations,
   resolveMeshTexture,
@@ -265,15 +266,17 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     return true;
   });
 
-  // Camera.
+  // Camera. A Camera3D explicitly marked current (core's `isCurrentCamera`) wins outright; otherwise the first
+  // effectively-visible one, else the first in the tree, exactly as before `current` existed.
+  const markedCurrent = cameras.find((c) => c.node.camera?.current === true);
   if (cameras.length === 0) {
     diagnostics.push({ severity: "error", code: "no-camera", message: "The scene needs a Camera3D." });
-  } else if (cameras.length > 1) {
+  } else if (cameras.length > 1 && !markedCurrent) {
     diagnostics.push({
       severity: "warning",
       code: "multiple-cameras",
       nodeName: cameras[0].node.name,
-      message: `The scene has ${cameras.length} cameras; the first one in the tree is used.`
+      message: `The scene has ${cameras.length} cameras and none is marked current; the first one in the tree is used.`
     });
   }
 
@@ -561,7 +564,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         world: matrixF32(rigid),
         scale: scale.map(toF32) as [number, number, number],
         unlit: node.mesh!.unlit === true,
-        cull: node.mesh!.cull ?? "none"
+        cull: node.mesh!.cull ?? "none",
+        alpha: alphaLevelFromOpacity(node.mesh!.alpha ?? 1)
       };
     });
     if (built) dsMeshes.push(built);
@@ -577,7 +581,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   }
 
   let dsCamera: DsCamera | null = null;
-  const cameraEntry = cameras.find((c) => kept[c.index].effectivelyVisible) ?? cameras[0];
+  const cameraEntry = markedCurrent ?? cameras.find((c) => kept[c.index].effectivelyVisible) ?? cameras[0];
   dsCamera = guard(cameraEntry.node, () => ({
     node: cameraEntry.index,
     fovDegrees: DEFAULTS.fovDegrees,

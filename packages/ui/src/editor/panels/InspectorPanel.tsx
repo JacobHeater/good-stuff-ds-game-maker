@@ -1,6 +1,6 @@
 import { listScenes, MESH_CULL_MODES, withSceneTree } from "@goodstuff/core";
 import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshCullMode, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type Vector3 } from "@goodstuff/core";
-import { findSceneNode, flattenSceneTree, getImportedTriangleCount, getLightIntensity, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry } from "@goodstuff/core";
+import { findSceneNode, flattenSceneTree, flattenSceneTreeInOrder, getImportedTriangleCount, getLightIntensity, isCurrentCamera, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry, alphaLevelFromOpacity, getMeshOpacity } from "@goodstuff/core";
 import { useEditorStore, type Transform3DField } from "../state/editor-store";
 import { AnimationPlayerField } from "./AnimationPlayerField";
 import { AudioPlayerField } from "./AudioPlayerField";
@@ -85,6 +85,44 @@ function IntensityField({
       <span className="text-[10px] text-editor-text-muted">
         The DS has 31 light levels; this is level {lightLevelFromIntensity(intensity)}.
       </span>
+    </Field>
+  );
+}
+
+/**
+ * A mesh's opacity, 0 to 100%. Below full the DS blends the mesh with what's behind it instead of occluding it (and
+ * never writes depth for it), so a low value can make a mesh look wrong against other translucent meshes it overlaps
+ * (STORY.mesh-transparency.md) -- the same 31-level scale a light's intensity uses.
+ */
+function OpacityField({
+  opacity,
+  onChange,
+  onGestureBoundary
+}: {
+  opacity: number;
+  onChange: (opacity: number) => void;
+  onGestureBoundary: () => void;
+}): JSX.Element {
+  const percent = Math.round(opacity * 100);
+  return (
+    <Field label="Opacity">
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={percent}
+          aria-label="Opacity"
+          onChange={(event) => onChange(Number(event.target.value) / 100)}
+          onPointerDown={onGestureBoundary}
+          onPointerUp={onGestureBoundary}
+          onBlur={onGestureBoundary}
+          className="flex-1"
+        />
+        <span className="w-10 text-right tabular-nums text-editor-text-muted">{percent}%</span>
+      </div>
+      <span className="text-[10px] text-editor-text-muted">The DS has 31 opacity levels; this is level {alphaLevelFromOpacity(opacity)}.</span>
     </Field>
   );
 }
@@ -211,7 +249,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshCull, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, endEditGesture, attachScript, createScript, openScript } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setCameraCurrent, endEditGesture, attachScript, createScript, openScript } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -307,6 +345,9 @@ export function InspectorPanel(): JSX.Element {
               </Field>
             )}
             {node.mesh && (
+              <OpacityField opacity={getMeshOpacity(node.mesh)} onChange={(opacity) => setMeshAlpha(node.id, opacity)} onGestureBoundary={endEditGesture} />
+            )}
+            {node.mesh && (
               <Field label="Mesh">
                 <select
                   value={meshSelectValue(node.mesh)}
@@ -342,6 +383,17 @@ export function InspectorPanel(): JSX.Element {
                 onChange={(intensity) => setLightIntensity(node.id, intensity)}
                 onGestureBoundary={endEditGesture}
               />
+            )}
+            {node.kind === "Camera3D" && (
+              <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="camera-current">
+                <input
+                  type="checkbox"
+                  checked={isCurrentCamera(node, flattenSceneTreeInOrder(state.sceneRoot).filter((n) => n.kind === "Camera3D"))}
+                  onChange={(event) => setCameraCurrent(node.id, event.target.checked)}
+                  aria-label="Current camera"
+                />
+                Current camera (the one this scene's ROM sees through)
+              </label>
             )}
             {node.mesh && (
               <TextureField

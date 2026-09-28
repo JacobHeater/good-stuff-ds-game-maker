@@ -118,6 +118,15 @@ describe("the camera", () => {
     expect(codes(r)).toEqual(["multiple-cameras"]);
     expect(r.diagnostics[0].nodeName).toBe("Camera");
   });
+
+  it("a camera marked current is used instead of the first in the tree, and no warning fires", () => {
+    const second = { ...createSceneNode({ name: "Camera2", kind: "Camera3D", transform3D: { position: { x: 9, y: 9, z: 9 } } }), camera: { current: true } };
+    const r = translateScene3D(withChildren(cubeProject(), second));
+    expect(r.scene).not.toBeNull();
+    expect(codes(r)).toEqual([]);
+    const world = composeTransform(second.transform3D!.position, second.transform3D!.rotation, { x: 1, y: 1, z: 1 });
+    asFloats(r.scene!.camera.view).forEach((v, i) => expect(v).toBeCloseTo(invertAffine(world)[i], 3));
+  });
 });
 
 describe("lights", () => {
@@ -248,7 +257,7 @@ describe("determinism and the generated C", () => {
     const p = cubeProject();
     p.scene.children = p.scene.children.filter((c) => c.kind === "Camera3D");
     const text = writeSceneDataC(translateScene3D(p).scene!);
-    expect(text).toContain("static const GsMesh meshes[] = {\n  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0 }\n};");
+    expect(text).toContain("static const GsMesh meshes[] = {\n  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 31 }\n};");
     expect(text).toContain("static const GsLight lights[] = {\n  { 0, { 0, 0, 0 }, 0 }\n};");
   });
 });

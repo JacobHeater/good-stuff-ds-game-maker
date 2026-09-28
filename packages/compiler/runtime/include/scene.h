@@ -215,6 +215,7 @@ typedef struct {
 	uint16_t animationCount;
 	uint8_t unlit; /* 1: ignores the scene's lights, always shown at `diffuse`'s full brightness */
 	uint8_t cull;  /* a GS_CULL_* above */
+	uint8_t alpha; /* the geometry engine's polygon alpha, 0 (invisible) to 31 (fully opaque, the default) */
 } GsMesh;
 
 /* The DS only has parallel lights. */

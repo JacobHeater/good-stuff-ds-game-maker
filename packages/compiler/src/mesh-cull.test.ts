@@ -26,13 +26,14 @@ describe("a mesh's face culling", () => {
     expect(byNode(fronted, "Cube").cull).toBe("front");
   });
 
-  it("is emitted as the GsMesh struct's own trailing field in the generated C", () => {
+  it("is emitted as the GsMesh struct's own field in the generated C", () => {
     const cullCodeOf = (cull: MeshCullMode): string => {
       const { scene } = translateScene3D(withCull(primitivesProject(), "Cube", cull));
       const cubeIndex = scene!.meshes.findIndex((m) => scene!.nodes[m.node].name === "Cube");
       const c = writeSceneDataC(scene!);
       const rows = c.match(/static const GsMesh meshes\[\] = \{\n([\s\S]*?)\n\};/)![1].split("\n");
-      return rows[cubeIndex].trim().replace(/[},]+$/, "").trim().split(",").at(-1)!.trim();
+      // cull is second-from-last now (alpha, always 31 here, is the trailing field).
+      return rows[cubeIndex].trim().replace(/[},]+$/, "").trim().split(",").at(-2)!.trim();
     };
     expect(cullCodeOf("none")).toBe("0");
     expect(cullCodeOf("back")).toBe("1");

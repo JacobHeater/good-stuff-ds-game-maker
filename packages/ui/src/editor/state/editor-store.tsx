@@ -54,6 +54,8 @@ import {
   ensureNodeIdsAbove,
   findSceneNode,
   flattenSceneTree,
+  flattenSceneTreeInOrder,
+  isCurrentCamera,
   formatSoundTime,
   getAudioPlayer,
   getImportedTriangleCount,
@@ -356,7 +358,9 @@ export type Action =
   | { type: "SET_MESH_COLOR"; id: string; color: string | null; at: number }
   | { type: "SET_MESH_UNLIT"; id: string; unlit: boolean }
   | { type: "SET_MESH_CULL"; id: string; cull: MeshCullMode }
+  | { type: "SET_MESH_ALPHA"; id: string; alpha: number; at: number }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
+  | { type: "SET_CAMERA_CURRENT"; id: string; current: boolean }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
   | { type: "ANIM_RENAME"; playerId: string; animationId: string; name: string; at: number }
@@ -714,6 +718,33 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (getLightIntensity(target) === intensity) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, light: { intensity } })) };
     }
+    case "SET_CAMERA_CURRENT": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.kind !== "Camera3D") return state;
+      if (!action.current) {
+        // Unchecking just clears this camera's own explicit mark; it falls back to "current" again only if it's
+        // the first Camera3D left in the scene's tree (isCurrentCamera). A camera that was never explicitly
+        // marked (only current by that fallback) has nothing to clear. Nothing else in the scene changes.
+        if (target.camera?.current !== true) return state;
+        const { camera: _cleared, ...rest } = target;
+        return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, () => rest) };
+      }
+      // Already current, explicitly or by the same fallback: checking it again is a no-op.
+      const camerasInScene = flattenSceneTreeInOrder(state.sceneRoot).filter((node) => node.kind === "Camera3D");
+      if (isCurrentCamera(target, camerasInScene)) return state;
+      // Checking it marks the target current and unmarks whichever other Camera3D in this scene had it. A
+      // camera in another scene is untouched -- each scene picks its own active camera independently.
+      const setCurrent = (node: SceneNode): SceneNode => {
+        const children = node.children.map(setCurrent);
+        if (node.id === action.id) return { ...node, children, camera: { current: true } };
+        if (node.kind === "Camera3D" && node.camera?.current === true) {
+          const { camera: _cleared, ...rest } = node;
+          return { ...rest, children };
+        }
+        return { ...node, children };
+      };
+      return { ...state, sceneRoot: setCurrent(state.sceneRoot) };
+    }
     case "SET_MESH_COLOR": {
       const target = findSceneNode(state.sceneRoot, action.id);
       if (!target?.mesh) return state;
@@ -738,6 +769,15 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (!target?.mesh || (target.mesh.cull ?? "none") === action.cull) return state;
       const { cull: _cleared, ...withoutCull } = target.mesh;
       const chosen: MeshInstance3DData = action.cull === "none" ? withoutCull : { ...withoutCull, cull: action.cull };
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
+    }
+    case "SET_MESH_ALPHA": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target?.mesh) return state;
+      const opacity = Math.min(1, Math.max(0, action.alpha));
+      if ((target.mesh.alpha ?? 1) === opacity) return state;
+      const { alpha: _cleared, ...withoutAlpha } = target.mesh;
+      const chosen: MeshInstance3DData = opacity === 1 ? withoutAlpha : { ...withoutAlpha, alpha: opacity };
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
     }
     case "SET_MESH_TEXTURE": {
@@ -1421,6 +1461,13 @@ interface EditorStoreValue {
   renameNode: (id: string, name: string) => void;
   /** Sets a DirectionalLight3D's intensity, 0..1 (the brightness of a white light). One undo step per drag. No-op for other nodes. */
   setLightIntensity: (id: string, intensity: number) => void;
+  /**
+   * Marks or unmarks a Camera3D as the scene's active camera. Marking it unmarks whichever other Camera3D in
+   * the same scene had it; unmarking it just clears its own mark (it falls back to "current" again only if it's
+   * the first Camera3D left in the scene's tree). No-op for a node that isn't a Camera3D, or setting what it
+   * already explicitly is.
+   */
+  setCameraCurrent: (id: string, current: boolean) => void;
   /** Undoes the last scene edit (Ctrl+Z). Does nothing when there's nothing to undo. */
   undo: () => void;
   /** Redoes the last undone edit (Ctrl+Shift+Z). */
@@ -1443,6 +1490,8 @@ interface EditorStoreValue {
   setMeshUnlit: (id: string, unlit: boolean) => void;
   /** Sets which side(s) of a mesh's triangles are drawn ("none": both, the default). No-op for a node without a mesh. */
   setMeshCull: (id: string, cull: MeshCullMode) => void;
+  /** Sets a mesh's opacity, 0..1 (1, fully opaque, is the default). Dragging the slider is one undo step per pause. No-op for a node without a mesh. */
+  setMeshAlpha: (id: string, alpha: number) => void;
   /**
    * Asks for a .png file and, if the DS can use it, adds it to the project and puts it on the mesh `nodeId`. A refused
    * file changes nothing and is explained in the Output log; cancelling does nothing.
@@ -1594,6 +1643,8 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `${action.unlit ? "Make" : "Stop making"} ${nameOf(action.id)} unlit` };
     case "SET_MESH_CULL":
       return { label: `Change face culling of ${nameOf(action.id)}` };
+    case "SET_MESH_ALPHA":
+      return { label: `Change opacity of ${nameOf(action.id)}`, mergeKey: `mesh-alpha:${action.id}`, at: action.at };
     case "ANIM_CREATE":
       return { label: `Add animation to ${nameOf(action.playerId)}` };
     case "ANIM_RENAME":
@@ -1622,6 +1673,8 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Rename ${nameOf(action.id)}`, mergeKey: `rename-node:${action.id}`, at: action.at };
     case "SET_LIGHT_INTENSITY":
       return { label: `Change intensity of ${nameOf(action.id)}`, mergeKey: `light:${action.id}`, at: action.at };
+    case "SET_CAMERA_CURRENT":
+      return { label: action.current ? `Make ${nameOf(action.id)} the active camera` : `Unmark ${nameOf(action.id)} as the active camera` };
     case "IMPORT_TEXTURE":
       return { label: `Import texture ${action.texture.name}` };
     case "SET_NODE_SCREEN":
@@ -1924,6 +1977,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     (id: string, intensity: number) => dispatch({ type: "SET_LIGHT_INTENSITY", id, intensity, at: Date.now() }),
     []
   );
+  const setCameraCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_CAMERA_CURRENT", id, current }), []);
   const setActiveTool = useCallback((tool: EditorTool) => dispatch({ type: "SET_TOOL", tool }), []);
   const moveNode = useCallback((id: string, x: number, y: number) => dispatch({ type: "MOVE_NODE", id, x, y, at: Date.now() }), []);
   const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
@@ -1991,6 +2045,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   const setMeshColor = useCallback((id: string, color: string | null) => dispatch({ type: "SET_MESH_COLOR", id, color, at: Date.now() }), []);
   const setMeshUnlit = useCallback((id: string, unlit: boolean) => dispatch({ type: "SET_MESH_UNLIT", id, unlit }), []);
   const setMeshCull = useCallback((id: string, cull: MeshCullMode) => dispatch({ type: "SET_MESH_CULL", id, cull }), []);
+  const setMeshAlpha = useCallback((id: string, alpha: number) => dispatch({ type: "SET_MESH_ALPHA", id, alpha, at: Date.now() }), []);
   const setMeshTexture = useCallback(
     (id: string, textureId: string | null) => dispatch({ type: "SET_MESH_TEXTURE", id, textureId }),
     []
@@ -2350,6 +2405,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setFpsTarget,
       setActiveTool,
       setLightIntensity,
+      setCameraCurrent,
       undo,
       redo,
       endEditGesture,
@@ -2363,6 +2419,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setMeshColor,
       setMeshUnlit,
       setMeshCull,
+      setMeshAlpha,
       selectScript,
       createScript,
       renameScript,
@@ -2431,6 +2488,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setFpsTarget,
       setActiveTool,
       setLightIntensity,
+      setCameraCurrent,
       undo,
       redo,
       endEditGesture,

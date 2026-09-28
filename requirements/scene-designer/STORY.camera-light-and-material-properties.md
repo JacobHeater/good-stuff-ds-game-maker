@@ -35,7 +35,8 @@ Add the minimum properties, edited in the Inspector, saved in the project
 file, and honored by both the editor viewport and the compiler:
 
 - **`Camera3D`**: field of view, near and far planes; and a way to mark
-  which camera is the active one (a scene has exactly one).
+  which camera is the active one (a scene has exactly one). **Marking the active camera is done**
+  (`STORY.current-camera.md`); field of view and near/far planes are not.
 - **Lights**: color (and a simple intensity for directional lights). **Intensity is done** (`STORY.directional-light-intensity.md`); color is not.
 - **`MeshInstance3D`**: a color.
 - **A "view through the active camera" mode** in the 3D viewport, alongside

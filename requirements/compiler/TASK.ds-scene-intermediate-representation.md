@@ -44,10 +44,11 @@ Lives in a new package, `@goodstuff/compiler`, which depends only on
   (`debugger/BUG.mesh-triangle-budget-disagrees-with-rendered-geometry.md`);
   the compiler must not carry its own copy of the numbers.
 - **Camera.** The active camera's world position and orientation as a view
-  matrix, plus projection settings. Until cameras have properties
+  matrix, plus projection settings. Until field of view/near/far have properties
   (`scene-designer/STORY.camera-light-and-material-properties.md`) the
-  compiler uses documented defaults, and there is exactly one active camera
-  (the first `Camera3D` in tree order; none is an error).
+  compiler uses documented defaults for those. There is exactly one active camera:
+  whichever `Camera3D` is marked `current` (`scene-designer/STORY.current-camera.md`),
+  else the first one in tree order; none at all is an error.
 - **Lights.** Up to four directional lights (direction from the node's
   rotation, default white). The DS has four hardware lights.
 - **Screen.** Which physical screen shows the 3D scene, taken from the 3D

@@ -86,13 +86,14 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform sampler2D map;
   uniform float uUseMap;
   uniform vec3 uTint;
+  uniform float uOpacity;
   varying vec3 vColor;
   varying vec2 vUv;
 
   void main() {
     vec4 texel = uUseMap > 0.5 ? texture2D(map, vUv) : vec4(1.0);
     if (texel.a < 0.5) discard; // the DS's texture transparency is on or off
-    gl_FragColor = vec4(vColor * texel.rgb * uTint, 1.0); // no tone mapping, no gamma: the numbers are what's shown
+    gl_FragColor = vec4(vColor * texel.rgb * uTint, uOpacity); // no tone mapping, no gamma: the numbers are what's shown
   }
 `;
 
@@ -110,10 +111,13 @@ export interface DsMaterialOptions {
   side: Side;
   /** This mesh ignores the scene's lights and always shows `diffuse` at full brightness, regardless of how many lights are in the scene. */
   unlit?: boolean;
+  /** 0..1, the mesh's opacity (the DS's polygon alpha divided by 31). Absent is 1, fully opaque. */
+  opacity?: number;
 }
 
 /** A material that shades with the DS's lighting. Dispose it when done. */
 export function createDsMaterial(options: DsMaterialOptions): ShaderMaterial {
+  const opacity = options.opacity ?? 1;
   return new ShaderMaterial({
     uniforms: {
       ...sharedUniforms,
@@ -122,10 +126,15 @@ export function createDsMaterial(options: DsMaterialOptions): ShaderMaterial {
       uUnlit: { value: options.unlit ?? false },
       uTint: { value: new Vector3(...(options.tint ?? [1, 1, 1])) },
       map: { value: options.map ?? blank },
-      uUseMap: { value: options.map ? 1 : 0 }
+      uUseMap: { value: options.map ? 1 : 0 },
+      uOpacity: { value: opacity }
     },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
-    side: options.side
+    side: options.side,
+    // The DS never writes depth for a polygon below full alpha (main.c), so a translucent mesh here shouldn't either,
+    // or it would wrongly hide whatever's drawn behind it next, unlike the ROM.
+    transparent: opacity < 1,
+    depthWrite: opacity >= 1
   });
 }

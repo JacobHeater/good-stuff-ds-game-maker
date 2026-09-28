@@ -129,6 +129,7 @@ static void enter_scene(int index, int first) {
 	if (first) {
 		glInit();
 		glEnable(GL_TEXTURE_2D);
+		glEnable(GL_BLEND); /* without this the geometry engine stores a polygon's alpha but never blends with it -- every mesh draws fully opaque regardless of GsMesh.alpha */
 		glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 31); /* opaque: a visible backdrop, so a picture of the screen shows where its edges are */
 		glClearPolyID(63);
 		glClearDepth(0x7FFF);
@@ -207,12 +208,22 @@ int main(void) {
 		/* An unlit mesh's polygons carry no light bits at all (not just an emission trick): with a light bit set, the geometry engine would
 		   still add that light's diffuse/specular contribution on top of the emission color, brightening it depending on the mesh's own
 		   turn relative to the light instead of leaving it at a flat, constant color. */
-		for (int i = 0; i < gs_scene.meshCount; i++) {
-			const GsMesh *mesh = &gs_scene.meshes[i];
-			if (!gs_world_visible[mesh->node]) continue;
-			const uint32_t cull = CULL_BITS[mesh->cull < 3 ? mesh->cull : 0];
-			glPolyFmt(POLY_ALPHA(31) | cull | (mesh->unlit ? 0 : litBits));
-			draw_mesh(mesh, i, !mesh->unlit && active > 0);
+		/* Opaque meshes draw first, so a translucent one drawn afterward blends with what's already on screen (the DS never
+		   writes depth for a polygon below full alpha, so a translucent mesh drawn before an opaque one behind it would let
+		   that opaque mesh wrongly draw over it later). Each translucent mesh gets its own poly ID: translucent polygons
+		   sharing an ID don't depth-test against each other, which is wanted within one mesh's own triangles (it hides seams
+		   instead of self-sorting them) but wrong between two different translucent meshes, which still need to sort. */
+		for (int pass = 0; pass < 2; pass++) {
+			for (int i = 0; i < gs_scene.meshCount; i++) {
+				const GsMesh *mesh = &gs_scene.meshes[i];
+				if (!gs_world_visible[mesh->node] || mesh->alpha == 0) continue;
+				const int opaque = mesh->alpha >= 31;
+				if (opaque != (pass == 0)) continue;
+				const uint32_t cull = CULL_BITS[mesh->cull < 3 ? mesh->cull : 0];
+				const uint32_t polyId = opaque ? POLY_ID(0) : POLY_ID((i % 63) + 1);
+				glPolyFmt(POLY_ALPHA(mesh->alpha) | polyId | cull | (mesh->unlit ? 0 : litBits));
+				draw_mesh(mesh, i, !mesh->unlit && active > 0);
+			}
 		}
 
 		glFlush(0);

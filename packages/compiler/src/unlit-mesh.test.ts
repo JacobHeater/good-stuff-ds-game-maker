@@ -26,8 +26,8 @@ describe("a mesh set to unlit", () => {
     const sphereIndex = scene!.meshes.findIndex((m) => scene!.nodes[m.node].name === "Sphere");
     const c = writeSceneDataC(scene!);
     const rows = c.match(/static const GsMesh meshes\[\] = \{\n([\s\S]*?)\n\};/)![1].split("\n");
-    // unlit is the second-to-last field (cull, always 0 here, is the last).
-    const unlitFlagOf = (row: string): string => row.trim().replace(/[},]+$/, "").trim().split(",").at(-2)!.trim();
+    // unlit is third-from-last (cull, always 0 here, and alpha, always 31 here, follow it).
+    const unlitFlagOf = (row: string): string => row.trim().replace(/[},]+$/, "").trim().split(",").at(-3)!.trim();
     expect(unlitFlagOf(rows[cubeIndex])).toBe("1");
     expect(unlitFlagOf(rows[sphereIndex])).toBe("0");
   });

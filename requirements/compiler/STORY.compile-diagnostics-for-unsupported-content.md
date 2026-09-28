@@ -25,7 +25,7 @@ entry), so a compile is never a mystery.
 | Situation | Severity |
 |---|---|
 | No `Camera3D` | Error |
-| More than one `Camera3D` | Warning: the first in tree order is used |
+| More than one `Camera3D`, none marked current | Warning: the first in tree order is used (`scene-designer/STORY.current-camera.md`) |
 | More than 4 directional lights | Error |
 | `OmniLight3D` | Warning: skipped (no positional lights on the DS) |
 | Total triangles over the hardware budget | Error, with the count and the limit |

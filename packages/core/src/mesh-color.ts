@@ -20,3 +20,14 @@ export function meshColorFromLevels(levels: readonly [number, number, number]): 
 export function getMeshDiffuseLevels(mesh: { color?: string }, textured: boolean): [number, number, number] {
   return parseMeshColor(mesh.color) ?? (textured ? [31, 31, 31] : [24, 24, 24]);
 }
+
+/** A mesh's opacity level as the DS holds it: its POLY_ALPHA, 0..31, from a 0..1 fraction (the same scale a light's intensity uses). */
+export function alphaLevelFromOpacity(opacity: number): number {
+  const clamped = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1;
+  return Math.round(clamped * 31);
+}
+
+/** A mesh's opacity, 0..1 (absent is fully opaque). */
+export function getMeshOpacity(mesh: { alpha?: number }): number {
+  return mesh.alpha === undefined ? 1 : Math.min(1, Math.max(0, mesh.alpha));
+}

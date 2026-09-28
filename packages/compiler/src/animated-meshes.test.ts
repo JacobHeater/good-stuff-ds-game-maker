@@ -79,7 +79,7 @@ describe("compiling a model with several poses", () => {
     expect(c).toContain("static const uint16_t mesh_frames[] = { 0, 1, 2 };");
     expect(c).toContain("static const uint16_t mesh_animation_0_frames[] = { 0, 1, 2, 1 };");
     expect(c).toContain(`{ mesh_animation_0_frames, 4, 1, ${Math.round((12 * 4096) / 60)} }`);
-    expect(c).toMatch(/static const GsMesh meshes\[\] = \{\n  \{ 0, \d+, 0, \d+, 0, 3, 0, 0, 2, 0, 0 \}\n\};/);
+    expect(c).toMatch(/static const GsMesh meshes\[\] = \{\n  \{ 0, \d+, 0, \d+, 0, 3, 0, 0, 2, 0, 0, 31 \}\n\};/);
     expect(c).toContain("2, mesh_frames, mesh_animations");
   });
 

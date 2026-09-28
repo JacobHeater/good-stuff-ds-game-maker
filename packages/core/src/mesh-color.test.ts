@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getMeshDiffuseLevels, meshColorFromLevels, parseMeshColor } from "./mesh-color";
+import { alphaLevelFromOpacity, getMeshDiffuseLevels, getMeshOpacity, meshColorFromLevels, parseMeshColor } from "./mesh-color";
 
 /** requirements/scene-designer/STORY.mesh-colors.md */
 
@@ -25,5 +25,19 @@ describe("a mesh's color", () => {
     expect(getMeshDiffuseLevels({}, true)).toEqual([31, 31, 31]);
     expect(getMeshDiffuseLevels({ color: "#ff0000" }, true)).toEqual([31, 0, 0]);
     expect(getMeshDiffuseLevels({ color: "nonsense" }, false)).toEqual([24, 24, 24]);
+  });
+});
+
+describe("a mesh's opacity", () => {
+  it("is read as the same 31 levels a light's intensity uses", () => {
+    expect([0, 0.5, 1].map(alphaLevelFromOpacity)).toEqual([0, 16, 31]);
+    expect(alphaLevelFromOpacity(2)).toBe(31);
+    expect(alphaLevelFromOpacity(-1)).toBe(0);
+  });
+
+  it("defaults to fully opaque", () => {
+    expect(getMeshOpacity({})).toBe(1);
+    expect(getMeshOpacity({ alpha: 0.4 })).toBe(0.4);
+    expect(getMeshOpacity({ alpha: 0 })).toBe(0);
   });
 });

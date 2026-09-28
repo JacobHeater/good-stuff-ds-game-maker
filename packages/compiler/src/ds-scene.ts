@@ -185,6 +185,8 @@ export interface DsMesh {
   unlit: boolean;
   /** Which side(s) of the mesh's triangles are drawn (see core's `MeshCullMode`). */
   cull: "none" | "back" | "front";
+  /** This mesh's polygon alpha, 0 (invisible) to 31 (fully opaque, the default). Below 31 the geometry engine blends it and skips its depth write. */
+  alpha: number;
 }
 
 /** The DS has only parallel (directional) lights. */

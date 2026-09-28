@@ -95,6 +95,14 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         intensity: { type: "number", minimum: 0, maximum: 1 }
       }
     },
+    // Whether a Camera3D is its scene's active camera; absent defers to the first Camera3D in tree order.
+    cameraData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        current: { type: "boolean" }
+      }
+    },
     // A mesh uses a built-in primitive OR an imported model, never both and never neither.
     meshInstanceData: {
       type: "object",
@@ -107,6 +115,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
         unlit: { type: "boolean" },
         cull: { enum: ["none", "back", "front"] },
+        alpha: { type: "number", minimum: 0, maximum: 1 },
         triangleCount: { type: "number", minimum: 0 }
       },
       oneOf: [{ required: ["primitive"] }, { required: ["importedMeshId"] }]
@@ -383,6 +392,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         transform3D: { $ref: "#/definitions/transform3D" },
         mesh: { $ref: "#/definitions/meshInstanceData" },
         light: { $ref: "#/definitions/lightData" },
+        camera: { $ref: "#/definitions/cameraData" },
         audio: { $ref: "#/definitions/audioPlayerData" },
         collision: { $ref: "#/definitions/collisionShapeData" },
         touchArea2D: { $ref: "#/definitions/touchArea2DData" },

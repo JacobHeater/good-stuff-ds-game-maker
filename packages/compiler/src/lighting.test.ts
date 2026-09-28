@@ -70,7 +70,7 @@ describe("scale reaches the ROM as a separate value", () => {
     const c = writeSceneDataC(translateScene3D(lightProbeProject(0)).scene!);
     // 12288 is 3.0 in 20.12: the node's local scale, then its baked world scale, then the baked rotation + translation matrix.
     expect(c).toMatch(/\{ 0, 0, 1, -1, -1, -1, -1, \{ 0, 0, 0 \}, \{ 368640, 0, 0 \}, \{ 12288, 12288, 12288 \}, \{ 12288, 12288, 12288 \}, \{ \{/);
-    expect(c).toMatch(/static const GsMesh meshes\[\] = \{\n  \{ 0, 25368, 0, 1, 0, 0, -1, 0, 0, 0, 0 \}\n\};/); // 25368 is grey 24 of 31; the mesh is node 1
+    expect(c).toMatch(/static const GsMesh meshes\[\] = \{\n  \{ 0, 25368, 0, 1, 0, 0, -1, 0, 0, 0, 0, 31 \}\n\};/); // 25368 is grey 24 of 31; the mesh is node 1
   });
 });
 

@@ -80,7 +80,7 @@ static const GsSpriteAnimation mesh_animations[] = {
 };
 
 static const GsMesh meshes[] = {
-  { 0, 25368, 0, 1, 0, 0, -1, 0, 0, 0, 0 }
+  { 0, 25368, 0, 1, 0, 0, -1, 0, 0, 0, 0, 31 }
 };
 
 static const GsLight lights[] = {

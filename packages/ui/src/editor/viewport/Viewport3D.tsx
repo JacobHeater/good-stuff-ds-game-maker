@@ -1,6 +1,7 @@
 import {
   DS_HARDWARE_PROFILE,
   getMeshDiffuseLevels,
+  getMeshOpacity,
   findSceneNode,
   getAnimationPlayer,
   getCollisionShape,
@@ -158,9 +159,10 @@ function MeshView({
         tint: map && selected ? TEXTURED_SELECTED_TINT : undefined,
         map,
         side,
-        unlit: mesh.unlit === true
+        unlit: mesh.unlit === true,
+        opacity: getMeshOpacity(mesh)
       }),
-    [map, selected, side, ownDiffuse, mesh.unlit]
+    [map, selected, side, ownDiffuse, mesh.unlit, mesh.alpha]
   );
   useEffect(() => () => material.dispose(), [material]);
   if (!geometry) return null;
