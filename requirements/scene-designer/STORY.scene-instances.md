@@ -28,5 +28,7 @@ With several scenes (`STORY.multiple-scenes.md`) you can make a Player scene, bu
 ## Notes (built and verified)
 - Unit tests: `core/src/scene-instances.test.ts` (expansion, ids, nesting, missing and cyclic scenes, live change), `compiler/src/scene-instances.test.ts` (2D sprites drawn once per instance at the shifted place, a 3D scene's mesh and script built in),
   `ui/.../scene-instance-edits.test.ts` (adding, naming, refusing cycles, undo, saving). 974 fast tests pass.
+- The editor's live Hardware budget panel initially read the un-expanded tree, so it didn't count an instance's own meshes/sprites/sounds/textures at all (the compiler always did, since it expands instances before
+  building): see `BUG.triangle-budget-ignores-scene-instances.md`.
 - **Not verified:** the drag and drop and the viewport drawing in the real app (no E2E run), and an instance on the DS (it compiles to ordinary nodes, so the runtime is unchanged). Not built: overrides inside an instance, dragging an instance's
   contents in the viewport (only the instance moves, from the Inspector), a scene tab drop onto the viewport itself, a "make this node into a scene" command.

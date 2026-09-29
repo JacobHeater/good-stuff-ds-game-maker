@@ -1,6 +1,7 @@
 import { computeSceneBudget, DS_HARDWARE_PROFILE } from "@goodstuff/core";
 
 import { useEditorStore, type BottomTabId } from "../state/editor-store";
+import { useShownSceneRoot } from "../state/shown-scene";
 import { AnimationPanel } from "./AnimationPanel";
 
 const TABS: BottomTabId[] = ["Output", "Debugger", "Hardware", "Animation"];
@@ -20,7 +21,11 @@ function BudgetBar({ used, limit }: { used: number; limit: number }): JSX.Elemen
 
 function HardwareBudgetTab(): JSX.Element {
   const { state } = useEditorStore();
-  const budget = computeSceneBudget(state.sceneRoot, state.project?.meshes, state.project?.textures, state.project?.sounds, state.project?.sprites);
+  // Instanced scenes (STORY.scene-instances.md) contribute their own meshes/sprites/sounds to the ROM's budget
+  // exactly as the compiler counts them, so the live gauge here has to look inside instances too, not just the
+  // nodes literally in this scene's own tree, or it can show "under budget" for a scene the compiler refuses.
+  const shownRoot = useShownSceneRoot();
+  const budget = computeSceneBudget(shownRoot, state.project?.meshes, state.project?.textures, state.project?.sounds, state.project?.sprites);
 
   return (
     <div className="grid grid-cols-2 gap-4 p-3 text-xs">
