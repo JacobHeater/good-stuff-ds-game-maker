@@ -129,12 +129,19 @@ static void enter_scene(int index, int first) {
 	if (first) {
 		glInit();
 		glEnable(GL_TEXTURE_2D);
-		glEnable(GL_BLEND); /* without this the geometry engine stores a polygon's alpha but never blends with it -- every mesh draws fully opaque regardless of GsMesh.alpha */
 		glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 31); /* opaque: a visible backdrop, so a picture of the screen shows where its edges are */
 		glClearPolyID(63);
 		glClearDepth(0x7FFF);
 		glViewport(0, 0, 255, 191);
 	}
+	/* GL_BLEND (DISP3DCNT bit 3) is a global geometry-engine switch, not a per-polygon one: without it the engine
+	   stores a polygon's alpha but never blends with it, so every mesh draws fully opaque regardless of
+	   GsMesh.alpha. It's only turned on for a scene that actually has a translucent mesh (alpha < 31), not left on
+	   for every scene regardless -- a plain, fully-opaque scene has no reason to pay whatever extra per-polygon
+	   work the geometry engine does with it on, and each scene is re-checked here since scenes can differ. */
+	int translucent = 0;
+	for (int i = 0; i < gs_scene.meshCount && !translucent; i++) translucent = gs_scene.meshes[i].alpha < 31;
+	if (translucent) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 	free(textureNames);
 	textureNames = 0;
 	load_textures();

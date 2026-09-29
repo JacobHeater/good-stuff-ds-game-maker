@@ -354,6 +354,18 @@ let lastGizmoInteractionAt = 0;
 const GIZMO_CLICK_GRACE_MS = 400;
 
 /**
+ * The transform gizmo's own three.js controls instance, while one is mounted (BUG.gizmo-drag-selects-mesh-behind-it.md).
+ * TransformControls does its own raycasting against its handles directly on the canvas element -- it never goes through
+ * react-three-fiber's per-object events at all, so a mesh with no handler of its own (the gizmo's arrows) is invisible to
+ * a click-to-select raycast, which then "sees through" it to whatever mesh is actually behind the handle (the ground
+ * under a tree, say) and selects that instead. `axis` is the handle currently under the pointer, if any (kept in sync by
+ * TransformControls on every pointer move, so it is already correct before a click's own event even starts, regardless
+ * of which of the two separate listeners on the canvas happens to run first): a click is read as a manipulation, not a
+ * selection, whenever it is non-null.
+ */
+let activeGizmoControls: { axis: string | null } | null = null;
+
+/**
  * What an animation preview changes for a node: the values the animation gives it at the playhead. The viewport shows these in place of the node's own; the
  * node itself (and so the Inspector and the saved project) is not touched.
  */
@@ -415,6 +427,12 @@ function SelectionGizmo({
 
   return (
     <TransformControls
+      // React calls this with the instance on mount and with null on unmount, which is exactly when the gizmo
+      // should start/stop being consulted (`instance`'s type comes from TransformControls' own ref type; `axis`
+      // is private there, hence the cast through `unknown` to the one field this file actually reads).
+      ref={(instance) => {
+        activeGizmoControls = instance as unknown as { axis: string | null } | null;
+      }}
       object={target}
       mode={tool === "move" ? "translate" : tool}
       space={tool === "move" ? "world" : "local"}
@@ -583,7 +601,12 @@ export function Viewport3D(): JSX.Element {
               activeScreen={activeScreen}
               selectedId={state.selectedNodeId}
               objects={nodeObjects.current}
-              onSelect={selectNode}
+              onSelect={(id) => {
+                // A gizmo handle is under the pointer: this click manipulates it, not a reselection of whatever
+                // mesh happens to be behind the handle (see activeGizmoControls above).
+                if (activeGizmoControls?.axis != null) return;
+                selectNode(id);
+              }}
               preview={previewOverrides}
             />
             {gizmoTool && (
