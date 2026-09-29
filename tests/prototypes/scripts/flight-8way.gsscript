@@ -6,7 +6,7 @@
 #
 # Controls:
 #   D-pad         : walk on the ground, fly in the air, in 8 directions relative to where the camera looks
-#   X (hold)      : fly up (this also takes off from the ground)
+#   X (hold)      : fly up (this also takes off from the ground) -- needs at least min_energy_to_fly energy
 #   B (hold)      : fly down (touching the ground lands and goes back to walking)
 #   L / R         : orbit the camera around the player
 
@@ -17,18 +17,21 @@ var ground_drag = 10.0        # how fast it stops walking when the D-pad is let 
 var climb_speed = 4.0         # how fast X lifts it
 var descend_speed = 4.0       # how fast B lowers it
 var takeoff_lift = 2.0        # the little hop when X first lifts it off the ground
-var fall_gravity = -7.5       # gravity when walking or falling
+var fall_gravity = -1.5       # gravity when walking or falling
 var acceleration = 10.0       # how fast it reaches the wanted speed
 var air_drag = 3.0            # how fast it slows when let go in the air
 var model_front_yaw = 180.0   # the turn that points the model's front along its travel: 180 for a model that faces -Z, 0 for one that faces +Z
 var camera_turn_speed = 90.0  # degrees a second the camera orbits
-var camera_dist = 3.5         # how far behind the player the camera is
-var camera_height = 1.2       # how far above the player
+var camera_dist = 6.5         # how far behind the player the camera is
+var camera_height = 1.0       # how far above the player
 var shadow_max_fall = 50.0    # how far down $Shadow looks for ground; no ground within this and it hides
-var shadow_lift = 0.02        # how far above the ground $Shadow sits, so it doesn't flicker into the floor
+var shadow_lift = 0.05        # how far above the ground $Shadow sits, so it doesn't flicker into the floor
 var shadow_full_size_height = 1.0  # at this height or less above the ground, $Shadow is full size
 var shadow_min_scale = 0.4    # the smallest $Shadow shrinks to, high in the air
 var shadow_fade_height = 6.0  # the height above the ground at which $Shadow is at its smallest
+var min_energy_to_fly = 25    # below this, X can't take off, and flying already in the air is cut short (forced into a fall)
+var energy_drain_ticks = 8    # how many _process frames a flying tick lasts before energy_drain_amount is taken
+var energy_drain_amount = 5   # how much energy flying costs every energy_drain_ticks frames
 
 # --- State ---
 var is_flying = false
@@ -37,6 +40,12 @@ var vy = 0.0
 var vz = 0.0
 var cam_angle = 0.0           # which way the camera looks, in degrees (0 looks toward +Z)
 var anim_state = -1           # which animation is playing: 0 the "Ground" one, 1 the "Fly" one (-1: none yet)
+var energy_timer = 8.0
+
+# The player's energy: flying costs it over time (see energy_drain_*), and X can't take off -- nor keep flying --
+# below min_energy_to_fly. A global var, not a plain one, so a HUD label or anything else that cares about it (in
+# any scene) can read or show it without needing to know this player's own node name or structure.
+global var energy = 100
 
 # The camera's true heading in the world, shared with any other script in any scene that needs to face the camera
 # (a billboard name tag, a billboarded tree) without needing to know this player's own node names or structure.
@@ -145,10 +154,14 @@ func _process(delta):
     var up = Input.is_button_down("x")
     var down = Input.is_button_down("b")
 
-    # 1. Taking off and landing: X lifts it off the ground; touching the ground (without X held) lands it.
-    if up and not is_flying:
+    # 1. Taking off and landing: X lifts it off the ground, but only with enough energy; touching the ground
+    # (without X held) lands it. Energy running out mid-flight cuts flying short too, not just a fresh takeoff:
+    # otherwise flying above the threshold once would let it fly forever, ignoring energy from then on.
+    if up and not is_flying and energy >= min_energy_to_fly:
         is_flying = true
         vy = takeoff_lift
+    if is_flying and energy < min_energy_to_fly:
+        is_flying = false
     if is_flying and is_on_floor() and not up and vy <= 0.0:
         is_flying = false
 
@@ -214,6 +227,16 @@ func _process(delta):
         else:
             vx -= vx * air_drag * delta
             vz -= vz * air_drag * delta
+
+    # Flying costs energy over time, not per frame directly: energy_timer counts down energy_drain_ticks frames
+    # of flying, then energy_drain_amount is taken and the timer starts over.
+    if is_flying:
+        energy_timer -= 1.0
+        if energy_timer <= 0.0:
+            energy_timer = energy_drain_ticks
+            energy -= energy_drain_amount
+            if energy < 0:
+                energy = 0
 
     update_animation()
 
