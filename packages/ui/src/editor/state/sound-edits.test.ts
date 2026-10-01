@@ -168,6 +168,32 @@ describe("audio player settings", () => {
   });
 });
 
+describe("compressing a sound already in the project (requirements/audio/STORY.compressed-sound.md)", () => {
+  it("re-encodes it to ima-adpcm in place, logging the size change, undoably", () => {
+    const state = importNew(openProject(), sound("a", 16000)); // 32000 bytes of pcm16
+    const compressed = run(state, { type: "COMPRESS_SOUND", soundId: "a" });
+    const stored = compressed.project!.sounds!.find((s) => s.id === "a")!;
+    expect(stored.format).toBe("ima-adpcm");
+    expect(stored.sampleCount).toBe(16000);
+    expect(compressed.outputLog.at(-1)).toMatch(/^Compressed "beep-a" to ima-adpcm: 32000 bytes -> \d+ bytes of sound memory\.$/);
+    expect(compressed.history.past.at(-1)!.label).toBe("Compress beep-a");
+    const undone = run(compressed, { type: "UNDO" });
+    expect(undone.project!.sounds!.find((s) => s.id === "a")!.format).toBeUndefined();
+  });
+
+  it("does nothing for a sound that's already ima-adpcm, or that isn't in the project", () => {
+    const state = importNew(openProject(), sound("a"));
+    const already = run(state, { type: "COMPRESS_SOUND", soundId: "a" });
+    expect(run(already, { type: "COMPRESS_SOUND", soundId: "a" })).toBe(already);
+    expect(run(state, { type: "COMPRESS_SOUND", soundId: "nope" })).toBe(state);
+  });
+
+  it("does nothing with no project open", () => {
+    const state = createInitialState();
+    expect(editorReducer(state, { type: "COMPRESS_SOUND", soundId: "a" })).toBe(state);
+  });
+});
+
 describe("sounds and saving", () => {
   it("saves what players use, once, and forgets what nothing uses", () => {
     let state = importNew(openProject(), sound("a"));

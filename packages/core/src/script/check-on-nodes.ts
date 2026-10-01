@@ -1,4 +1,5 @@
 import { getAnimationPlayer } from "../animation";
+import { audioClipNames, getAudioPlayer } from "../audio-player";
 import { getSpriteAnimations } from "../sprite-animation";
 import { flattenSceneTree, type SceneNode } from "../scene-node";
 import { checkScript, type ScriptCheckResult, type ScriptSceneContext } from "./checker";
@@ -15,7 +16,8 @@ export function attachedInfo(node: SceneNode): ScriptSceneContext["attached"][nu
         ? getAnimationPlayer(node).animations.map((animation) => animation.name)
         : node.kind === "AnimatedSprite2D" || node.kind === "MeshInstance3D"
           ? getSpriteAnimations(node).animations.map((animation) => animation.name)
-          : undefined
+          : undefined,
+    sounds: node.kind === "AudioStreamPlayer" ? audioClipNames(getAudioPlayer(node)) : undefined
   };
 }
 

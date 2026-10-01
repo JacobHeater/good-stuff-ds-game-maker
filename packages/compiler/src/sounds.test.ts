@@ -1,4 +1,4 @@
-import { DS_HARDWARE_PROFILE, encodeSamples, getSoundSamples, type ProjectSnapshot } from "@goodstuff/core";
+import { DS_HARDWARE_PROFILE, encodeSamples, rawSoundBytes, type ProjectSnapshot } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { hasErrors } from "./diagnostics";
@@ -18,9 +18,9 @@ describe("compiling audio players", () => {
     const tone = toneSound("tone", { sampleRate: 22050, seconds: 0.2 }); // 4410 samples: even, so nothing is padded
     const { scene } = sceneOf(soundProbeProject([audioPlayerNode("Music", { soundId: "tone", volume: 0.5, pitch: 2, loop: true })], [tone]));
     expect(scene!.sounds).toHaveLength(1);
-    expect(scene!.sounds[0]).toMatchObject({ key: "sound:tone", label: "tone", sampleRate: 22050 });
-    expect(scene!.sounds[0].samples).toEqual(Array.from(getSoundSamples(tone)));
-    expect(scene!.audioPlayers).toEqual([{ sound: 0, volume: 64, frequency: 44100, loop: true, autoplay: true }]);
+    expect(scene!.sounds[0]).toMatchObject({ key: "sound:tone", label: "tone", sampleRate: 22050, format: "pcm16" });
+    expect(scene!.sounds[0].bytes).toEqual(Array.from(rawSoundBytes(tone)));
+    expect(scene!.audioPlayers).toEqual([{ sound: 0, volume: 64, frequency: 44100, loop: true, autoplay: true, clipStart: 0, clipCount: 0 }]);
   });
 
   it("writes a sound used by several players once", () => {
@@ -39,9 +39,9 @@ describe("compiling audio players", () => {
   it("pads an odd number of samples to a whole 4-byte word with silence", () => {
     const five = { id: "five", name: "five", sampleRate: 8000, samples: encodeSamples(new Int16Array([1, 2, 3, 4, 5])) };
     const { scene } = sceneOf(soundProbeProject([audioPlayerNode("A", { soundId: "five" })], [five]));
-    expect(scene!.sounds[0].samples).toEqual([1, 2, 3, 4, 5, 0]);
+    expect(scene!.sounds[0].bytes).toEqual([...Array.from(rawSoundBytes(five)), 0, 0]); // 10 bytes of samples, padded to the next whole 4-byte word
     const even = { ...five, id: "even", samples: encodeSamples(new Int16Array([1, 2, 3, 4])) };
-    expect(sceneOf(soundProbeProject([audioPlayerNode("A", { soundId: "even" })], [even])).scene!.sounds[0].samples).toHaveLength(4);
+    expect(sceneOf(soundProbeProject([audioPlayerNode("A", { soundId: "even" })], [even])).scene!.sounds[0].bytes).toHaveLength(8);
   });
 
   it("leaves out a hidden player and a player under a hidden node", () => {
@@ -129,11 +129,12 @@ describe("the generated C for sounds", () => {
   const text = writeSceneDataC(sceneOf(soundProbeProject([audioPlayerNode("A", { soundId: "tone", volume: 0.5, pitch: 2, loop: true }), audioPlayerNode("B", { soundId: "tone", autoplay: false })], [tone])).scene!);
 
   it("emits each sound as an aligned constant array and fills GsSound and GsAudioPlayer in order", () => {
-    expect(text).toContain("/* sound tone: 8 samples at 8000 Hz, 16 bytes */");
-    expect(text).toMatch(/static const int16_t sound_0_samples\[\] __attribute__\(\(aligned\(4\)\)\) = \{\n  [-\d, ]+\n\};/);
-    expect(text).toContain("static const GsSound sounds[] = {\n  { 8, 8000, sound_0_samples }\n};");
-    expect(text).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 16000, 64, 1, 1 },\n  { 0, 8000, 127, 0, 0 }\n};");
-    expect(text).toContain("  1, 2, 0, 0, /* sound, audio player, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
+    expect(text).toContain("/* sound tone: pcm16, 16 bytes at 8000 Hz */");
+    expect(text).toMatch(/static const uint8_t sound_0_data\[\] __attribute__\(\(aligned\(4\)\)\) = \{\n[\d,\n ]+\n\};/);
+    expect(text).toContain("static const GsSound sounds[] = {\n  { 16, 8000, 1, sound_0_data }\n};");
+    expect(text).toContain("static const GsAudioClip audioClips[] = {\n  { 0, 0, 0, 0 }\n};");
+    expect(text).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 16000, 64, 1, 1, 0, 0 },\n  { 0, 8000, 127, 0, 0, 0, 0 }\n};");
+    expect(text).toContain("  1, 2, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
   });
 
   it("is data only, and the same scene gives the same text", () => {
@@ -143,8 +144,9 @@ describe("the generated C for sounds", () => {
 
   it("gives empty tables a placeholder entry, since C doesn't allow an empty array", () => {
     const empty = writeSceneDataC(sceneOf(soundProbeProject([], [])).scene!);
-    expect(empty).toContain("static const GsSound sounds[] = {\n  { 0, 0, 0 }\n};");
-    expect(empty).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 0, 0, 0, 0 }\n};");
-    expect(empty).toContain("  0, 0, 0, 0, /* sound, audio player, collider, hull point counts */");
+    expect(empty).toContain("static const GsSound sounds[] = {\n  { 0, 0, 0, 0 }\n};");
+    expect(empty).toContain("static const GsAudioClip audioClips[] = {\n  { 0, 0, 0, 0 }\n};");
+    expect(empty).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 0, 0, 0, 0, 0, 0 }\n};");
+    expect(empty).toContain("  0, 0, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */");
   });
 });

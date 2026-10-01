@@ -1,4 +1,5 @@
 import type {
+  AudioClip,
   AudioPlayerData,
   LabelData,
   FpsTarget,
@@ -58,6 +59,7 @@ import {
   isCurrentCamera,
   formatSoundTime,
   getAudioPlayer,
+  MAX_EXTRA_AUDIO_CLIPS,
   getImportedTriangleCount,
   importGltf,
   readGltfFile,
@@ -97,7 +99,8 @@ import {
   type DropPosition,
   uniqueScriptName,
   updateSceneNode,
-  DS_HARDWARE_PROFILE
+  DS_HARDWARE_PROFILE,
+  compressSoundToAdpcm
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
 import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
@@ -119,6 +122,8 @@ export const NEW_DIRECTIONAL_LIGHT_ROTATION = { x: -45, y: -30, z: 0 } as const;
 export type EditorTool = "select" | "move" | "rotate" | "scale";
 /** The settings of an audio player that can be edited one at a time (the sound itself is chosen with `setAudioSound`). */
 export type AudioPlayerChange = Partial<Pick<AudioPlayerData, "autoplay" | "volume" | "pitch" | "loop">>;
+/** A named clip's own settings, edited one at a time; `soundId: null` clears its sound. */
+export type AudioClipChange = Partial<Pick<AudioClip, "volume" | "pitch" | "loop">> & { soundId?: string | null };
 /** What can be edited on a collision shape: any of these at once (a box's size may name just some of its axes). */
 /** A change to a Sprite2D's rotation (degrees, clockwise) and/or its scale on each axis. */
 /** What the animation editor changes about one animation of an AnimatedSprite2D; the fields given are the ones that change. */
@@ -391,12 +396,17 @@ export type Action =
   | { type: "SPRITE_ANIM_START"; id: string; name: string | null }
   | { type: "SET_AUDIO_SOUND"; id: string; soundId: string | null }
   | { type: "SET_AUDIO_PLAYER"; id: string; change: AudioPlayerChange; at: number }
+  | { type: "AUDIO_CLIP_CREATE"; playerId: string; id: string }
+  | { type: "AUDIO_CLIP_RENAME"; playerId: string; clipId: string; name: string; at: number }
+  | { type: "AUDIO_CLIP_DELETE"; playerId: string; clipId: string }
+  | { type: "AUDIO_CLIP_SET"; playerId: string; clipId: string; change: AudioClipChange; at: number }
   | { type: "SET_COLLISION_SHAPE"; id: string; change: CollisionShapeChange; at: number }
   | { type: "SET_SPRITE_TRANSFORM"; id: string; change: SpriteTransformChange; at: number }
   | { type: "SET_TOUCH_AREA_2D"; id: string; change: TouchArea2DChange; at: number }
   | { type: "SET_LABEL"; id: string; change: LabelChange; at: number }
   | { type: "SET_TOUCH_AREA_3D"; id: string; change: TouchArea3DChange; at: number }
   | { type: "IMPORT_SOUND"; nodeId: string | null; sound: ImportedSound; warnings: string[] }
+  | { type: "COMPRESS_SOUND"; soundId: string }
   | { type: "SELECT_SCRIPT"; id: string | null }
   | { type: "CREATE_SCRIPT"; attachTo: string | null; id: string }
   | { type: "RENAME_SCRIPT"; id: string; name: string; at: number }
@@ -1032,6 +1042,46 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (audio.autoplay === current.autoplay && audio.volume === current.volume && audio.pitch === current.pitch && audio.loop === current.loop) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, audio })) };
     }
+    case "AUDIO_CLIP_CREATE":
+      return changeAudioPlayer(state, action.playerId, (data) => {
+        const clips = data.clips ?? [];
+        if (clips.length >= MAX_EXTRA_AUDIO_CLIPS) return null;
+        return { ...data, clips: [...clips, { id: action.id, name: uniqueAnimationName(clips.map((c) => c.name), "Sound"), volume: 1, pitch: 1, loop: false }] };
+      });
+    case "AUDIO_CLIP_RENAME":
+      return changeAudioPlayer(state, action.playerId, (data) => {
+        const clips = data.clips ?? [];
+        const name = action.name.trim();
+        const current = clips.find((c) => c.id === action.clipId);
+        if (!current || name === "" || name === current.name || clips.some((c) => c.id !== current.id && c.name === name)) return null;
+        return { ...data, clips: clips.map((c) => (c.id === current.id ? { ...c, name } : c)) };
+      });
+    case "AUDIO_CLIP_DELETE":
+      return changeAudioPlayer(state, action.playerId, (data) => {
+        const clips = data.clips ?? [];
+        if (!clips.some((c) => c.id === action.clipId)) return null;
+        const remaining = clips.filter((c) => c.id !== action.clipId);
+        if (remaining.length > 0) return { ...data, clips: remaining };
+        const { clips: _cleared, ...withoutClips } = data;
+        return withoutClips;
+      });
+    case "AUDIO_CLIP_SET":
+      return changeAudioPlayer(state, action.playerId, (data) => {
+        const clips = data.clips ?? [];
+        const current = clips.find((c) => c.id === action.clipId);
+        if (!current) return null;
+        const { change } = action;
+        const { soundId: _cleared, ...withoutSound } = current;
+        const withSound: AudioClip = change.soundId === undefined ? current : change.soundId === null ? withoutSound : { ...withoutSound, soundId: change.soundId };
+        const next: AudioClip = {
+          ...withSound,
+          volume: change.volume !== undefined && Number.isFinite(change.volume) ? clampVolume(change.volume) : withSound.volume,
+          pitch: change.pitch !== undefined && Number.isFinite(change.pitch) ? clampPitch(change.pitch) : withSound.pitch,
+          loop: change.loop ?? withSound.loop
+        };
+        if (next.soundId === current.soundId && next.volume === current.volume && next.pitch === current.pitch && next.loop === current.loop) return null;
+        return { ...data, clips: clips.map((c) => (c.id === current.id ? next : c)) };
+      });
     case "SET_COLLISION_SHAPE": {
       const target = findSceneNode(state.sceneRoot, action.id);
       if (target?.kind !== "CollisionShape3D") return state;
@@ -1139,6 +1189,19 @@ function applyAction(state: EditorState, action: Action): EditorState {
         sceneRoot: updateSceneNode(state.sceneRoot, parent.id, (node) => ({ ...node, children: [...node.children, newNode] })),
         selectedNodeId: newNode.id,
         outputLog: [...state.outputLog, `Imported sound "${sound.name}" (${details}) as node "${name}".`, ...warnings]
+      };
+    }
+    case "COMPRESS_SOUND": {
+      if (!state.project) return state;
+      const sound = state.project.sounds?.find((candidate) => candidate.id === action.soundId);
+      if (!sound || sound.format === "ima-adpcm") return state;
+      const before = getSoundByteSize(sound);
+      const compressed = compressSoundToAdpcm(sound);
+      const sounds = state.project.sounds!.map((candidate) => (candidate.id === sound.id ? compressed : candidate));
+      return {
+        ...state,
+        project: { ...state.project, sounds },
+        outputLog: [...state.outputLog, `Compressed "${sound.name}" to ima-adpcm: ${before} bytes -> ${getSoundByteSize(compressed)} bytes of sound memory.`]
       };
     }
     case "SELECT_SCRIPT":
@@ -1457,6 +1520,13 @@ interface EditorStoreValue {
     /** Changes the panel's own state: what is selected and the preview (not edits). */
     ui: (change: Partial<AnimationUi>) => void;
   };
+  /** An AudioStreamPlayer's own named clips (requirements/audio/STORY.named-audio-clips.md), playable with `play("name")` alongside its own sound. At most `MAX_EXTRA_AUDIO_CLIPS`; `create` is a no-op past that (and returns an id regardless, which then names nothing). */
+  audioClips: {
+    create: (playerId: string) => string;
+    rename: (playerId: string, clipId: string, name: string) => void;
+    remove: (playerId: string, clipId: string) => void;
+    set: (playerId: string, clipId: string, change: AudioClipChange) => void;
+  };
   /** Renames a node (the name is trimmed; an empty one is ignored). Typing is one undo step per pause. */
   renameNode: (id: string, name: string) => void;
   /** Sets a DirectionalLight3D's intensity, 0..1 (the brightness of a white light). One undo step per drag. No-op for other nodes. */
@@ -1560,6 +1630,8 @@ interface EditorStoreValue {
    * nothing and is explained in the Output log; cancelling does nothing.
    */
   importSound: (nodeId: string | null) => Promise<void>;
+  /** Re-encodes a sound already in the project to ima-adpcm, in place (no original file needed). A no-op if it already is one. */
+  compressSound: (soundId: string) => void;
   /**
    * Asks for an .obj file and, if it is acceptable, adds a MeshInstance3D that uses it under the selected
    * node. A refused file changes nothing and is explained in the Output log; cancelling does nothing.
@@ -1708,6 +1780,10 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Change starting animation of ${nameOf(action.id)}` };
     case "IMPORT_SOUND":
       return { label: `Import sound ${action.sound.name}` };
+    case "COMPRESS_SOUND": {
+      const name = before.project?.sounds?.find((sound) => sound.id === action.soundId)?.name ?? "sound";
+      return { label: `Compress ${name}` };
+    }
     case "CREATE_SCRIPT":
       return { label: "Create script" };
     case "RENAME_SCRIPT":
@@ -1758,6 +1834,19 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       if (change.autoplay !== undefined) return { label: `Turn autoplay ${change.autoplay ? "on" : "off"} for ${nameOf(action.id)}` };
       return { label: `Turn loop ${change.loop ? "on" : "off"} for ${nameOf(action.id)}` };
     }
+    case "AUDIO_CLIP_CREATE":
+      return { label: `Add a named sound to ${nameOf(action.playerId)}` };
+    case "AUDIO_CLIP_RENAME":
+      return { label: `Rename a sound of ${nameOf(action.playerId)}`, mergeKey: `audio-clip-rename:${action.clipId}`, at: action.at };
+    case "AUDIO_CLIP_DELETE":
+      return { label: `Delete a sound of ${nameOf(action.playerId)}` };
+    case "AUDIO_CLIP_SET": {
+      const { change } = action;
+      if (change.volume !== undefined) return { label: `Change volume of a sound of ${nameOf(action.playerId)}`, mergeKey: `audio-clip:${action.clipId}:volume`, at: action.at };
+      if (change.pitch !== undefined) return { label: `Change pitch of a sound of ${nameOf(action.playerId)}`, mergeKey: `audio-clip:${action.clipId}:pitch`, at: action.at };
+      if (change.soundId !== undefined) return { label: `Change the sound of a named clip of ${nameOf(action.playerId)}` };
+      return { label: `Turn loop ${change.loop ? "on" : "off"} for a sound of ${nameOf(action.playerId)}` };
+    }
     case "SET_TWO_D_SCREEN":
       return { label: `Put the 2D screen on the ${action.screen}` };
     case "ADD_NODE":
@@ -1792,6 +1881,16 @@ function changePlayer(state: EditorState, playerId: string, change: (data: Anima
   const next = change(data);
   if (!next) return state;
   return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, playerId, (node) => ({ ...node, animation: next })), animationUi: animationUi ?? state.animationUi };
+}
+
+/** Like `changePlayer`, for an AudioStreamPlayer's named clips (`STORY.named-audio-clips.md`). `change` returns null for a no-op. */
+function changeAudioPlayer(state: EditorState, playerId: string, change: (data: AudioPlayerData) => AudioPlayerData | null): EditorState {
+  const player = findSceneNode(state.sceneRoot, playerId);
+  if (!player || player.kind !== "AudioStreamPlayer") return state;
+  const data = getAudioPlayer(player);
+  const next = change(data);
+  if (!next) return state;
+  return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, playerId, (node) => ({ ...node, audio: next })) };
 }
 
 /** What an undo puts back: the scene, the project's imported models, and the selection. */
@@ -2157,6 +2256,19 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     (id: string, change: AudioPlayerChange) => dispatch({ type: "SET_AUDIO_PLAYER", id, change, at: Date.now() }),
     []
   );
+  const audioClips = useMemo(
+    () => ({
+      create: (playerId: string): string => {
+        const id = crypto.randomUUID();
+        dispatch({ type: "AUDIO_CLIP_CREATE", playerId, id });
+        return id;
+      },
+      rename: (playerId: string, clipId: string, name: string) => dispatch({ type: "AUDIO_CLIP_RENAME", playerId, clipId, name, at: Date.now() }),
+      remove: (playerId: string, clipId: string) => dispatch({ type: "AUDIO_CLIP_DELETE", playerId, clipId }),
+      set: (playerId: string, clipId: string, change: AudioClipChange) => dispatch({ type: "AUDIO_CLIP_SET", playerId, clipId, change, at: Date.now() })
+    }),
+    []
+  );
   const setSpriteTransform = useCallback((id: string, change: SpriteTransformChange) => dispatch({ type: "SET_SPRITE_TRANSFORM", id, change, at: Date.now() }), []);
   const setTouchArea2D = useCallback((id: string, change: TouchArea2DChange) => dispatch({ type: "SET_TOUCH_AREA_2D", id, change, at: Date.now() }), []);
   const setLabel = useCallback((id: string, change: LabelChange) => dispatch({ type: "SET_LABEL", id, change, at: Date.now() }), []);
@@ -2190,6 +2302,8 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     },
     [state.project]
   );
+
+  const compressSound = useCallback((soundId: string) => dispatch({ type: "COMPRESS_SOUND", soundId }), []);
 
   const importModel = useCallback(async (poses?: boolean): Promise<void> => {
     if (!state.project || state.project.mode !== "3D") return;
@@ -2436,7 +2550,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setTouchArea3D,
       renameNode,
       animations,
+      audioClips,
       importSound,
+      compressSound,
       importTexture,
       setSpriteImage,
       setNodeScreen,
@@ -2513,7 +2629,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setTouchArea3D,
       renameNode,
       animations,
+      audioClips,
       importSound,
+      compressSound,
       importTexture,
       setSpriteImage,
       setNodeScreen,

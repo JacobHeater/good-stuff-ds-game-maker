@@ -34,30 +34,41 @@ export interface DsTexture {
   texels: number[];
 }
 
-/** A sound's samples, shared by every audio player that uses it. */
+/** A sound's data, shared by every audio player that uses it. */
 export interface DsSound {
   key: string;
   label: string;
   /** Samples per second, as recorded. */
   sampleRate: number;
-  /**
-   * Mono signed 16-bit samples, padded with one silent sample when the count is odd so the data is a whole number of
-   * 4-byte words (what the DS's sound hardware reads).
-   */
-  samples: number[];
+  /** "pcm16" (mono signed 16-bit samples) or "ima-adpcm" (the DS's own compressed format, about a quarter the size). */
+  format: "pcm16" | "ima-adpcm";
+  /** The exact bytes the DS plays (`soundPlaySample`'s `data`/`bytes`), padded with zeros to a whole number of 4-byte words. */
+  bytes: number[];
 }
 
 /** One AudioStreamPlayer's playback: which sound, and how. */
 export interface DsAudioPlayer {
-  /** Index into `DsScene3D.sounds`. */
+  /** Index into `DsScene3D.sounds`, or -1 for a player with no sound of its own (named clips only -- `play()` with no name does nothing on one of these, only `play("name")` does). */
   sound: number;
   /** 0..127. */
   volume: number;
   /** Playback rate in Hz: the sound's sample rate times the pitch, limited to what the hardware takes. */
   frequency: number;
   loop: boolean;
-  /** Start when the game starts. A player without it is in the ROM but only a script can start it. */
+  /** Start when the game starts. A player without it is in the ROM but only a script can start it. Never true when `sound` is -1. */
   autoplay: boolean;
+  /** This player's own named clips (requirements/audio/STORY.named-audio-clips.md), playable with `play("name")`: `audioClips[clipStart .. clipStart + clipCount)`. */
+  clipStart: number;
+  clipCount: number;
+}
+
+/** One named clip of an AudioStreamPlayer: its own sound and playback settings, independent of the player's own (unnamed) sound. */
+export interface DsAudioClip {
+  /** Index into `DsScene3D.sounds`. */
+  sound: number;
+  volume: number;
+  frequency: number;
+  loop: boolean;
 }
 
 /**
@@ -224,6 +235,7 @@ export interface DsScene3D {
   textures: DsTexture[];
   sounds: DsSound[];
   audioPlayers: DsAudioPlayer[];
+  audioClips: DsAudioClip[];
   colliders: DsCollider[];
   animationPlayers: DsAnimationPlayer[];
   animations: DsAnimation[];
@@ -315,11 +327,15 @@ export interface DsSprite {
  * One `Label` on a screen: text on the 8 x 8 grid (`column` 0..31, `row` 0..23), in one of the console's eight colors. `text` is plain ASCII (the compiler replaces anything the DS's
  * font hasn't got) and may hold `{}` where the label's value goes. In a 3D project `node` is the label's place in the node table (its visibility is the node's), or -1.
  */
-/** One of the project's global variables (`global var`), as the runtime keeps it: one 32-bit number (a float in 20.12) with the value the game starts with. */
+/**
+ * One of the project's global variables (`global var`), as the runtime keeps it: for a number or bool, one 32-bit
+ * slot (a float in 20.12) with the value the game starts with; for a string, the text itself (the runtime holds it
+ * as a pointer to a ROM constant, never in the save file -- see `orderGlobalsForRuntime` in `translate-scene-3d.ts`).
+ */
 export interface DsGlobal {
   name: string;
-  type: "int" | "float" | "bool";
-  value: number;
+  type: "int" | "float" | "bool" | "string";
+  value: number | string;
 }
 
 export interface DsLabel {

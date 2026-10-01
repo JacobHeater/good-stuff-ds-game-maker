@@ -304,4 +304,28 @@ describe("the example scripts kept in tests/prototypes/scripts", () => {
     expect(result.scene).toBeNull();
     expect(result.diagnostics.map((d) => d.message).join("\n")).toMatch(/needs a node with a collision shape under it, and this script is attached to Cube, which has none/);
   });
+
+  it("day-night-cycle compiles cleanly and cycles time through Morning, Mid-Day and Night as its timer runs out", () => {
+    const label = createSceneNode({ name: "Label", kind: "Label" });
+    const icon = createSceneNode({ name: "PlayerIcon", kind: "Node3D" });
+    const music = audioPlayerNode("Music", {
+      clips: [
+        { id: "c1", name: "Morning", soundId: "morning", volume: 1, pitch: 1, loop: true },
+        { id: "c2", name: "Day", soundId: "day", volume: 1, pitch: 1, loop: true },
+        { id: "c3", name: "Night", soundId: "night", volume: 1, pitch: 1, loop: true }
+      ]
+    });
+    // `location` is a global the real game declares in its movement script; a tiny stand-in script here declares it so this one checks cleanly on its own.
+    const project = scriptedProject(
+      [
+        { name: "Location", source: "global var location = 1\nfunc _ready():\n    pass\n", attachTo: ["Camera"] },
+        { name: "DayNight", source: example("day-night-cycle.gsscript") }
+      ],
+      [label, icon, music]
+    );
+    project.sounds = [toneSound("morning"), toneSound("day"), toneSound("night")];
+    const result = translate(project);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.scene).not.toBeNull();
+  });
 });

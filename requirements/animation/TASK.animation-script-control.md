@@ -17,6 +17,10 @@ On an `AnimationPlayer` node (`$Name`, or `self` for a script attached to one):
 on a sound player, or a sound call on an animation player, is an error saying what the node has. The animation player in the call counts as used for the
 compiler's "nothing starts this animation" warning, and every node its tracks animate is kept in the game (even when hidden) and made movable.
 
+**Update** (`audio/STORY.named-audio-clips.md`): an `AudioStreamPlayer` can now have its own named sounds too, so `play("name")` on one is no longer always an
+arity error -- it resolves the name the same way `play("name")` resolves an animation's, against that player's own clips. `play()`/`stop()` with no name are
+unaffected either way.
+
 ## Acceptance Criteria
 ```gherkin
 Scenario: The calls

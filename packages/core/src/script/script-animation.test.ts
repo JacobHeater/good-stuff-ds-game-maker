@@ -63,7 +63,9 @@ describe("controlling an AnimationPlayer", () => {
 
   it("keeps a sound player's play() and stop() as they were, and says what each kind takes", () => {
     expect(errors(check("func f():\n    $Music.play()\n    $Music.stop()\n"))).toEqual([]);
-    expect(errors(check('func f():\n    $Music.play("x")\n'))[0]).toMatch(/play\(\) takes 0 arguments, but 1 was given/);
+    // $Music.play("x") is no longer an arity error: a sound player's play("name") now starts a named clip
+    // (requirements/audio/STORY.named-audio-clips.md) -- see script-audio.test.ts.
+    expect(errors(check('func f():\n    $Music.play("x")\n'))[0]).toMatch(/has no named sounds yet/);
     expect(errors(check("func f():\n    $Music.is_playing()\n"))[0]).toMatch(/\$Music is a AudioStreamPlayer, which has no "is_playing"/);
     expect(errors(check("func f():\n    $Music.speed_scale = 1.0\n"))[0]).toMatch(/\$Music is a AudioStreamPlayer, which has no "speed_scale"/);
     expect(errors(check("func f():\n    $Door.play()\n"))[0]).toMatch(/takes 1 argument/);

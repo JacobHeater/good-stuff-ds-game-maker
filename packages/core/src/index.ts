@@ -10,6 +10,7 @@ export * from "./ds-lighting";
 export * from "./imported-mesh";
 export * from "./imported-texture";
 export * from "./imported-sound";
+export * from "./ima-adpcm";
 export * from "./imported-sprite";
 export * from "./animation";
 export * from "./audio-player";

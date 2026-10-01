@@ -81,6 +81,26 @@ describe("global variables in generated code", () => {
     const unused = translateScene3D(withScripts(scripts, { Cube: "a" }));
     expect(errorsOf(unused)).toEqual([]);
   });
+
+  it("a string global holds its text as-is, read and written as a real pointer (not a save-file-style number)", () => {
+    const a = script("a", 'global var title = "Level 1"\n\nfunc _ready():\n    title = "Level 2"\n    var t = title\n');
+    const { scene, diagnostics } = translateScene3D(withScripts([a]));
+    expect(errorsOf({ diagnostics })).toEqual([]);
+    expect(scene!.globals).toEqual([{ name: "title", type: "string", value: "Level 1" }]);
+    expect(scene!.scriptCode).toContain('gs_global[0] = (int32_t)(intptr_t)"Level 2";');
+    expect(scene!.scriptCode).toContain("const char* v_t = ((const char*)(intptr_t)gs_global[0]);");
+  });
+
+  it("puts every string global after every numeric one, out of alphabetical order if it has to, so gs_global_count (a save-file boundary) can exclude them all", () => {
+    const a = script("a", 'global var alpha = "first"\nglobal var bravo = 2\nglobal var charlie = "second"\nglobal var echo = 1.5\n');
+    const { scene, diagnostics } = translateScene3D(withScripts([a]));
+    expect(errorsOf({ diagnostics })).toEqual([]);
+    expect(scene!.globals.map((g) => g.name)).toEqual(["bravo", "echo", "alpha", "charlie"]);
+    const text = writeScriptCodeFileC([scene!]);
+    expect(text).toContain("const uint16_t gs_global_count = 2;"); // beta, delta: the two numeric ones
+    expect(text).toContain('(int32_t)(intptr_t)"first"');
+    expect(text).toContain('(int32_t)(intptr_t)"second"');
+  });
 });
 
 describe("saving in generated code", () => {

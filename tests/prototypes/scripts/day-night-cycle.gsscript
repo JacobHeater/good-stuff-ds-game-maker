@@ -1,0 +1,44 @@
+global var energy = 100
+var section_of_day_timer = 100        # counts down once per section_of_day_go_down_wait_ticks frames; time changes when it runs out
+var section_of_day_wait = 100         # frames left until the next tick of section_of_day_timer (starts equal to the wait below)
+var section_of_day_go_down_wait_ticks = 100  # how many frames between each tick of section_of_day_timer
+var section_of_day_go_down_amount = 1        # how much section_of_day_timer drops each tick
+var time = "Morning"
+
+func _process(delta):
+    $Label.value = energy
+
+    if location == 1:
+        $PlayerIcon.position.x = 31
+        $PlayerIcon.position.y = 161
+    if location == 2:
+        $PlayerIcon.position.x = 31
+        $PlayerIcon.position.y = 97
+
+    update_section_of_day()
+
+    if time == "Morning":
+        $Music.play("Morning")
+    elif time == "Mid-Day": #you name a better name if you want
+         $Music.play("Day")
+    elif time == "Night":
+         $Music.play("Night")
+
+# Counts section_of_day_timer down (section_of_day_go_down_amount every section_of_day_go_down_wait_ticks frames, the
+# same "wait, then step" shape as the energy drain in flight-8way.gsscript); when it runs out, time moves on one step
+# (Morning -> Mid-Day -> Night -> back to Morning) and the timer starts over for the new section.
+func update_section_of_day():
+    section_of_day_wait -= 1
+    if section_of_day_wait > 0:
+        return
+    section_of_day_wait = section_of_day_go_down_wait_ticks
+    section_of_day_timer -= section_of_day_go_down_amount
+    if section_of_day_timer > 0:
+        return
+    section_of_day_timer = 100
+    if time == "Morning":
+        time = "Mid-Day"
+    elif time == "Mid-Day":
+        time = "Night"
+    else:
+        time = "Morning"

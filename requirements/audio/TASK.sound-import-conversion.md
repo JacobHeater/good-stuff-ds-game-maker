@@ -1,7 +1,7 @@
 ---
 status: done
 component: audio
-related: [STORY.import-sound-and-audio-player.md, persistence/TASK.embed-imported-sounds-in-project-file.md, scene-designer/STORY.mesh-textures.md]
+related: [STORY.import-sound-and-audio-player.md, STORY.compressed-sound.md, persistence/TASK.embed-imported-sounds-in-project-file.md, scene-designer/STORY.mesh-textures.md]
 ---
 
 # Task: Convert an audio file to a DS sound
@@ -24,9 +24,13 @@ a `ImportedSound` (without an id) with warnings, or refuses with reasons:
 - **Rate:** above 32,000 Hz it resamples down to 32,000 (averaging the source samples each output sample covers, so it doesn't
   alias); a warning says so. It never resamples up, and never below 3,000 Hz (the decoder's limit).
 - **16 bits:** each sample is rounded to a signed 16-bit value; samples outside -1..1 clip, and a warning counts them.
-- **Fit:** two bytes a sample. A sound over the 2 MB budget (`DS_HARDWARE_PROFILE.audio.soundMemoryBytes`) is **compressed more**
-  instead of refused: resampled down to the highest rate at which it fits (never below `MIN_FITTED_SAMPLE_RATE`, 8000 Hz), and a
-  warning says the new rate and that it will sound duller. Only a sound that is still too long at 8000 Hz (about 131 s) is refused, with its length and the longest the DS can hold at that rate.
+- **Format** (`STORY.compressed-sound.md`): the 16-bit samples are then encoded as IMA-ADPCM by default (about a quarter the
+  size), not stored as plain PCM16 -- `format: "pcm16"` opts back into the old, uncompressed behavior.
+- **Fit:** a sound over the 2 MB budget (`DS_HARDWARE_PROFILE.audio.soundMemoryBytes`) is **compressed more** instead of
+  refused: resampled down to the highest rate at which it fits (never below `MIN_FITTED_SAMPLE_RATE`, 8000 Hz), and a
+  warning says the new rate and that it will sound duller. The rate this fits at depends on the format's bytes a sample (two
+  for pcm16, about a quarter of one for ima-adpcm), so the same file goes dramatically further before this kicks in. Only a
+  sound that is still too long at 8000 Hz even as ima-adpcm is refused, with its length and the longest the DS can hold at that rate.
 - **Length** in whole samples is kept exact (no padding); the compiler pads to the DS's 4-byte alignment.
 - `sniffSoundSampleRate(bytes)` reads the sample rate from a WAV, MP3 or OGG Vorbis header (null when it can't), so the decoder is
   asked for `min(file rate, 32000)` and a 22 kHz file doesn't get upsampled to 32 kHz and doubled in size.

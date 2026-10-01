@@ -1,4 +1,4 @@
-import type { DsScene2D, DsScene3D, DsScreen2D } from "./ds-scene";
+import type { DsGlobal, DsScene2D, DsScene3D, DsScreen2D } from "./ds-scene";
 
 /**
  * Serializes a translated scene as the `scene_data.c` the C runtime is built against. The output is
@@ -100,23 +100,32 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
 
-  // Samples are 4-byte aligned: the sound hardware reads whole words from main RAM.
+  // Data is 4-byte aligned: the sound hardware reads whole words from main RAM. `format` is a libnds SoundFormat
+  // (SoundFormat_16Bit = 1, SoundFormat_ADPCM = 2); the runtime casts it back when it calls soundPlaySample.
+  const SOUND_FORMAT_CODES = { pcm16: 1, "ima-adpcm": 2 } as const;
   scene.sounds.forEach((s, i) => {
-    out.push(`/* sound ${commentSafe(s.label)}: ${s.samples.length} samples at ${s.sampleRate} Hz, ${s.samples.length * 2} bytes */`);
-    out.push(`static const int16_t sound_${i}_samples[] __attribute__((aligned(4))) = {\n${numbers(s.samples)}\n};`);
+    out.push(`/* sound ${commentSafe(s.label)}: ${s.format}, ${s.bytes.length} bytes at ${s.sampleRate} Hz */`);
+    out.push(`static const uint8_t sound_${i}_data[] __attribute__((aligned(4))) = {\n${numbers(s.bytes)}\n};`);
     out.push("");
   });
   out.push("static const GsSound sounds[] = {");
-  if (scene.sounds.length === 0) out.push("  { 0, 0, 0 }");
+  if (scene.sounds.length === 0) out.push("  { 0, 0, 0, 0 }");
   scene.sounds.forEach((s, i) => {
-    out.push(`  { ${s.samples.length}, ${s.sampleRate}, sound_${i}_samples }${i < scene.sounds.length - 1 ? "," : ""}`);
+    out.push(`  { ${s.bytes.length}, ${s.sampleRate}, ${SOUND_FORMAT_CODES[s.format]}, sound_${i}_data }${i < scene.sounds.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+  out.push("static const GsAudioClip audioClips[] = {");
+  if (scene.audioClips.length === 0) out.push("  { 0, 0, 0, 0 }");
+  scene.audioClips.forEach((c, i) => {
+    out.push(`  { ${c.sound}, ${c.frequency}, ${c.volume}, ${c.loop ? 1 : 0} }${i < scene.audioClips.length - 1 ? "," : ""}`);
   });
   out.push("};");
   out.push("");
   out.push("static const GsAudioPlayer audioPlayers[] = {");
-  if (scene.audioPlayers.length === 0) out.push("  { 0, 0, 0, 0, 0 }");
+  if (scene.audioPlayers.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, 0 }");
   scene.audioPlayers.forEach((p, i) => {
-    out.push(`  { ${p.sound}, ${p.frequency}, ${p.volume}, ${p.loop ? 1 : 0}, ${p.autoplay ? 1 : 0} }${i < scene.audioPlayers.length - 1 ? "," : ""}`);
+    out.push(`  { ${p.sound}, ${p.frequency}, ${p.volume}, ${p.loop ? 1 : 0}, ${p.autoplay ? 1 : 0}, ${p.clipStart}, ${p.clipCount} }${i < scene.audioPlayers.length - 1 ? "," : ""}`);
   });
   out.push("};");
   out.push("");
@@ -235,10 +244,10 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${matrix(scene.camera.view)}, /* view */`);
   out.push(`  ${scene.camera.node}, ${scene.nodes.length}, /* camera node, node count */`);
   out.push(`  ${scene.primitives.length}, ${scene.meshes.length}, ${scene.lights.length}, ${scene.textures.length}, /* primitive, mesh, light, texture counts */`);
-  out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.colliders.length}, ${hullPoints.length / 3}, /* sound, audio player, collider, hull point counts */`);
+  out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.audioClips.length}, ${scene.colliders.length}, ${hullPoints.length / 3}, /* sound, audio player, audio clip, collider, hull point counts */`);
   out.push(`  ${scene.animationPlayers.length}, ${scene.animations.length}, ${scene.animationTracks.length}, ${scene.animationKeys.length}, /* animation player, animation, track, key counts */`);
   out.push(`  ${scene.touchAreas.length}, /* touch area count */`);
-  out.push(`  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations`);
+  out.push(`  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations`);
   out.push("};");
   out.push("");
   return out.join("\n");
@@ -327,13 +336,18 @@ export function writeSceneTableC(count: number): string {
  */
 export function writeScriptCodeFileC(scenes: readonly DsScene3D[]): string {
   const out: string[] = scenes.map((scene) => scene.scriptCode);
-  // The global variables: one table for the whole game (every scene has the same), which the scenes' scripts and the save file use.
+  // The global variables: one table for the whole game (every scene has the same), which the scenes' scripts use, and which
+  // the save file holds the *first* gs_global_count of (never a string -- its value is a ROM address, not something a save
+  // file can round-trip between builds; see orderGlobalsForRuntime in translate-scene-3d.ts, which puts every string global
+  // safely after that many).
   const globals = scenes[0]?.globals ?? [];
-  out.push("/* The project's global variables: kept when the scene changes, and what the save file holds. */");
+  const savedGlobalCount = globals.filter((g) => g.type !== "string").length;
+  const globalValue = (g: DsGlobal): string => (typeof g.value === "string" ? `(int32_t)(intptr_t)${cString(g.value)}` : String(g.value));
+  out.push("/* The project's global variables: kept when the scene changes; the first gs_global_count of them are what the save file holds. */");
   out.push('#include "gs_api.h"');
-  out.push(`int32_t gs_global[${Math.max(1, globals.length)}] = { ${globals.length === 0 ? "0" : globals.map((g) => g.value).join(", ")} };`);
-  out.push(`const int32_t gs_global_initial[${Math.max(1, globals.length)}] = { ${globals.length === 0 ? "0" : globals.map((g) => g.value).join(", ")} };`);
-  out.push(`const uint16_t gs_global_count = ${globals.length};`);
+  out.push(`int32_t gs_global[${Math.max(1, globals.length)}] = { ${globals.length === 0 ? "0" : globals.map(globalValue).join(", ")} };`);
+  out.push(`const int32_t gs_global_initial[${Math.max(1, globals.length)}] = { ${globals.length === 0 ? "0" : globals.map(globalValue).join(", ")} };`);
+  out.push(`const uint16_t gs_global_count = ${savedGlobalCount};`);
   out.push(`const uint32_t gs_global_signature = ${globalSignature(globals)}u;`);
   out.push(...globals.map((g, i) => `/* gs_global[${i}] is ${commentSafe(g.name)} (${g.type}) */`));
   out.push("");

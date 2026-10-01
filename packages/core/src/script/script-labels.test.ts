@@ -19,8 +19,9 @@ describe("scripts and labels", () => {
     expect(errors(r)).toEqual([]);
   });
 
-  it("sets a label's text to text in quotes, and nothing else", () => {
+  it("sets a label's text to text in quotes or a string variable, and nothing else", () => {
     expect(errors(check('func f():\n    $Score.text = "Game Over"\n'))).toEqual([]);
+    expect(errors(check('var msg = "Hi"\n\nfunc f():\n    $Score.text = msg\n'))).toEqual([]);
     expect(errors(check("func f():\n    $Score.text = 5\n"))[0]).toMatch(/text in quotes/);
     expect(errors(check('func f():\n    $Score.text += "x"\n'))[0]).toMatch(/doesn't work on text/);
   });

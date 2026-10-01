@@ -11,7 +11,11 @@ let session: PlaySession | undefined;
 /** Created on first use, so the app doesn't touch the temp directory until someone presses Play. */
 function playSession(): PlaySession {
   session ??= new PlaySession({
-    compile: (project, outputPath, options) => compileProject(project, outputPath, createRomBuilder(), options),
+    // In dev, the full toolchain output (everything `firstError` in the Output log is only a sliver of) goes to this
+    // process's own console -- visible in the terminal running `electron-vite dev` -- so a build failure the short
+    // in-app message doesn't fully explain can still be read in full without changing any code.
+    compile: (project, outputPath, options) =>
+      compileProject(project, outputPath, createRomBuilder(), { ...options, ...(app.isPackaged ? {} : { onOutput: (chunk: string) => console.log(chunk) }) }),
     locator: new NodeEmulatorLocator(),
     launcher: new NodeEmulatorLauncher(),
     fs: new NodeBuildFileSystem(),

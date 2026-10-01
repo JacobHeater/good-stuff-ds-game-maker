@@ -6,7 +6,7 @@ import { checkScript, collectProjectGlobals, type ScriptCheckResult } from "./in
 /** requirements/scripting/STORY.game-state-and-save.md: global variables and the save file, as the checker sees them. */
 
 const root = createSceneNode({ name: "Main", kind: "Node3D", children: [createSceneNode({ name: "Cube", kind: "MeshInstance3D" })] });
-const check = (source: string, globals?: Array<{ name: string; type: "int" | "float" | "bool" }>): ScriptCheckResult =>
+const check = (source: string, globals?: Array<{ name: string; type: "int" | "float" | "bool" | "string" }>): ScriptCheckResult =>
   checkScript(source, { root, attached: [{ name: "Cube", kind: "MeshInstance3D" }], globals });
 const errors = (r: ScriptCheckResult) => r.diagnostics.filter((d) => d.severity === "error").map((d) => d.message);
 
@@ -44,6 +44,16 @@ describe("global variables", () => {
   it("disagree with another script's declaration of the same name when the type differs", () => {
     expect(errors(check("global var score = 1.5\n", [{ name: "score", type: "int" }]))[0]).toMatch(/declared as an int in another script, but a float here/);
   });
+
+  it("can be a string, declared with a literal, used by name and reassigned to another string", () => {
+    const r = check('global var title = "Level 1"\n\nfunc f():\n    title = "Level 2"\n    var t = title\n');
+    expect(errors(r)).toEqual([]);
+  });
+
+  it("a string global keeps its type against a mismatched script", () => {
+    expect(errors(check('global var name = "Rex"\n', [{ name: "name", type: "int" }]))[0]).toMatch(/declared as an int in another script, but a string here/);
+    expect(errors(check('func f():\n    name = 5\n', [{ name: "name", type: "string" }]))[0]).toMatch(/An int can't be used as a string/);
+  });
 });
 
 describe("the project's globals", () => {
@@ -77,6 +87,15 @@ describe("the project's globals", () => {
   it("leave out scripts without any and negative numbers keep their sign", () => {
     expect(collectProjectGlobals([{ name: "A", source: "var x = 1\n" }]).globals).toEqual([]);
     expect(collectProjectGlobals([{ name: "A", source: "global var t = -2\n" }]).globals).toEqual([{ name: "t", type: "int", initial: -2 }]);
+  });
+
+  it("collects a string global, and says when two scripts disagree on its text", () => {
+    expect(collectProjectGlobals([{ name: "A", source: 'global var title = "Level 1"\n' }]).globals).toEqual([{ name: "title", type: "string", initial: "Level 1" }]);
+    const { problems } = collectProjectGlobals([
+      { name: "A", source: 'global var title = "Level 1"\n' },
+      { name: "B", source: 'global var title = "Level 2"\n' }
+    ]);
+    expect(problems[0].message).toMatch(/"title" is declared in A as string starting at "Level 1", but here as string starting at "Level 2"/);
   });
 });
 

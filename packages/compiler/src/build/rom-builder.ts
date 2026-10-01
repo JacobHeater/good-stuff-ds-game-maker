@@ -52,8 +52,17 @@ function makeScript(msysBuildDir: string): string {
   ].join(" && ");
 }
 
+/**
+ * The most useful single line (or few) to show for a failed build. A linker failure's only line matching `error` is the
+ * generic "collect2.exe: error: ld returned 1 exit status", with the actually useful "undefined reference to `symbol'"
+ * lines elsewhere in the output and not containing the word "error" at all -- so those are looked for first, deduplicated
+ * (the same missing symbol is often reported once per place it's called from) and preferred over the generic summary.
+ */
 function firstErrorLine(output: string): string | undefined {
-  return output.split(/\r?\n/).find((line) => /\berror\b/i.test(line))?.trim();
+  const lines = output.split(/\r?\n/).map((line) => line.trim());
+  const undefinedReferences = Array.from(new Set(lines.filter((line) => /undefined reference/i.test(line))));
+  if (undefinedReferences.length > 0) return undefinedReferences.join(" ");
+  return lines.find((line) => /\berror\b/i.test(line));
 }
 
 /**

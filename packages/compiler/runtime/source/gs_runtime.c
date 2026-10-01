@@ -438,10 +438,11 @@ void gs_init_audio(void) {
 	audioState = malloc(sizeof(AudioState) * gs_scene.audioPlayerCount);
 	for (int i = 0; i < gs_scene.audioPlayerCount; i++) {
 		const GsAudioPlayer *player = &gs_scene.audioPlayers[i];
-		const GsSound *sound = &gs_scene.sounds[player->sound];
 		audioState[i].channel = -1;
 		audioState[i].volume = (player->volume << 12) / 127;
-		audioState[i].pitch = ((int32_t)player->frequency << 12) / sound->sampleRate;
+		/* A player with no sound of its own (named clips only, GsAudioPlayer.sound -1) has nothing to compute a starting
+		   pitch from; gs_audio_play_clip sets the real one itself each time it starts a clip. */
+		audioState[i].pitch = player->sound >= 0 ? ((int32_t)player->frequency << 12) / gs_scene.sounds[player->sound].sampleRate : GS_ONE;
 	}
 	soundEnable();
 }
@@ -453,14 +454,37 @@ static int audio_frequency(const AudioState *state, const GsSound *sound) {
 
 int gs_node_audio_player(int node) { return gs_scene.nodes[node].audio; }
 
+/* Starts `sound` on `player`'s one hardware channel (killing whatever it was already playing), at state->volume/pitch
+   (already set by the caller) and `loop`. Shared by gs_audio_play (the player's own sound) and gs_audio_play_clip
+   (one of its named clips) -- only one of the two is ever playing on a player at a time, since there is one channel. */
+static void audio_start(int player, const GsSound *sound, int loop) {
+	AudioState *state = &audioState[player];
+	if (state->channel >= 0) soundKill(state->channel);
+	/* Centred (pan 64); a loop restarts at the beginning. `format` is a libnds SoundFormat the compiler already picked
+	   (16-bit PCM or the DS's own IMA-ADPCM), and `data`/`byteCount` are exactly what that format wants. */
+	state->channel = soundPlaySample(sound->data, (SoundFormat)sound->format, sound->byteCount, audio_frequency(state, sound), audio_volume(state), 64, loop != 0, 0);
+}
+
 void gs_audio_play(int player) {
 	if (player < 0) return;
 	const GsAudioPlayer *config = &gs_scene.audioPlayers[player];
-	const GsSound *sound = &gs_scene.sounds[config->sound];
+	if (config->sound < 0) return; /* no sound of its own (named clips only): nothing for a plain play() to start */
+	audio_start(player, &gs_scene.sounds[config->sound], config->loop);
+}
+
+/* play("name") on an AudioStreamPlayer with named clips (requirements/audio/STORY.named-audio-clips.md): `clip` is the
+   sound's place among this player's own clips (gs_scene.audioPlayers[player].clipStart + clip), resolved at compile
+   time the same way play("name") on an AnimationPlayer resolves to an animation index. Its own volume/pitch replace
+   whatever the player's channel had, the same way a different animation uses its own loop setting. */
+void gs_audio_play_clip(int player, int clip) {
+	if (player < 0) return;
+	const GsAudioPlayer *config = &gs_scene.audioPlayers[player];
+	const GsAudioClip *audioClip = &gs_scene.audioClips[config->clipStart + clip];
+	const GsSound *sound = &gs_scene.sounds[audioClip->sound];
 	AudioState *state = &audioState[player];
-	if (state->channel >= 0) soundKill(state->channel);
-	/* 16-bit PCM, centred; a loop restarts at sample 0. */
-	state->channel = soundPlaySample(sound->samples, SoundFormat_16Bit, sound->sampleCount * 2, audio_frequency(state, sound), audio_volume(state), 64, config->loop != 0, 0);
+	state->volume = (audioClip->volume << 12) / 127;
+	state->pitch = ((int32_t)audioClip->frequency << 12) / sound->sampleRate;
+	audio_start(player, sound, audioClip->loop);
 }
 
 void gs_audio_stop(int player) {

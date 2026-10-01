@@ -74,6 +74,8 @@ extern int32_t gs_touching, gs_touch_x, gs_touch_y;
 /* ---- Sound. `player` is an audio player's index, from the node it belongs to (-1 when the node has no sound: every call is then a no-op). */
 int gs_node_audio_player(int node);
 void gs_audio_play(int player);
+/* play("name"): clip is the sound's place among this player's own named clips, resolved at compile time. */
+void gs_audio_play_clip(int player, int clip);
 void gs_audio_stop(int player);
 int32_t gs_audio_get_volume(int player); /* f32, 0..1 */
 void gs_audio_set_volume(int player, int32_t volume);

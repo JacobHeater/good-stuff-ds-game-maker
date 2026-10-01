@@ -87,7 +87,8 @@ const STATEMENTS: ScriptCompletion[] = [
 const TYPES: ScriptCompletion[] = [
   { label: "int", kind: "type", detail: "whole number" },
   { label: "float", kind: "type", detail: "number with a fraction" },
-  { label: "bool", kind: "type", detail: "true or false" }
+  { label: "bool", kind: "type", detail: "true or false" },
+  { label: "string", kind: "type", detail: "text in quotes" }
 ];
 
 const INPUT_FUNCTIONS: ScriptCompletion[] = [
@@ -263,7 +264,10 @@ function scopeAt(lines: string[], lineIndex: number, globals: ScriptSceneContext
     const variable = new RegExp(String.raw`^(?:global\s+)?var\s+(${IDENT})\s*(?::\s*(\w+))?\s*(?:=\s*(.*))?$`).exec(line);
     if (variable) {
       const initial = variable[3]?.trim() ?? "";
-      scope.variables.set(variable[1], variable[2] ?? (/^-?\d+\.\d/.test(initial) ? "float" : /^(true|false)$/.test(initial) ? "bool" : "int"));
+      scope.variables.set(
+        variable[1],
+        variable[2] ?? (/^"/.test(initial) ? "string" : /^-?\d+\.\d/.test(initial) ? "float" : /^(true|false)$/.test(initial) ? "bool" : "int")
+      );
       continue;
     }
     const func = new RegExp(String.raw`^func\s+(${IDENT})\s*\(([^)]*)\)`).exec(line);

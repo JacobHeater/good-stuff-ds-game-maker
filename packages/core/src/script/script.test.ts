@@ -271,6 +271,91 @@ func f(x: int) -> float:
   });
 });
 
+describe("strings", () => {
+  it("declares a string from a literal (locally, as a member, and as a global), and reassigns it to another literal or a string variable", () => {
+    const r = check(`var name = "Rex"
+global var title = "Level 1"
+
+func f():
+    var local_name = "Fox"
+    local_name = name
+    name = "Max"
+    title = "Level 2"
+`);
+    expect(errors(r)).toEqual([]);
+    expect(r.program.variables.find((v) => v.name === "name")!.ty).toBe("string");
+    expect(r.program.variables.find((v) => v.name === "title")!.ty).toBe("string");
+  });
+
+  it("declares a string with an explicit type", () => {
+    expect(errors(check('var a: string = "hi"\n'))).toEqual([]);
+    const r = check("var a: string = 1\n");
+    expect(where(r)[0][2]).toMatch(/An int can't be used as a string/);
+  });
+
+  it("compares two strings with == and !=, but not < > <= >=", () => {
+    const r = check(`var a = "x"
+var b = "y"
+
+func f() -> bool:
+    return a == b or a != "z"
+`);
+    expect(errors(r)).toEqual([]);
+    expect(where(check('var a = "x"\nfunc f() -> bool:\n    return a < "z"\n'))[0][2]).toMatch(/compares numbers, not text/);
+  });
+
+  it("refuses comparing a string with a number or a bool", () => {
+    expect(where(check('var a = "x"\nfunc f() -> bool:\n    return a == 1\n'))[0][2]).toMatch(/A string can't be compared/);
+    expect(where(check('var a = "x"\nfunc f() -> bool:\n    return a == true\n'))[0][2]).toMatch(/bool can't be compared/);
+  });
+
+  it("refuses joining, arithmetic and ordering on strings: there is no concatenation", () => {
+    const r = check(`var a = "x"
+var b = "y"
+
+func f():
+    var c = a + b
+`);
+    expect(where(r)[0][2]).toMatch(/needs numbers, but the left side is a string/);
+  });
+
+  it("refuses assigning a string to a non-string variable, or vice versa", () => {
+    expect(where(check('var a = 1\nfunc f():\n    a = "x"\n'))[0][2]).toMatch(/A string can't be used as an int/);
+    expect(where(check('var a = "x"\nfunc f():\n    a = 1\n'))[0][2]).toMatch(/An int can't be used as a string/);
+  });
+
+  it("a string variable's initial value must still be a literal (member and global vars), but a local can come from any string expression", () => {
+    expect(where(check("var a = name\n"))[0][2]).toMatch(/initial value must be/);
+    const r = check(`var name = "Rex"
+
+func f():
+    var local_name = name
+`);
+    expect(errors(r)).toEqual([]);
+  });
+
+  it("takes and returns strings in a user function", () => {
+    const r = check(`func greeting(who: string) -> string:
+    return who
+
+func f():
+    var a = greeting("Rex")
+`);
+    expect(errors(r)).toEqual([]);
+  });
+
+  it("refuses a string where move_and_collide, ray_cast, probe_solid, Input.touch_ground_x or range() need a number", () => {
+    const cases = [
+      'move_and_collide("x", 0.0, 0.0)',
+      'ray_cast("x", 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)',
+      'probe_solid("x", 0.0, 0.0, 0.0)',
+      'Input.touch_ground_x("x")'
+    ];
+    for (const call of cases) expect(errors(check(`func f():\n    ${call}\n`, attachedTo("CollisionShape3D")))).not.toEqual([]);
+    expect(errors(check('var s = "3"\nfunc f():\n    for i in range(s):\n        pass\n'))).not.toEqual([]);
+  });
+});
+
 describe("mistakes are located", () => {
   it("names each kind of mistake at its line and column", () => {
     const source = `var speed = 1.0

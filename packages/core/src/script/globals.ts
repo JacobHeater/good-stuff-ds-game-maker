@@ -8,8 +8,8 @@ import { parseScript } from "./parser";
 export interface ProjectGlobal {
   name: string;
   type: ScriptType;
-  /** The starting value as written: a whole number, a number with a fraction, or 0/1 for a bool. */
-  initial: number;
+  /** The starting value as written: a whole number, a number with a fraction, 0/1 for a bool, or the text for a string. */
+  initial: number | string;
 }
 
 /** The most global variables a game has (the save file holds one 32-bit number for each). */
@@ -21,12 +21,13 @@ export interface GlobalProblem {
   line?: number;
 }
 
-function literalOf(expr: { kind: string; [key: string]: unknown }): { value: number; isInt: boolean; isBool: boolean } | null {
-  if (expr.kind === "int" || expr.kind === "float") return { value: expr.value as number, isInt: expr.kind === "int", isBool: false };
-  if (expr.kind === "bool") return { value: expr.value ? 1 : 0, isInt: false, isBool: true };
+function literalOf(expr: { kind: string; [key: string]: unknown }): { value: number | string; isInt: boolean; isBool: boolean; isString: boolean } | null {
+  if (expr.kind === "int" || expr.kind === "float") return { value: expr.value as number, isInt: expr.kind === "int", isBool: false, isString: false };
+  if (expr.kind === "bool") return { value: expr.value ? 1 : 0, isInt: false, isBool: true, isString: false };
+  if (expr.kind === "string") return { value: expr.value as string, isInt: false, isBool: false, isString: true };
   if (expr.kind === "unary" && expr.op === "-") {
     const inner = literalOf(expr.operand as { kind: string });
-    return inner && !inner.isBool ? { ...inner, value: -inner.value } : null;
+    return inner && !inner.isBool && !inner.isString ? { ...inner, value: -(inner.value as number) } : null;
   }
   return null;
 }
@@ -44,15 +45,16 @@ export function collectProjectGlobals(scripts: ReadonlyArray<{ name: string; sou
       if (!variable.global) continue;
       const literal = literalOf(variable.init as { kind: string });
       if (!literal) continue;
-      const type: ScriptType = variable.declaredType ?? (literal.isBool ? "bool" : literal.isInt ? "int" : "float");
+      const type: ScriptType = variable.declaredType ?? (literal.isBool ? "bool" : literal.isString ? "string" : literal.isInt ? "int" : "float");
       const existing = found.get(variable.name);
       if (!existing) {
         found.set(variable.name, { name: variable.name, type, initial: literal.value, where: script.name });
       } else if (existing.type !== type || existing.initial !== literal.value) {
+        const show = (value: number | string): string => (typeof value === "string" ? JSON.stringify(value) : String(value));
         problems.push({
           scriptName: script.name,
           line: variable.line,
-          message: `The global "${variable.name}" is declared in ${existing.where} as ${existing.type} starting at ${existing.initial}, but here as ${type} starting at ${literal.value}. Every script that declares it must say the same.`
+          message: `The global "${variable.name}" is declared in ${existing.where} as ${existing.type} starting at ${show(existing.initial)}, but here as ${type} starting at ${show(literal.value)}. Every script that declares it must say the same.`
         });
       }
     }

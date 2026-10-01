@@ -10,7 +10,9 @@ import {
 } from "./audio-player";
 import { computeSceneBudget } from "./budget";
 import { DS_HARDWARE_PROFILE } from "./hardware";
+import { imaAdpcmByteSize } from "./ima-adpcm";
 import {
+  compressSoundToAdpcm,
   createSoundFromPcm,
   encodeSamples,
   formatSoundTime,
@@ -19,8 +21,10 @@ import {
   getSoundSampleCount,
   getSoundSamples,
   MAX_SOUND_SAMPLE_RATE,
+  rawSoundBytes,
   sniffSoundSampleRate,
-  type ImportedSound
+  type ImportedSound,
+  type SoundFormat
 } from "./imported-sound";
 import { createProjectSnapshot, withUpdatedScene } from "./project-snapshot";
 import { createSceneNode, duplicateSceneNode } from "./scene-node";
@@ -30,12 +34,18 @@ function sine(rate: number, seconds: number, hz: number, amplitude = 0.5): Float
   for (let i = 0; i < out.length; i++) out[i] = amplitude * Math.sin((2 * Math.PI * hz * i) / rate);
   return out;
 }
+// These tests are about the resample/clip/fit math itself, so they pin "pcm16" to keep comparing exact sample values;
+// `describe("compressing to ima-adpcm by default", ...)` below covers the new default on its own terms.
 const made = (channels: Float32Array[], rate: number, sourceSampleRate?: number) => {
-  const result = createSoundFromPcm(channels, rate, { name: "tone", sourceSampleRate });
+  const result = createSoundFromPcm(channels, rate, { name: "tone", sourceSampleRate, format: "pcm16" });
   if (!result.ok) throw new Error(result.errors.join("; "));
   return result;
 };
-const soundOf = (channels: Float32Array[], rate: number): ImportedSound => ({ id: "s", ...made(channels, rate).sound });
+const soundOf = (channels: Float32Array[], rate: number, format: SoundFormat = "pcm16"): ImportedSound => {
+  const result = createSoundFromPcm(channels, rate, { name: "tone", format });
+  if (!result.ok) throw new Error(result.errors.join("; "));
+  return { id: "s", ...result.sound };
+};
 
 describe("converting decoded audio to a DS sound", () => {
   it("stores a mono sound at a supported rate as it is, rounded to 16 bits, with no warnings", () => {
@@ -122,13 +132,13 @@ describe("converting decoded audio to a DS sound", () => {
 
   it("refuses a sound too long even at the lowest rate, giving its length and the longest the DS holds", () => {
     const limit = DS_HARDWARE_PROFILE.audio.soundMemoryBytes;
-    const result = createSoundFromPcm([new Float32Array(140 * 8000)], 8000, { name: "long" }); // 140 s at 8 kHz
+    const result = createSoundFromPcm([new Float32Array(140 * 8000)], 8000, { name: "long", format: "pcm16" }); // 140 s at 8 kHz
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors.join(" ")).toMatch(/140\.0 seconds long.*at most 131 seconds even at 8000 Hz/);
-    expect(createSoundFromPcm([new Float32Array(limit / 2)], 8000, { name: "just fits" }).ok).toBe(true);
+    expect(createSoundFromPcm([new Float32Array(limit / 2)], 8000, { name: "just fits", format: "pcm16" }).ok).toBe(true);
     // The floor is 8000 Hz: 131 s at 8 kHz fits as is, and 132 s would need 7 kHz.
-    expect(createSoundFromPcm([new Float32Array(131 * 8000)], 8000, { name: "a" }).ok).toBe(true);
-    expect(createSoundFromPcm([new Float32Array(132 * 8000)], 8000, { name: "b" }).ok).toBe(false);
+    expect(createSoundFromPcm([new Float32Array(131 * 8000)], 8000, { name: "a", format: "pcm16" }).ok).toBe(true);
+    expect(createSoundFromPcm([new Float32Array(132 * 8000)], 8000, { name: "b", format: "pcm16" }).ok).toBe(false);
   });
 
   it("refuses nothing to play, mismatched channels and a bad rate", () => {
@@ -159,6 +169,74 @@ describe("converting decoded audio to a DS sound", () => {
 
   it("formats times as m:ss", () => {
     expect([0, 5.9, 65, 600].map(formatSoundTime)).toEqual(["0:00", "0:05", "1:05", "10:00"]);
+  });
+});
+
+describe("compressing to ima-adpcm by default (requirements/audio/STORY.compressed-sound.md)", () => {
+  it("is the default when a format isn't asked for, with a sampleCount since the byte length alone can't say it exactly", () => {
+    const result = createSoundFromPcm([sine(16000, 1, 440)], 16000, { name: "tone" });
+    if (!result.ok) throw new Error(result.errors.join("; "));
+    expect(result.sound.format).toBe("ima-adpcm");
+    expect(result.sound.sampleCount).toBe(16000);
+    expect(getSoundByteSize(result.sound)).toBe(imaAdpcmByteSize(16000));
+  });
+
+  it("is about a quarter the size of pcm16 at the same rate, give or take the header", () => {
+    const adpcm = createSoundFromPcm([sine(16000, 2, 440)], 16000, { name: "tone", format: "ima-adpcm" });
+    const pcm16 = createSoundFromPcm([sine(16000, 2, 440)], 16000, { name: "tone", format: "pcm16" });
+    if (!adpcm.ok || !pcm16.ok) throw new Error("expected both to succeed");
+    expect(getSoundByteSize(adpcm.sound)).toBeLessThan(getSoundByteSize(pcm16.sound) / 3.5);
+  });
+
+  it("round-trips a tone closely, though lossily (unlike pcm16's exact round trip)", () => {
+    const source = sine(16000, 0.5, 440);
+    const sound = soundOf([source], 16000, "ima-adpcm");
+    const stored = getSoundSamples(sound);
+    expect(stored).toHaveLength(source.length);
+    let worst = 0;
+    for (let i = 100; i < source.length - 100; i++) worst = Math.max(worst, Math.abs(stored[i] / 32767 - source[i]));
+    expect(worst).toBeLessThan(0.05);
+  });
+
+  it("embeds the exact encoded bytes (what the compiler puts in the ROM), not the decoded samples", () => {
+    const sound = soundOf([sine(8000, 0.1, 440)], 8000, "ima-adpcm");
+    expect(rawSoundBytes(sound)).toHaveLength(imaAdpcmByteSize(sound.sampleCount!));
+  });
+
+  it("fits far more into the sound budget than pcm16 would, since each sample is a nibble instead of two bytes", () => {
+    const limit = DS_HARDWARE_PROFILE.audio.soundMemoryBytes;
+    // At 32 kHz this is 3.84 MB of pcm16 (over budget) but well under a quarter of that as ima-adpcm.
+    const result = createSoundFromPcm([sine(32000, 60, 440)], 32000, { name: "long" });
+    if (!result.ok) throw new Error(result.errors.join("; "));
+    expect(result.sound.sampleRate).toBe(32000); // not resampled down to fit, unlike the pcm16 case above
+    expect(result.warnings).toEqual([]);
+    expect(getSoundByteSize(result.sound)).toBeLessThan(limit);
+  });
+});
+
+describe("compressing a sound already in the project (no original file needed)", () => {
+  it("re-encodes a pcm16 sound to ima-adpcm in place, to about a quarter the size, keeping id/name/rate", () => {
+    const pcm: ImportedSound = { id: "s1", name: "Song", sampleRate: 16000, samples: encodeSamples(new Int16Array(16000)) }; // 1s, 32000 bytes
+    const compressed = compressSoundToAdpcm(pcm);
+    expect(compressed).toMatchObject({ id: "s1", name: "Song", sampleRate: 16000, format: "ima-adpcm", sampleCount: 16000 });
+    expect(getSoundByteSize(compressed)).toBeLessThan(getSoundByteSize(pcm) / 3.5);
+  });
+
+  it("keeps the same decoded tone, lossily", () => {
+    const source = sine(16000, 0.5, 440);
+    const pcm: ImportedSound = { id: "s", name: "n", sampleRate: 16000, samples: encodeSamples(new Int16Array(Array.from(source, (v) => Math.round(v * 32767)))) };
+    const compressed = compressSoundToAdpcm(pcm);
+    const before = getSoundSamples(pcm);
+    const after = getSoundSamples(compressed);
+    expect(after).toHaveLength(before.length);
+    let worst = 0;
+    for (let i = 100; i < before.length - 100; i++) worst = Math.max(worst, Math.abs(after[i] / 32767 - before[i] / 32767));
+    expect(worst).toBeLessThan(0.05);
+  });
+
+  it("leaves an already-compressed sound alone instead of re-encoding it again", () => {
+    const already: ImportedSound = { id: "s", name: "n", sampleRate: 8000, format: "ima-adpcm", sampleCount: 4, samples: "AAAAAA==" };
+    expect(compressSoundToAdpcm(already)).toBe(already);
   });
 });
 

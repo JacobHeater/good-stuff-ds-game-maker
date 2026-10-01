@@ -1,12 +1,17 @@
 import { DS_HARDWARE_PROFILE } from "./hardware";
+import { decodeImaAdpcm, encodeImaAdpcm } from "./ima-adpcm";
 import { base64ToBytes, bytesToBase64 } from "./imported-texture";
+
+/** How `samples` is encoded: "pcm16" (plain, absent means this too) or "ima-adpcm" (the DS's own compressed format, about a quarter the size -- `ima-adpcm.ts`). */
+export type SoundFormat = "pcm16" | "ima-adpcm";
 
 /**
  * A sound in a project, stored already converted to what the DS plays (requirements/audio/TASK.sound-import-conversion.md):
- * mono, 16-bit, at a sample rate the DS can use. Like textures, it is embedded in the project file, so nothing depends on
- * the original file staying put and the editor previews exactly what the ROM plays.
+ * mono, at a sample rate the DS can use. Like textures, it is embedded in the project file, so nothing depends on the
+ * original file staying put and the editor previews exactly what the ROM plays.
  *
- * `samples` is base64 of little-endian signed 16-bit values, one per sample.
+ * `samples` is base64 of either format's raw bytes: little-endian signed 16-bit values for "pcm16", or the IMA-ADPCM
+ * stream `ima-adpcm.ts` produces for "ima-adpcm".
  */
 export interface ImportedSound {
   id: string;
@@ -15,6 +20,10 @@ export interface ImportedSound {
   /** Samples per second. */
   sampleRate: number;
   samples: string;
+  /** Absent means "pcm16" -- every sound saved before this field existed. */
+  format?: SoundFormat;
+  /** Only meaningful, and required, for "ima-adpcm": the encoded byte count alone doesn't say this exactly (the last byte may hold one unused nibble). */
+  sampleCount?: number;
 }
 
 /** The DS mixes at about 32 kHz, so a higher rate only costs memory. */
@@ -30,16 +39,17 @@ export function isSoundSampleRate(value: number): boolean {
   return Number.isInteger(value) && value >= MIN_SOUND_SAMPLE_RATE && value <= MAX_SOUND_SAMPLE_RATE;
 }
 
-/** How much of the DS's memory a sound takes: two bytes a sample. */
+/** The number of bytes `samples` decodes to, read from the base64 text's length without decoding it -- this is exactly what the DS stores and plays, for either format. */
 export function getSoundByteSize(sound: { samples: string }): number {
-  return getSoundSampleCount(sound) * 2;
-}
-
-/** The number of samples, read from the base64 text's length without decoding it. */
-export function getSoundSampleCount(sound: { samples: string }): number {
   const text = sound.samples;
   const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
-  return Math.floor(((text.length / 4) * 3 - padding) / 2);
+  return Math.floor((text.length / 4) * 3) - padding;
+}
+
+/** The number of samples: for "ima-adpcm" this is the sound's own `sampleCount` (the byte length alone doesn't say it exactly); otherwise two bytes a sample. */
+export function getSoundSampleCount(sound: { samples: string; format?: SoundFormat; sampleCount?: number }): number {
+  if (sound.format === "ima-adpcm") return sound.sampleCount ?? 0;
+  return getSoundByteSize(sound) / 2;
 }
 
 export function getSoundDurationSeconds(sound: { sampleRate: number; samples: string }): number {
@@ -52,6 +62,7 @@ export function formatSoundTime(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
+/** Plain 16-bit PCM encoding ("pcm16"): little-endian signed 16-bit values, one per sample. */
 export function encodeSamples(samples: Int16Array): string {
   const bytes = new Uint8Array(samples.length * 2);
   const view = new DataView(bytes.buffer);
@@ -59,19 +70,39 @@ export function encodeSamples(samples: Int16Array): string {
   return bytesToBase64(bytes);
 }
 
+/** The exact bytes `samples` decodes to -- whatever `format` says they mean (PCM16 values, or an IMA-ADPCM stream). This is what the compiler embeds in the ROM as-is. */
+export function rawSoundBytes(sound: { samples: string }): Uint8Array {
+  return base64ToBytes(sound.samples);
+}
+
 const decoded = new WeakMap<ImportedSound, Int16Array>();
 
-/** The sound's samples. Decoded once per sound object and shared; do not mutate it. */
+/** The sound's samples, decoded to plain PCM regardless of `format`. Decoded once per sound object and shared; do not mutate it. */
 export function getSoundSamples(sound: ImportedSound): Int16Array {
   let samples = decoded.get(sound);
   if (!samples) {
-    const bytes = base64ToBytes(sound.samples);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    samples = new Int16Array(bytes.length >> 1);
-    for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true);
+    const bytes = rawSoundBytes(sound);
+    if (sound.format === "ima-adpcm") {
+      samples = decodeImaAdpcm(bytes, sound.sampleCount ?? 0);
+    } else {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      samples = new Int16Array(bytes.length >> 1);
+      for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true);
+    }
     decoded.set(sound, samples);
   }
   return samples;
+}
+
+/**
+ * Re-encodes a sound already in the project to IMA-ADPCM, in place -- no original file needed, unlike a fresh import.
+ * About a quarter the size afterward; already "ima-adpcm" is returned unchanged (not re-encoded a second time, which
+ * would lose more to quantization for nothing). Keeps the id, name and sample rate; only `format`/`sampleCount`/`samples` change.
+ */
+export function compressSoundToAdpcm(sound: ImportedSound): ImportedSound {
+  if (sound.format === "ima-adpcm") return sound;
+  const samples = getSoundSamples(sound);
+  return { ...sound, format: "ima-adpcm", sampleCount: samples.length, samples: bytesToBase64(encodeImaAdpcm(samples)) };
 }
 
 export type SoundImportResult =
@@ -81,16 +112,18 @@ export type SoundImportResult =
 /**
  * Turns decoded audio (one array of -1..1 samples per channel) into a DS sound, or refuses it with reasons. Pure: the caller
  * decodes the file (the editor window does). Mixes to mono, resamples down to at most `MAX_SOUND_SAMPLE_RATE` (never up),
- * rounds to 16 bits (clipping what is out of range) and refuses what won't fit in the sound budget.
+ * rounds to 16 bits (clipping what is out of range), encodes as IMA-ADPCM by default (about a quarter the size, at no
+ * runtime cost -- the DS hardware decodes it) and refuses what won't fit in the sound budget even so.
  *
  * `sourceSampleRate` is the rate of the file itself when the decoder already resampled it to `sampleRate` (the browser's decoder
- * does), so the warning can still say what happened.
+ * does), so the warning can still say what happened. `format` defaults to "ima-adpcm"; pass "pcm16" for the old, uncompressed behavior.
  */
 export function createSoundFromPcm(
   channels: readonly ArrayLike<number>[],
   sampleRate: number,
-  options: { name: string; sourceSampleRate?: number }
+  options: { name: string; sourceSampleRate?: number; format?: SoundFormat }
 ): SoundImportResult {
+  const format: SoundFormat = options.format ?? "ima-adpcm";
   if (channels.length === 0 || channels[0].length === 0) return { ok: false, errors: ["The file has no audio in it."] };
   if (channels.some((channel) => channel.length !== channels[0].length)) {
     return { ok: false, errors: ["The file's audio channels are different lengths."] };
@@ -124,9 +157,11 @@ export function createSoundFromPcm(
   if (samples.length === 0) return { ok: false, errors: ["The file has no audio in it."] };
 
   // Fit: a sound over the sound budget is compressed more, by resampling it to the highest rate at which it fits, rather than
-  // refused. Only one that would still be too long at the lowest rate we'll go to is refused.
+  // refused. Only one that would still be too long at the lowest rate we'll go to is refused. IMA-ADPCM's byte cost is about a
+  // quarter PCM16's (one nibble a sample instead of two bytes, after a small fixed header), so the same scene fits far more of
+  // it before this ever kicks in.
   const limit = DS_HARDWARE_PROFILE.audio.soundMemoryBytes;
-  const limitSamples = limit / 2;
+  const limitSamples = format === "ima-adpcm" ? 2 * (limit - 4) + 1 : limit / 2;
   if (samples.length > limitSamples) {
     const seconds = samples.length / rate;
     const fitRate = Math.floor((limitSamples * rate) / samples.length);
@@ -156,7 +191,11 @@ export function createSoundFromPcm(
   }
   if (clipped > 0) warnings.push(`${clipped} sample${clipped === 1 ? " was" : "s were"} louder than the DS can play and ${clipped === 1 ? "was" : "were"} clipped.`);
 
-  return { ok: true, sound: { name: options.name.trim() || "Sound", sampleRate: rate, samples: encodeSamples(pcm) }, warnings };
+  const name = options.name.trim() || "Sound";
+  if (format === "ima-adpcm") {
+    return { ok: true, sound: { name, sampleRate: rate, format, sampleCount: pcm.length, samples: bytesToBase64(encodeImaAdpcm(pcm)) }, warnings };
+  }
+  return { ok: true, sound: { name, sampleRate: rate, samples: encodeSamples(pcm) }, warnings };
 }
 
 /**

@@ -24,11 +24,15 @@ static const GsTexture textures[] = {
 };
 
 static const GsSound sounds[] = {
-  { 0, 0, 0 }
+  { 0, 0, 0, 0 }
+};
+
+static const GsAudioClip audioClips[] = {
+  { 0, 0, 0, 0 }
 };
 
 static const GsAudioPlayer audioPlayers[] = {
-  { 0, 0, 0, 0, 0 }
+  { 0, 0, 0, 0, 0, 0, 0 }
 };
 
 static const int32_t hull_points[] = {
@@ -110,8 +114,8 @@ const GsScene gs_scene_data_0 = {
   { { 3333, -1004, 2159, 0, 0, 3714, 1727, 0, -2381, -1405, 3022, 0, 0, 0, -19429, 4096 } }, /* view */
   2, 4, /* camera node, node count */
   1, 1, 1, 0, /* primitive, mesh, light, texture counts */
-  0, 0, 0, 0, /* sound, audio player, collider, hull point counts */
+  0, 0, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */
   0, 0, 0, 0, /* animation player, animation, track, key counts */
   0, /* touch area count */
-  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations
+  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations
 };

@@ -52,8 +52,8 @@ describe("collision shapes in the scene description", () => {
     const scene = translate(CHECK, [shape("A", { shape: "box" }), shape("B", { shape: "sphere", radius: 2 })]).scene!;
     const text = writeSceneDataC(scene);
     expect(text).toContain("static const GsCollider colliders[] = {\n  { 0, 0, { 2048, 2048, 2048 }, 0, 0 },\n  { 1, 0, { 8192, 0, 0 }, 0, 0 }\n};");
-    expect(text).toContain("  0, 0, 2, 0, /* sound, audio player, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */");
-    expect(text).toContain("audioPlayers, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
+    expect(text).toContain("  0, 0, 0, 2, 0, /* sound, audio player, audio clip, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */");
+    expect(text).toContain("audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
     expect(text).toMatch(/\{ 0, 0, 1, -1, 0, -1, -1, \{ 0, 0, 0 \}/); // shape A is collider 0
     // A scene with none has the placeholder entry, since C does not allow an empty array.
     const none = translateScene3D(scriptedProject([{ source: "func _ready():\n    pass\n" }])).scene!;

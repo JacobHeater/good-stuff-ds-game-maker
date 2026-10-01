@@ -159,9 +159,11 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         texels: { type: "string" }
       }
     },
-    // Mono 16-bit samples, base64 (see core's imported-sound.ts). That the sample rate is 3000-32000, that the data is valid
-    // base64 holding a whole number of samples and that every player's soundId exists aren't expressible here;
-    // JsonSchemaProjectSnapshotValidator checks them.
+    // Mono samples, base64 (see core's imported-sound.ts): "pcm16" (or format absent) is plain 16-bit values, "ima-adpcm" is
+    // the DS's own compressed format (about a quarter the size), with its sample count carried separately since the byte
+    // length alone can't say it exactly. That the sample rate is 3000-32000, that the data is valid base64 holding a whole
+    // number of samples (or a valid ima-adpcm stream of exactly sampleCount samples) and that every player's soundId exists
+    // aren't expressible here; JsonSchemaProjectSnapshotValidator checks them.
     importedSound: {
       type: "object",
       additionalProperties: false,
@@ -170,7 +172,9 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         id: { type: "string", minLength: 1 },
         name: { type: "string" },
         sampleRate: { type: "integer", minimum: 1 },
-        samples: { type: "string" }
+        samples: { type: "string" },
+        format: { type: "string", enum: ["pcm16", "ima-adpcm"] },
+        sampleCount: { type: "integer", minimum: 0 }
       }
     },
     // A sprite image: a 256-color paletted picture (see core's imported-sprite.ts). That the size is one the DS has a sprite for, that
@@ -237,6 +241,20 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         source: { type: "string" }
       }
     },
+    // A named sound on an AudioStreamPlayer, playable with play("name") alongside the player's own sound; see core's audio-player.ts.
+    audioClip: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name"],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        name: { type: "string", minLength: 1 },
+        soundId: { type: "string", minLength: 1 },
+        volume: { type: "number", minimum: 0, maximum: 1 },
+        pitch: { type: "number", minimum: 0.25, maximum: 4 },
+        loop: { type: "boolean" }
+      }
+    },
     // An AudioStreamPlayer's sound and playback settings; a missing field is its default (see core's audio-player.ts).
     audioPlayerData: {
       type: "object",
@@ -246,7 +264,8 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         autoplay: { type: "boolean" },
         volume: { type: "number", minimum: 0, maximum: 1 },
         pitch: { type: "number", minimum: 0.25, maximum: 4 },
-        loop: { type: "boolean" }
+        loop: { type: "boolean" },
+        clips: { type: "array", maxItems: 9, items: { $ref: "#/definitions/audioClip" } }
       }
     },
     // A CollisionShape3D's shape and size; a missing field is its default (see core's collision-shape.ts). A capsule shorter than it is

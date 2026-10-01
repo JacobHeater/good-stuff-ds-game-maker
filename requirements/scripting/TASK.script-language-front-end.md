@@ -69,8 +69,8 @@ Whole vectors are not values in version 1: use `position.x`, not `position`. The
 **Scope.** Names are case sensitive. A name can't be declared twice in one scope or shadow a variable or function; keywords
 (`var func if elif else while for in return break continue pass and or not true false range`) and built-in names can't be used as names.
 
-**Not in version 1:** classes, `extends`, signals, arrays, dictionaries, strings as values, vectors as values, `const`,
-`match`, ternary `if`, `await`, and instancing scenes.
+**Not in version 1:** classes, `extends`, signals, arrays, dictionaries, vectors as values, `const`,
+`match`, ternary `if`, `await`, and instancing scenes. (Strings as values, in the limited "named literal" form described below, were added later: `STORY.string-variables.md`. Still not built: joining/concatenation, ordering (`<` `>`), and any other string operation beyond `==`/`!=`.)
 
 ### Diagnostics
 Each has a `line` and `column` (1-based) and an end column, a message written for the script author, and a severity. Errors include:
@@ -133,4 +133,4 @@ Scenario: Diagnostics don't stop at the first error
   is already unknown because of an earlier error is not reported again (so one unknown `$Node` gives one error, not five), and a
   local or member that is never read is a warning.
 - Found by the emulator tests rather than the unit tests: `var x = 0` was rejected as "needs a value" because of a falsy check; fixed.
-- Not in version 1 (out on purpose): vectors as values, arrays, classes, signals, string values beyond node names.
+- Not in version 1 (out on purpose): vectors as values, arrays, classes, signals. (`var` as a string, in the limited "named literal, `==`/`!=` only" form, was added later: `STORY.string-variables.md`.)

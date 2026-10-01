@@ -1,4 +1,5 @@
 import { getAnimationPlayer } from "../animation";
+import { audioClipNames, getAudioPlayer } from "../audio-player";
 import { getSpriteAnimations } from "../sprite-animation";
 import { flattenSceneTree, is3DNodeKind, type SceneNode, type SceneNodeKind } from "../scene-node";
 import type {
@@ -63,6 +64,8 @@ export interface ScriptSceneContext {
     hasShape?: boolean;
     /** The names of an AnimationPlayer's animations, in order; left out when not known. */
     animations?: readonly string[];
+    /** The names of an AudioStreamPlayer's own named clips, in order (its own, unnamed sound isn't one of these); left out when not known. */
+    sounds?: readonly string[];
   }>;
 }
 
@@ -260,9 +263,9 @@ class Checker {
   }
 
   private checkMemberInit(variable: VarDecl): void {
-    // (Not `!literal`: 0 and false are literals too.)
+    // (Not `!literal`: 0, false and "" are literals too.)
     if (this.literalValue(variable.init) === null) {
-      this.error(variable.init, "A variable's initial value must be a number or true or false, like var speed = 2.0.");
+      this.error(variable.init, 'A variable\'s initial value must be a number, true or false, or text in quotes, like var speed = 2.0 or var name = "Rex".');
       variable.ty = variable.declaredType ?? "int";
       return;
     }
@@ -270,9 +273,9 @@ class Checker {
     variable.ty = this.resolveVarType(variable.declaredType, type, variable.init);
   }
 
-  /** The value of a plain literal (a number, optionally negated, or a bool), or null when the expression is anything else. */
-  private literalValue(expr: Expr): number | boolean | null {
-    if (expr.kind === "int" || expr.kind === "float" || expr.kind === "bool") return expr.value;
+  /** The value of a plain literal (a number, optionally negated, a bool, or a string), or null when the expression is anything else. */
+  private literalValue(expr: Expr): number | boolean | string | null {
+    if (expr.kind === "int" || expr.kind === "float" || expr.kind === "bool" || expr.kind === "string") return expr.value;
     if (expr.kind === "unary" && expr.op === "-" && (expr.operand.kind === "int" || expr.operand.kind === "float")) return -expr.operand.value;
     return null;
   }
@@ -281,7 +284,7 @@ class Checker {
   private literalType(variable: VarDecl): ScriptType | null {
     const value = this.literalValue(variable.init);
     if (value === null) return null;
-    const literal: ScriptType = typeof value === "boolean" ? "bool" : Number.isInteger(value) && this.isIntLiteral(variable.init) ? "int" : "float";
+    const literal: ScriptType = typeof value === "boolean" ? "bool" : typeof value === "string" ? "string" : Number.isInteger(value) && this.isIntLiteral(variable.init) ? "int" : "float";
     return variable.declaredType ?? literal;
   }
 
@@ -444,11 +447,13 @@ class Checker {
 
   private checkAssign(statement: AssignStmt): void {
     const targetType = this.typeOfExpr(statement.target);
-    // `$Label.text = "Game Over"`: the only thing a string can be used for.
+    // `$Label.text = "Game Over"`, or a string variable: either way, text (or a name that holds it) is all a label's text can be set to.
     if (statement.target.res?.kind === "labelText") {
-      this.typeOfExpr(statement.value);
+      const valueType = this.typeOfExpr(statement.value);
       if (statement.op !== "=") this.error(statement, `"${statement.op}" doesn't work on text; use = to set a label's text.`);
-      else if (statement.value.kind !== "string") this.error(statement.value, 'A label\'s text can only be set to text in quotes, like $Label.text = "Game Over"; show a number with {} in the text and set .value.');
+      else if (this.asValue(valueType, statement.value) !== "string") {
+        this.error(statement.value, 'A label\'s text can only be set to text in quotes (or a string variable), like $Label.text = "Game Over"; show a number with {} in the text and set .value.');
+      }
       return;
     }
     // A whole vector can be set from another node's vector: `$Block.position = $Touch.position` copies x, y and z. That is the only thing a vector can be.
@@ -475,7 +480,7 @@ class Checker {
     let result: ScriptType = value;
     if (statement.op !== "=") {
       if (!isNumeric(lvalue)) {
-        this.error(statement, `"${statement.op}" only works on numbers, not a bool.`);
+        this.error(statement, `"${statement.op}" only works on numbers, not ${an(lvalue)}.`);
         return;
       }
       const combined = this.arithmeticType(statement.op[0] as "+" | "-" | "*" | "/" | "%", lvalue, value, statement);
@@ -541,15 +546,18 @@ class Checker {
     const type = this.typeOfExpr(expr);
     const value = this.asValue(type, expr);
     if (value === "float") this.error(expr, `${what}() counts whole numbers; use int(x) to drop the fraction.`);
-    else if (value === "bool") this.error(expr, `${what}() needs an int, not a bool.`);
+    else if (value !== null && value !== "int") this.error(expr, `${what}() needs an int, not ${an(value)}.`);
   }
 
-  /** `type` as a value type, or null after reporting that it isn't one (a vector, a node, a string, or nothing). */
+  /** `type` as a value type, or null after reporting that it isn't one (a vector, a node, or nothing). A string is a value
+   *  now too (a variable, a comparison, an assignment) -- what it still can't do (joining, arithmetic, ordering) is
+   *  rejected at each of those specific spots instead, the same way bools already are. */
   private asValue(type: ExprType, at: SourceSpan): ScriptType | null {
     switch (type) {
       case "int":
       case "float":
       case "bool":
+      case "string":
         return type;
       case "void":
         this.error(at, "This call doesn't give a value.");
@@ -559,9 +567,6 @@ class Checker {
         return null;
       case "node":
         this.error(at, "A node can't be used as a value in this version; use one of its members, like .position.x.");
-        return null;
-      case "string":
-        this.error(at, "A string can't be used as a value; it only names a button in Input.is_button_down(\"a\").");
         return null;
       case "unknown":
         return null;
@@ -573,7 +578,7 @@ class Checker {
     if (from === "int" && to === "float") return;
     if (from === "float" && to === "int") {
       this.error(at, "A float can't go into an int without losing its fraction; use int(x).");
-    } else if (from === "bool" || to === "bool") {
+    } else if (from === "bool" || to === "bool" || from === "string" || to === "string") {
       this.error(at, `${an(from)[0].toUpperCase()}${an(from).slice(1)} can't be used as ${an(to)}.`);
     }
   }
@@ -581,7 +586,8 @@ class Checker {
   /** The type of `left op right` for + - * / %, or null (after reporting) when it isn't allowed. */
   private arithmeticType(op: "+" | "-" | "*" | "/" | "%", left: ScriptType, right: ScriptType, at: SourceSpan): ScriptType | null {
     if (!isNumeric(left) || !isNumeric(right)) {
-      this.error(at, `"${op}" needs numbers, but ${left === "bool" ? "the left side" : "the right side"} is a bool.`);
+      const bad = !isNumeric(left) ? left : right;
+      this.error(at, `"${op}" needs numbers, but ${!isNumeric(left) ? "the left side" : "the right side"} is ${an(bad)}.`);
       return null;
     }
     if (op === "%") {
@@ -659,10 +665,12 @@ class Checker {
     }
     if (op === "==" || op === "!=") {
       if ((left === "bool") !== (right === "bool")) this.error(expr, `A bool can't be compared with a ${left === "bool" ? right : left}.`);
+      else if ((left === "string") !== (right === "string")) this.error(expr, `A string can't be compared with ${an(left === "string" ? right : left)}.`);
       return "bool";
     }
     if (op === "<" || op === "<=" || op === ">" || op === ">=") {
       if (left === "bool" || right === "bool") this.error(expr, `"${op}" compares numbers, not bools.`);
+      else if (left === "string" || right === "string") this.error(expr, `"${op}" compares numbers, not text; strings can only be compared with == or !=.`);
       return "bool";
     }
     return this.arithmeticType(op, left, right, expr) ?? "int";
@@ -912,7 +920,8 @@ class Checker {
       }
     }
     if (baseType !== "vec3" && baseType !== "node") {
-      if (this.asValue(baseType, object) !== null) this.error(expr.nameSpan, `A number has no .${expr.name}; only a node's position and scale have .x and .y.`);
+      const value = this.asValue(baseType, object);
+      if (value !== null) this.error(expr.nameSpan, `${an(value)[0].toUpperCase()}${an(value).slice(1)} has no .${expr.name}; only a node's position and scale have .x and .y.`);
     } else this.error(expr.nameSpan, `Can't take .${expr.name} of this.`);
     return "unknown";
   }
@@ -1005,7 +1014,7 @@ class Checker {
       } else {
         for (const arg of expr.args) {
           const value = this.asValue(this.typeOfExpr(arg), arg);
-          if (value === "bool") this.error(arg, "ray_cast() needs numbers: where the ray starts (x, y, z), which way it goes (x, y, z) and how far to look.");
+          if (value !== null && !isNumeric(value)) this.error(arg, "ray_cast() needs numbers: where the ray starts (x, y, z), which way it goes (x, y, z) and how far to look.");
         }
       }
       if (this.nodeSupports(target, "transform", name, nameSpan) && this.requireBody(target, name, nameSpan)) {
@@ -1023,7 +1032,7 @@ class Checker {
       } else {
         for (const arg of expr.args) {
           const value = this.asValue(this.typeOfExpr(arg), arg);
-          if (value === "bool") this.error(arg, "probe_solid() needs numbers: how far below the shape's centre to look, then three positions along the shape's longer side.");
+          if (value !== null && !isNumeric(value)) this.error(arg, "probe_solid() needs numbers: how far below the shape's centre to look, then three positions along the shape's longer side.");
         }
       }
       if (this.nodeSupports(target, "transform", name, nameSpan) && this.requireBody(target, name, nameSpan)) {
@@ -1041,7 +1050,7 @@ class Checker {
       } else {
         for (const arg of expr.args) {
           const value = this.asValue(this.typeOfExpr(arg), arg);
-          if (value === "bool") this.error(arg, "move_and_collide() needs numbers for how far to move on X, Y and Z, not a bool.");
+          if (value !== null && !isNumeric(value)) this.error(arg, `move_and_collide() needs numbers for how far to move on X, Y and Z, not ${an(value)}.`);
         }
       }
     } else {
@@ -1119,11 +1128,64 @@ class Checker {
       for (const arg of expr.args) this.typeOfExpr(arg);
       return "void";
     }
+    // An AudioStreamPlayer's play("name") starts one of its own named clips (requirements/audio/STORY.named-audio-clips.md).
+    // play() and stop() with no name keep meaning exactly what they always have: the player's own sound, on the one
+    // hardware channel it has -- stop() never needs a name, since there's only ever one thing playing to stop.
+    if (name === "play" && expr.args.length === 1) return this.checkAudioClipCall(expr, target, nameSpan);
     this.checkArgCount(expr, 0, `${name}()`);
     if (this.nodeSupports(target, "audio", name, nameSpan)) {
       expr.res = { kind: "audioCall", target, method: name };
       if (name === "play") this.notePlay(target);
     }
+    return "void";
+  }
+
+  /** `play("name")` on an AudioStreamPlayer with named clips: the name must be one of the player's own clips (its own, unnamed sound doesn't count -- it's what plain play() already starts). */
+  private checkAudioClipCall(expr: Extract<Expr, { kind: "call" }>, target: NodeTarget, nameSpan: SourceSpan): ExprType {
+    if (!this.nodeSupports(target, "audio", "play", nameSpan)) {
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return "void";
+    }
+    const arg = expr.args[0];
+    if (arg.kind !== "string") {
+      this.typeOfExpr(arg);
+      this.error(arg, 'play() needs the sound\'s name in quotes, like play("Morning").');
+      return "void";
+    }
+    arg.ty = "string";
+    // The clips this could mean: those of the named player, or of every player the script is attached to.
+    let lists: Array<{ who: string; names: readonly string[] }> | null = null;
+    if (target.kind === "self") {
+      const known = this.context.attached.every((attached) => attached.sounds !== undefined);
+      if (known && this.context.attached.length > 0) lists = this.context.attached.map((attached) => ({ who: attached.name, names: attached.sounds! }));
+    } else {
+      const node = flattenSceneTree(this.context.root).find((candidate) => candidate.id === target.nodeId);
+      if (node) lists = [{ who: `$${target.name}`, names: audioClipNames(getAudioPlayer(node)) }];
+    }
+    let index = 0;
+    if (lists) {
+      const indexes: number[] = [];
+      for (const { who, names } of lists) {
+        const at = names.indexOf(arg.value);
+        if (at < 0) {
+          this.error(
+            arg,
+            names.length === 0
+              ? `${who} has no named sounds yet. Add one in the Inspector.`
+              : `${who} has no sound "${arg.value}". Its named sounds are: ${names.map((name) => `"${name}"`).join(", ")}.`
+          );
+          return "void";
+        }
+        indexes.push(at);
+      }
+      if (indexes.some((at) => at !== indexes[0])) {
+        this.error(arg, `The sound "${arg.value}" is not in the same place in every audio player this script is attached to, so it can't say which to start.`);
+        return "void";
+      }
+      index = indexes[0];
+    }
+    expr.res = { kind: "audioCall", target, method: "play", clip: index };
+    this.notePlay(target);
     return "void";
   }
 
@@ -1269,7 +1331,7 @@ class Checker {
         for (const arg of expr.args) this.typeOfExpr(arg);
       } else {
         const value = this.asValue(this.typeOfExpr(expr.args[0]), expr.args[0]);
-        if (value === "bool") this.error(expr.args[0], `Input.${name} needs the height of the plane as a number, like Input.${name}(0.0).`);
+        if (value !== null && !isNumeric(value)) this.error(expr.args[0], `Input.${name} needs the height of the plane as a number, like Input.${name}(0.0).`);
       }
       expr.res = { kind: "touchGround", axis: name === "touch_ground_x" ? 0 : 1 };
       return "float";
@@ -1372,8 +1434,8 @@ class Checker {
     for (const arg of expr.args) {
       const value = this.asValue(this.typeOfExpr(arg), arg);
       if (value === null) ok = false;
-      else if (value === "bool") {
-        this.error(arg, `${name}() needs numbers, not a bool.`);
+      else if (!isNumeric(value)) {
+        this.error(arg, `${name}() needs numbers, not ${an(value)}.`);
         ok = false;
       } else types.push(value);
     }

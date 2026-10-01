@@ -130,6 +130,29 @@ describe("RomBuilder", () => {
     if (!result.ok && result.reason === "build-failed") expect(result.message).toBe(result.firstError);
   });
 
+  it("reports a linker failure's undefined reference, not just the generic 'ld returned 1' summary", async () => {
+    const output = [
+      "source/gs_runtime.o: in function `gss0__process':",
+      "gs_runtime.c:(.text+0x123): undefined reference to `gs_made_up_symbol'",
+      "collect2.exe: error: ld returned 1 exit status",
+      "make: *** [Makefile:1] Error 1"
+    ].join("\n");
+    const { builder } = setup(found, { exitCode: 1, output, produceRom: false });
+    const result = await builder.build(scene, "C:\\out\\a.nds");
+    expect(result).toMatchObject({ ok: false, reason: "build-failed", firstError: "gs_runtime.c:(.text+0x123): undefined reference to `gs_made_up_symbol'" });
+  });
+
+  it("dedupes the same undefined reference reported from several places", async () => {
+    const output = [
+      "undefined reference to `gs_missing'",
+      "undefined reference to `gs_missing'",
+      "collect2.exe: error: ld returned 1 exit status"
+    ].join("\n");
+    const { builder } = setup(found, { exitCode: 1, output, produceRom: false });
+    const result = await builder.build(scene, "C:\\out\\a.nds");
+    expect(result).toMatchObject({ firstError: "undefined reference to `gs_missing'" });
+  });
+
   it("treats a zero exit with no ROM as a failed build, not a success", async () => {
     const { builder } = setup(found, { exitCode: 0, output: "done", produceRom: false });
     expect(await builder.build(scene, "C:\\out\\a.nds")).toMatchObject({ ok: false, reason: "build-failed" });

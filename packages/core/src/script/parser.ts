@@ -20,7 +20,7 @@ export interface ParseResult {
   diagnostics: ScriptDiagnostic[];
 }
 
-const TYPE_NAMES: ReadonlySet<string> = new Set(["int", "float", "bool"]);
+const TYPE_NAMES: ReadonlySet<string> = new Set(["int", "float", "bool", "string"]);
 const ASSIGN_OPS: ReadonlySet<string> = new Set(["=", "+=", "-=", "*=", "/=", "%="]);
 
 /** Thrown inside the parser to abandon the current statement; caught at the statement boundary. */
@@ -167,8 +167,8 @@ class Parser {
   }
 
   private parseType(): ScriptType {
-    const token = this.expectIdent("a type (int, float or bool)");
-    if (!TYPE_NAMES.has(token.text)) this.fail(spanOf(token), `"${token.text}" isn't a type; use int, float or bool.`);
+    const token = this.expectIdent("a type (int, float, bool or string)");
+    if (!TYPE_NAMES.has(token.text)) this.fail(spanOf(token), `"${token.text}" isn't a type; use int, float, bool or string.`);
     return token.text as ScriptType;
   }
 

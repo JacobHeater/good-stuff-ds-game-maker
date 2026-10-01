@@ -81,7 +81,7 @@ describe("script completion: words", () => {
 
   it("offers types after a colon in a declaration", () => {
     expect(at("var speed: fl|").labels).toEqual(["float"]);
-    expect(at("func jump(power: |", attachedTo("MeshInstance3D"), true).labels).toEqual(["int", "float", "bool"]);
+    expect(at("func jump(power: |", attachedTo("MeshInstance3D"), true).labels).toEqual(["int", "float", "bool", "string"]);
   });
 
   it("offers nothing where a new name is being written", () => {

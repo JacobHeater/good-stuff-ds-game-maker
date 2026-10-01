@@ -88,10 +88,12 @@ class ScriptWriter {
     const count = instances.length;
     this.raw(`/* script ${commentSafe(this.script.name)}: attached to ${count} node${count === 1 ? "" : "s"} */`);
 
-    // State: one struct per attached node, with each variable's initial value.
+    // State: one struct per attached node, with each variable's initial value. A string variable's own field is a
+    // real `const char*` (not int32_t behind a cast, unlike a *global* string -- see gs_global's comment): nothing
+    // outside this struct ever reads it uniformly as int32_t (memcpy resets are byte-for-byte and don't care).
     this.raw(`typedef struct {`);
     if (program.variables.length === 0) this.raw("\tint32_t unused;");
-    for (const variable of program.variables) this.raw(`\tint32_t m_${variable.name}; /* ${variable.ty} */`);
+    for (const variable of program.variables) this.raw(`\t${variable.ty === "string" ? "const char*" : "int32_t"} m_${variable.name}; /* ${variable.ty} */`);
     this.raw(`} ${this.prefix}_State;`);
     const initial = program.variables.length === 0 ? "0" : program.variables.map((v) => this.initialValue(v)).join(", ");
     this.raw(`static ${this.prefix}_State ${this.prefix}_state[${count}] = {`);
@@ -113,6 +115,7 @@ class ScriptWriter {
 
   private initialValue(variable: VarDecl): string {
     const expr = variable.init;
+    if (expr.kind === "string") return cString(fontSafeText(expr.value));
     const literal =
       expr.kind === "unary" && expr.op === "-" && (expr.operand.kind === "int" || expr.operand.kind === "float")
         ? -expr.operand.value
@@ -126,8 +129,8 @@ class ScriptWriter {
   }
 
   private signature(func: FuncDecl): string {
-    const params = ["int inst", ...func.params.map((p) => `int32_t p_${p.name}`)];
-    const returns = func.returnType === "void" ? "void" : "int32_t";
+    const params = ["int inst", ...func.params.map((p) => `${p.declaredType === "string" ? "const char*" : "int32_t"} p_${p.name}`)];
+    const returns = func.returnType === "string" ? "const char*" : func.returnType === "void" ? "void" : "int32_t";
     return `static ${returns} ${this.funcName(func.name)}(${params.join(", ")})`;
   }
 
@@ -152,7 +155,8 @@ class ScriptWriter {
     switch (statement.kind) {
       case "var": {
         const type = statement.ty ?? this.fail("a local without a type", statement);
-        this.line(`${type === "bool" ? "int" : "int32_t"} v_${statement.name} = ${this.convert(this.expr(statement.init), type)};`);
+        const cType = type === "string" ? "const char*" : type === "bool" ? "int" : "int32_t";
+        this.line(`${cType} v_${statement.name} = ${this.convert(this.expr(statement.init), type)};`);
         return;
       }
       case "assign":
@@ -229,10 +233,10 @@ class ScriptWriter {
       }
       return;
     }
-    // `$Label.text = "Game Over"`.
+    // `$Label.text = "Game Over"`, or a string variable (already a `const char*`-typed expression either way).
     if (target.res?.kind === "labelText") {
-      if (statement.value.kind !== "string") this.fail("a label's text set to something that isn't text in quotes", statement);
-      this.line(`gs_label_set_text(${this.nodeIndex(target.res.target)}, ${cString(fontSafeText(statement.value.value))});`);
+      const text = statement.value.kind === "string" ? cString(fontSafeText(statement.value.value)) : this.expr(statement.value).code;
+      this.line(`gs_label_set_text(${this.nodeIndex(target.res.target)}, ${text});`);
       return;
     }
     const value = this.expr(statement.value);
@@ -252,7 +256,8 @@ class ScriptWriter {
     } else if (target.kind === "name" && target.res?.kind === "global") {
       type = target.ty as ScriptType;
       current = this.globalRef(target.res.name, target);
-      store = (code) => `${current} = ${code};`;
+      // gs_global[] holds every global as a plain int32_t; a string one is stored as its ROM address, cast down to fit.
+      store = type === "string" ? (code) => `${current} = (int32_t)(intptr_t)${code};` : (code) => `${current} = ${code};`;
     } else if (target.kind === "name" && target.res?.kind === "member") {
       type = target.ty as ScriptType;
       current = `${this.prefix}_state[inst].m_${target.name}`;
@@ -335,7 +340,7 @@ class ScriptWriter {
       case "bool":
         return { code: expr.value ? "1" : "0", ty: "bool" as ScriptType };
       case "string":
-        return this.fail("a string used as a value", expr);
+        return { code: cString(fontSafeText(expr.value)), ty: "string" as ScriptType };
       case "nodeRef":
         return this.fail("a node used as a value", expr);
       case "name":
@@ -361,7 +366,11 @@ class ScriptWriter {
       return { code: `${isParam ? "p_" : "v_"}${expr.name}`, ty: expr.ty as ScriptType };
     }
     if (res?.kind === "member") return { code: `${this.prefix}_state[inst].m_${expr.name}`, ty: expr.ty as ScriptType };
-    if (res?.kind === "global") return { code: this.globalRef(expr.name, expr), ty: expr.ty as ScriptType };
+    if (res?.kind === "global") {
+      const ref = this.globalRef(expr.name, expr);
+      // gs_global[] holds every global as a plain int32_t; a string one is really a ROM address stored in that slot.
+      return { code: expr.ty === "string" ? `((const char*)(intptr_t)${ref})` : ref, ty: expr.ty as ScriptType };
+    }
     if (res?.kind === "nodeProp") return this.nodeProp(res.target, res.prop);
     return this.fail(`the name "${expr.name}" is used as a value`, expr);
   }
@@ -401,6 +410,11 @@ class ScriptWriter {
       case "%":
         return this.arith(expr.op, a, b);
       default: {
+        // Only == and != ever reach here for strings (the checker rejects ordering them); pointer equality isn't
+        // enough since two separate occurrences of the same text in the source aren't guaranteed one shared address.
+        if (a.ty === "string" || b.ty === "string") {
+          return { code: `(strcmp(${a.code}, ${b.code}) ${expr.op === "!=" ? "!=" : "=="} 0)`, ty: "bool" as ScriptType };
+        }
         // Comparisons: an int next to a float is compared as a float.
         const mixed = (a.ty === "int" && b.ty === "float") || (a.ty === "float" && b.ty === "int");
         const left = mixed ? this.convert(a, "float") : a.code;
@@ -425,7 +439,9 @@ class ScriptWriter {
         if (res.fn === "is_touching") return { code: "gs_touching", ty: "bool" as ScriptType };
         return { code: res.fn === "touch_x" ? "gs_touch_x" : "gs_touch_y", ty: "int" };
       case "audioCall":
-        return { code: `gs_audio_${res.method}(gs_node_audio_player(${this.nodeIndex(res.target)}))`, ty: "int" };
+        return res.clip !== undefined
+          ? { code: `gs_audio_play_clip(gs_node_audio_player(${this.nodeIndex(res.target)}), ${res.clip})`, ty: "int" }
+          : { code: `gs_audio_${res.method}(gs_node_audio_player(${this.nodeIndex(res.target)}))`, ty: "int" };
       case "sceneCall":
         return { code: `gs_change_scene(${res.scene})`, ty: "int" };
       case "saveCall":

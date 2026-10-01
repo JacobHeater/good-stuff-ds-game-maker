@@ -1,4 +1,4 @@
-import { checkScriptOnNodes, collectProjectGlobals, flattenSceneTree, sceneNamesOf, withSceneTree, getAnimationPlayer, type ProjectScript, type SceneNode, type ScriptDiagnostic, type ScriptSceneContext } from "@goodstuff/core";
+import { checkScriptOnNodes, collectProjectGlobals, flattenSceneTree, sceneNamesOf, withSceneTree, getAnimationPlayer, type ProjectScript, type SceneNode, type ScriptDiagnostic, type ScriptSceneContext, type ScriptType } from "@goodstuff/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useEditorStore } from "../state/editor-store";
@@ -65,7 +65,7 @@ function useScriptDiagnostics(script: ProjectScript | undefined): ScriptDiagnost
 const NONE: ScriptDiagnostic[] = [];
 
 /** The project's global variables (declared with `global var` in any script), with the script being edited as it is written now. */
-function projectGlobals(scripts: readonly ProjectScript[] | undefined, current: ProjectScript | undefined): Array<{ name: string; type: "int" | "float" | "bool" }> {
+function projectGlobals(scripts: readonly ProjectScript[] | undefined, current: ProjectScript | undefined): Array<{ name: string; type: ScriptType }> {
   const all = (scripts ?? []).map((script) => (current && script.id === current.id ? current : script));
   return collectProjectGlobals(all).globals.map(({ name, type }) => ({ name, type }));
 }

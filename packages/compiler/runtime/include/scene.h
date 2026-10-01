@@ -11,7 +11,7 @@
  *   normals     one packed 10-bit-per-axis word per vertex (what glNormal takes)
  *   colors      RGB15
  *   light dirs  v10 (the direction the light travels, in world space)
- *   samples     signed 16-bit mono PCM; volume 0..127; frequency in Hz
+ *   sound data  mono, as GsSound.format says (16-bit PCM or the DS's own IMA-ADPCM); volume 0..127; frequency in Hz
  */
 #ifndef GS_SCENE_H
 #define GS_SCENE_H
@@ -31,20 +31,34 @@ typedef struct {
 	const uint16_t *texels; /* 16-bit direct color, red in the low five bits, bit 15 = opaque; row 0 is the top */
 } GsTexture;
 
-/* One sound, shared by every audio player that uses it: mono signed 16-bit samples, 4-byte aligned, a whole number of words. */
+/* One sound, shared by every audio player that uses it: `data` is `byteCount` bytes, 4-byte aligned, a whole number of
+   words, exactly as the DS sound hardware takes them for `format` -- a libnds SoundFormat (SoundFormat_16Bit = 1, plain
+   mono signed 16-bit samples; SoundFormat_ADPCM = 2, the DS's own compressed IMA-ADPCM stream, about a quarter the size). */
 typedef struct {
-	uint32_t sampleCount;
+	uint32_t byteCount;
 	uint16_t sampleRate; /* as recorded, in Hz */
-	const int16_t *samples;
+	uint8_t format;
+	const void *data;
 } GsSound;
 
-/* One AudioStreamPlayer: which sound and how to play it. A player without `autoplay` is not started at once; a script can start it. */
+/* One named clip of an AudioStreamPlayer (GsAudioPlayer.clipStart/clipCount below): its own sound and playback settings,
+   playable with play("name"), independent of the player's own (possibly absent) sound. */
 typedef struct {
 	uint16_t sound;     /* index into GsScene.sounds */
 	uint16_t frequency; /* playback rate in Hz: the sample rate times the pitch, already limited to what the hardware takes */
 	uint8_t volume;     /* 0..127 */
 	uint8_t loop;
-	uint8_t autoplay;
+} GsAudioClip;
+
+/* One AudioStreamPlayer: which sound and how to play it. A player without `autoplay` is not started at once; a script can start it. */
+typedef struct {
+	int16_t sound;      /* index into GsScene.sounds, or -1 for a player with no sound of its own (named clips only -- plain play() does nothing on one of these) */
+	uint16_t frequency; /* playback rate in Hz: the sample rate times the pitch, already limited to what the hardware takes */
+	uint8_t volume;     /* 0..127 */
+	uint8_t loop;
+	uint8_t autoplay;   /* never true when sound is -1 */
+	uint16_t clipStart; /* index into GsScene.audioClips: this player's own named clips are clipStart .. clipStart + clipCount */
+	uint8_t clipCount;  /* at most MAX_EXTRA_AUDIO_CLIPS (9) */
 } GsAudioPlayer;
 
 /* One collision shape (a CollisionShape3D), with the node it belongs to; the placement comes from that node. `shape` is a GS_SHAPE_* of gs_collision.h and
@@ -241,6 +255,7 @@ typedef struct {
 	uint16_t textureCount;
 	uint16_t soundCount;
 	uint16_t audioPlayerCount;
+	uint16_t audioClipCount;
 	uint16_t colliderCount;
 	uint16_t hullPointCount; /* total across every GS_SHAPE_HULL collider (each takes hullCount of them) */
 	uint16_t animationPlayerCount;
@@ -255,6 +270,7 @@ typedef struct {
 	const GsTexture *textures;
 	const GsSound *sounds;
 	const GsAudioPlayer *audioPlayers;
+	const GsAudioClip *audioClips;
 	const GsCollider *colliders;
 	const int32_t *hullPoints; /* flat, 3 per point (x, y, z), f32 (20.12), in each hull collider's own local space */
 	const GsAnimationPlayer *animationPlayers;

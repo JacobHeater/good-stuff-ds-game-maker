@@ -18,7 +18,7 @@ import {
   getTouchArea2DRect,
   getTouchArea3D,
   isTwoDVisualKind,
-  getSoundSamples,
+  rawSoundBytes,
   getTextureByteSize,
   getTextureTexels,
   lightLevelFromIntensity,
@@ -33,6 +33,8 @@ import {
   getSpriteAnimations,
   resolveMeshTexture,
   textureSizeClass,
+  type AudioClip,
+  DS_MIN_PLAYBACK_HZ,
   type FpsTarget,
   type ImportedSound,
   type ProjectScript,
@@ -48,8 +50,9 @@ import {
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
 import { collectSprites } from "./translate-scene-2d";
-import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
+import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioClip, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
 import { FixedPointRangeError, packNormal, rgb15, toF32, toT16, toV10, toV16 } from "./fixed-point";
+import { fontSafeText } from "./label-text";
 import { axisDirection, composeTransform, IDENTITY, invertAffine, multiply, splitScale, transformPoint, withoutScale, type Mat4 } from "./matrix";
 import { generateScriptCode, type CompiledScript } from "./script-codegen";
 
@@ -88,6 +91,19 @@ export interface TranslateResult {
   diagnostics: Diagnostic[];
 }
 
+/**
+ * Globals in the order the runtime's `gs_global[]` actually holds them: every non-string global first, in their
+ * original (alphabetical) order, then every string one last, in theirs. A string global's value is a pointer to a
+ * ROM constant, not a number the save file can meaningfully round-trip between builds (the same *name and type* of
+ * globals can still get a different signature-matching save file across two builds that differ only in some other,
+ * unrelated string literal, which shifts where that string constant actually lives in ROM) -- so `gs_global_count`
+ * (`scene-data-writer.ts`) only spans this numeric prefix, and every string global sits safely past it, reset to
+ * its compile-time value every time the game starts rather than loaded from a save file at all.
+ */
+function orderGlobalsForRuntime(globals: readonly ProjectGlobal[]): ProjectGlobal[] {
+  return [...globals].sort((a, b) => Number(a.type === "string") - Number(b.type === "string"));
+}
+
 interface Collected {
   node: SceneNode;
   world: Mat4;
@@ -123,7 +139,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
 
   // ---- Scripts first: they decide which nodes must be kept and which can move.
   const scripts = checkProjectScripts(project, diagnostics, options.sceneNames ?? sceneNamesOf(project));
-  const globals = scripts.globals;
+  const globals = orderGlobalsForRuntime(scripts.globals);
 
   const meshes: Collected[] = [];
   const cameras: Collected[] = [];
@@ -327,14 +343,22 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     });
   }
 
-  // Audio players. A player without a sound is left out; one naming a sound the project lacks is a broken project.
-  // Only players that will start at once use a hardware channel (all sixteen of them play PCM).
-  const playablePlayers: Array<{ node: SceneNode; sound: ImportedSound; settings: ReturnType<typeof getAudioPlayer>; startsAtOnce: boolean }> = [];
+  // Audio players. A player with neither its own sound nor any named clips is left out; naming a sound the project
+  // lacks (the player's own, or a clip's) is a broken project. Only players that will start at once use a hardware
+  // channel (all sixteen of them play PCM); a clip, started only by play("name"), never does by itself.
+  const playablePlayers: Array<{
+    node: SceneNode;
+    sound: ImportedSound | null;
+    clips: Array<{ clip: AudioClip; sound: ImportedSound }>;
+    settings: ReturnType<typeof getAudioPlayer>;
+    startsAtOnce: boolean;
+  }> = [];
   const audioByNode = new Map<string, Collected & { effectivelyVisible: boolean }>();
   for (const entry of audioNodes) audioByNode.set(entry.node.id, { ...entry, effectivelyVisible: kept[entry.index].effectivelyVisible });
   for (const { node } of audioNodes) {
     const settings = getAudioPlayer(node);
-    if (settings.soundId === undefined) {
+    const hasOwnSound = settings.soundId !== undefined;
+    if (!hasOwnSound && (settings.clips?.length ?? 0) === 0) {
       diagnostics.push({
         severity: "warning",
         code: "player-without-sound",
@@ -343,17 +367,57 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       });
       continue;
     }
-    const sound = project.sounds?.find((candidate) => candidate.id === settings.soundId);
-    if (!sound) {
-      diagnostics.push({
-        severity: "error",
-        code: "missing-sound",
-        nodeName: node.name,
-        message: "This audio player uses a sound that isn't in the project, so there is nothing to play. Import the sound again or clear it."
-      });
-      continue;
+    let sound: ImportedSound | null = null;
+    if (hasOwnSound) {
+      sound = project.sounds?.find((candidate) => candidate.id === settings.soundId) ?? null;
+      if (!sound) {
+        diagnostics.push({
+          severity: "error",
+          code: "missing-sound",
+          nodeName: node.name,
+          message: "This audio player uses a sound that isn't in the project, so there is nothing to play. Import the sound again or clear it."
+        });
+        continue;
+      }
+      if (playbackFrequency(sound.sampleRate, settings.pitch).clamped) {
+        diagnostics.push({
+          severity: "warning",
+          code: "sound-pitch-clamped",
+          nodeName: node.name,
+          message: `A pitch of ${settings.pitch} on a ${sound.sampleRate} Hz sound is more than the DS's sound hardware can play, so the playback rate was limited.`
+        });
+      }
     }
-    if (!settings.autoplay && !scripts.playedIds.has(node.id)) {
+    // Every clip must have a real sound: its index among the player's clips is baked into every play("name") that
+    // resolved against it at check time, so there is no "skip a bad one and shift the rest" option here.
+    let brokenClip = false;
+    const clips: Array<{ clip: AudioClip; sound: ImportedSound }> = [];
+    for (const clip of settings.clips ?? []) {
+      const clipSound = clip.soundId ? (project.sounds?.find((candidate) => candidate.id === clip.soundId) ?? null) : null;
+      if (!clipSound) {
+        diagnostics.push({
+          severity: "error",
+          code: "missing-sound",
+          nodeName: node.name,
+          message: clip.soundId
+            ? `This audio player's "${clip.name}" sound isn't in the project, so there is nothing to play. Import it again or clear it.`
+            : `This audio player's "${clip.name}" sound hasn't been chosen yet.`
+        });
+        brokenClip = true;
+        continue;
+      }
+      if (playbackFrequency(clipSound.sampleRate, clip.pitch).clamped) {
+        diagnostics.push({
+          severity: "warning",
+          code: "sound-pitch-clamped",
+          nodeName: node.name,
+          message: `A pitch of ${clip.pitch} on "${clip.name}" (${clipSound.sampleRate} Hz) is more than the DS's sound hardware can play, so the playback rate was limited.`
+        });
+      }
+      clips.push({ clip, sound: clipSound });
+    }
+    if (brokenClip) continue;
+    if (hasOwnSound && !settings.autoplay && !scripts.playedIds.has(node.id)) {
       diagnostics.push({
         severity: "warning",
         code: "sound-not-started",
@@ -361,16 +425,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         message: "Autoplay is off and no script calls play() on this player, so nothing starts this sound; it stays silent."
       });
     }
-    if (playbackFrequency(sound.sampleRate, settings.pitch).clamped) {
-      diagnostics.push({
-        severity: "warning",
-        code: "sound-pitch-clamped",
-        nodeName: node.name,
-        message: `A pitch of ${settings.pitch} on a ${sound.sampleRate} Hz sound is more than the DS's sound hardware can play, so the playback rate was limited.`
-      });
-    }
-    // A player starts by itself only if it has Autoplay on and is visible as the scene stands (a hidden one is not in the game until a script shows it).
-    playablePlayers.push({ node, sound, settings, startsAtOnce: settings.autoplay && (audioByNode.get(node.id)?.effectivelyVisible ?? true) });
+    // A player starts by itself only if it has its own sound, Autoplay on, and is visible as the scene stands (a hidden one is not in the game until a script shows it).
+    playablePlayers.push({ node, sound, clips, settings, startsAtOnce: hasOwnSound && settings.autoplay && (audioByNode.get(node.id)?.effectivelyVisible ?? true) });
   }
   const autoplaying = playablePlayers.filter(({ startsAtOnce }) => startsAtOnce).length;
   const channels = DS_HARDWARE_PROFILE.audio.channels;
@@ -381,7 +437,11 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       message: `${autoplaying} audio players start at once, but the DS has ${channels} sound channels.`
     });
   }
-  const usedSounds = new Map<string, ImportedSound>(playablePlayers.map(({ sound }) => [sound.id, sound]));
+  const usedSounds = new Map<string, ImportedSound>();
+  for (const { sound, clips } of playablePlayers) {
+    if (sound) usedSounds.set(sound.id, sound);
+    for (const { sound: clipSound } of clips) usedSounds.set(clipSound.id, clipSound);
+  }
   const soundBytes = [...usedSounds.values()].reduce((sum, sound) => sum + getSoundByteSize(sound), 0);
   const soundLimit = DS_HARDWARE_PROFILE.audio.soundMemoryBytes;
   if (soundBytes > soundLimit) {
@@ -593,24 +653,43 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
 
   if (hasErrors(diagnostics) || !dsCamera) return { scene: null, diagnostics };
 
-  // Sounds, in the order they are first used; each is written once however many players use it.
+  // Sounds, in the order they are first used; each is written once however many players (or clips) use it.
   const sounds: DsSound[] = [];
   const soundIndex = new Map<string, number>();
-  const audioPlayers: DsAudioPlayer[] = playablePlayers.map(({ sound, settings, startsAtOnce }) => {
+  const indexOfSound = (sound: ImportedSound): number => {
     let index = soundIndex.get(sound.id);
     if (index === undefined) {
-      const samples = Array.from(getSoundSamples(sound));
-      if (samples.length % 2 !== 0) samples.push(0); // a whole number of 4-byte words
-      sounds.push({ key: `sound:${sound.id}`, label: sound.name, sampleRate: sound.sampleRate, samples });
+      const bytes = Array.from(rawSoundBytes(sound));
+      while (bytes.length % 4 !== 0) bytes.push(0); // a whole number of 4-byte words
+      const format = sound.format === "ima-adpcm" ? "ima-adpcm" : "pcm16";
+      sounds.push({ key: `sound:${sound.id}`, label: sound.name, sampleRate: sound.sampleRate, format, bytes });
       index = sounds.length - 1;
       soundIndex.set(sound.id, index);
     }
+    return index;
+  };
+  const audioClips: DsAudioClip[] = [];
+  const audioPlayers: DsAudioPlayer[] = playablePlayers.map(({ sound, clips, settings, startsAtOnce }) => {
+    // The player's own sound (if it has one) is resolved first, so it's the earlier entry in `sounds` -- a player's
+    // own sound reads naturally before its clips', the order they're declared in the Inspector too.
+    const soundIndex = sound ? indexOfSound(sound) : -1;
+    const clipStart = audioClips.length;
+    for (const { clip, sound: clipSound } of clips) {
+      audioClips.push({
+        sound: indexOfSound(clipSound),
+        volume: dsVolume(clip.volume),
+        frequency: playbackFrequency(clipSound.sampleRate, clip.pitch).hz,
+        loop: clip.loop
+      });
+    }
     return {
-      sound: index,
-      volume: dsVolume(settings.volume),
-      frequency: playbackFrequency(sound.sampleRate, settings.pitch).hz,
+      sound: soundIndex,
+      volume: sound ? dsVolume(settings.volume) : 0,
+      frequency: sound ? playbackFrequency(sound.sampleRate, settings.pitch).hz : DS_MIN_PLAYBACK_HZ,
       loop: settings.loop,
-      autoplay: startsAtOnce
+      autoplay: startsAtOnce,
+      clipStart,
+      clipCount: clips.length
     };
   });
 
@@ -810,6 +889,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       textures,
       sounds,
       audioPlayers,
+      audioClips,
       colliders,
       animationPlayers,
       animations,
@@ -819,7 +899,11 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       meshFrames,
       meshAnimations,
       sprites2D: twoDSprites,
-      globals: globals.map((g) => ({ name: g.name, type: g.type, value: g.type === "float" ? toF32(g.initial) : g.initial })),
+      globals: globals.map((g) => ({
+        name: g.name,
+        type: g.type,
+        value: g.type === "float" ? toF32(g.initial as number) : g.type === "string" ? fontSafeText(g.initial as string) : g.initial
+      })),
       nodes: dsNodes,
       scriptCode
     },

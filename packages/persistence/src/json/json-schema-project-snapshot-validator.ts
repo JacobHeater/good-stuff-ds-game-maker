@@ -8,6 +8,7 @@ import {
   getSpriteFrames,
   getSpritePixels,
   getTextureByteSize,
+  imaAdpcmByteSize,
   isSoundSampleRate,
   isSpriteSize,
   isTextureSize,
@@ -128,7 +129,13 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     }
     const padding = sound.samples.endsWith("==") ? 2 : sound.samples.endsWith("=") ? 1 : 0;
     const decodedBytes = (sound.samples.length / 4) * 3 - padding;
-    if (decodedBytes === 0 || decodedBytes % 2 !== 0) {
+    if (sound.format === "ima-adpcm") {
+      if (!Number.isInteger(sound.sampleCount) || sound.sampleCount! < 1) {
+        issues.push(`${where}/sampleCount must be a whole number of at least 1 for an ima-adpcm sound`);
+      } else if (decodedBytes !== imaAdpcmByteSize(sound.sampleCount!)) {
+        issues.push(`${where}/samples holds ${decodedBytes} bytes, but ${sound.sampleCount} ima-adpcm samples need ${imaAdpcmByteSize(sound.sampleCount!)}`);
+      }
+    } else if (decodedBytes === 0 || decodedBytes % 2 !== 0) {
       issues.push(`${where}/samples holds ${decodedBytes} bytes, but it must hold at least one whole 16-bit sample (two bytes each)`);
     }
   });

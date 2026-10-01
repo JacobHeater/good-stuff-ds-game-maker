@@ -11,12 +11,18 @@ export interface SourceSpan {
   endColumn: number;
 }
 
-/** The types a variable, parameter or return value can have. */
-export type ScriptType = "int" | "float" | "bool";
+/**
+ * The types a variable, parameter or return value can have. A string holds only literal text: it can be declared,
+ * reassigned (to another string literal or string variable) and compared with `==`/`!=`, but not built from pieces
+ * (no `+` joining text and a number, no runtime-constructed text) -- every value a string variable can ever hold is
+ * one of the string literals already in the source, known at compile time, which is what lets it compile to a plain
+ * pointer to a ROM constant instead of needing mutable string storage.
+ */
+export type ScriptType = "int" | "float" | "bool" | "string";
 
 /** The type of an expression: a value type, or something that only exists as the base of a member or call. */
 /** `unknown` is the type of something that already has an error reported, so it causes no more errors downstream. */
-export type ExprType = ScriptType | "void" | "string" | "vec3" | "node" | "unknown";
+export type ExprType = ScriptType | "void" | "vec3" | "node" | "unknown";
 
 /** A node a script refers to: the node it is attached to, or another node found by name. */
 export type NodeTarget = { kind: "self" } | { kind: "node"; nodeId: string; name: string };
@@ -45,7 +51,8 @@ export type Resolution =
   | { kind: "nodeProp"; target: NodeTarget; prop: "visible" | "volume" | "pitch" | "speed_scale" | "value" }
   /** `$Label.text`: the text of a Label node, which a script can only set (to a string in quotes). */
   | { kind: "labelText"; target: NodeTarget }
-  | { kind: "audioCall"; target: NodeTarget; method: "play" | "stop" }
+  /** `play()`/`stop()` on an AudioStreamPlayer's own sound, or `play("name")` on one of its named clips (`clip`, its place among them). */
+  | { kind: "audioCall"; target: NodeTarget; method: "play" | "stop"; clip?: number }
   /** `player.play("name")` (with the animation's place among the node's animations), `stop()` and `is_playing()` on an AnimationPlayer, or (`sprite`) an AnimatedSprite2D. */
   | { kind: "animCall"; target: NodeTarget; method: "play" | "stop" | "is_playing"; animation: number; sprite?: boolean; mesh?: boolean }
   /** `change_scene("Level2")`: switch to another scene of the project (with its place in the project's list of scenes, the starting scene first). */
