@@ -15,17 +15,19 @@ much space. Asked how to compress further (real compression vs. just allowing an
 real compression: IMA-ADPCM, the Nintendo DS sound hardware's own compressed format.
 
 ## Decision
-IMA-ADPCM instead of a lower sample-rate ceiling or a manual per-import quality control, because:
+IMA-ADPCM instead of a lower sample-rate ceiling, because:
 - **It's free.** The DS hardware decodes IMA-ADPCM as it plays (`SoundFormat_ADPCM` in libnds) -- no runtime CPU cost, no
   extra RAM beyond the (already far smaller) compressed data itself. A lower sample rate has a real, audible cost (fewer
   samples a second); ADPCM's cost is a little quantization noise at the *same* sample rate, which is usually the better
   trade for music.
 - **About a quarter the size.** Each sample after the first is 4 bits instead of 16 (plus a fixed 4-byte header), so the
   same budget holds about 4x as many seconds, or the same song fits at a much higher sample rate than it did as PCM16.
-- Made the **default** for every future import, not an opt-in: there is no real reason to keep storing new sounds as
-  uncompressed PCM16, and the owner's ask was "compressed more" for sounds in general, not a one-off toggle. `format: "pcm16"`
-  still exists for anything that wants the old, lossless behavior (tests mostly use it to keep comparing exact sample
-  values, where ADPCM's quantization would be beside the point).
+- **Asked once per import, not silently defaulted.** First built as an automatic default for every import (with
+  `format: "pcm16"` as an escape hatch), then changed: the owner wanted an explicit choice each time instead, asked right
+  when picking the file -- the same pattern "Import Model..." already uses for "recalculate normals?" (`askRecalculateNormals`
+  in `assets-ipc.ts`). A one-time "compress this existing sound in place" Inspector button was tried as a way to shrink
+  sounds imported before this feature existed without needing the original file again, but was removed in favor of this:
+  re-import the file and say yes.
 
 ## Description
 - **Codec** (`core/src/ima-adpcm.ts`, new): `encodeImaAdpcm`/`decodeImaAdpcm`, a from-scratch implementation of the standard
@@ -40,10 +42,11 @@ IMA-ADPCM instead of a lower sample-rate ceiling or a manual per-import quality 
   (format-agnostic, so it already reports the real, compressed size); `getSoundSampleCount`/`getSoundSamples` branch on
   `format` so every existing caller (duration display, preview playback, the compiler) keeps working against decoded PCM
   samples without caring which format a sound is stored as. New `rawSoundBytes(sound)` returns the exact stored bytes
-  as-is, for the one place that needs them undecoded: embedding into the ROM. `createSoundFromPcm` encodes to "ima-adpcm"
-  by default (pass `format: "pcm16"` for the old behavior) and its budget-fit math (the "resample down until it fits" step)
-  now accounts for the chosen format's bytes-a-sample, so an ima-adpcm import goes much further before it needs resampling
-  at all.
+  as-is, for the one place that needs them undecoded: embedding into the ROM. `createSoundFromPcm` still defaults
+  `format` to `"ima-adpcm"` when a caller omits it (a sensible default for the function itself), but its one real caller
+  (`decode-sound.ts`) always passes it explicitly now, based on the owner's answer to the import-time question below. Its
+  budget-fit math (the "resample down until it fits" step) accounts for the chosen format's bytes-a-sample, so an
+  ima-adpcm import goes much further before it needs resampling at all.
 - **Persistence**: `importedSound`'s JSON schema gained optional `format`/`sampleCount` properties;
   `JsonSchemaProjectSnapshotValidator` checks an ima-adpcm sound's byte length matches `imaAdpcmByteSize(sampleCount)`
   exactly (instead of the old "whole number of 16-bit samples" check, which doesn't apply to a nibble-packed stream).
@@ -56,28 +59,25 @@ IMA-ADPCM instead of a lower sample-rate ceiling or a manual per-import quality 
   place that plays a sound, `audio_start` in `gs_runtime.c`, now calls `soundPlaySample(sound->data, (SoundFormat)
   sound->format, sound->byteCount, ...)` instead of hardcoding `SoundFormat_16Bit` -- the DS hardware takes it from there,
   so nothing else in the runtime (volume, pitch, looping, named clips) needed to change.
-- **Editor**: the byte-size readout in `AudioPlayerField.tsx` already calls `getSoundByteSize`, which is format-agnostic, so
-  a freshly imported (now compressed) sound simply shows a smaller number; sound preview (`sound-preview.ts`) already
-  decodes through `getSoundSamples`, which now handles ima-adpcm transparently. Added, after the owner hit the DS's ARM9
-  binary size limit with their existing (pre-this-feature, still pcm16) sounds: a "Compress" button next to that byte-size
-  readout, for both a player's own sound and a named clip's, that re-encodes the sound already in the project to ima-adpcm
-  **in place** -- no need to still have the original audio file to re-import. `compressSoundToAdpcm(sound)` (core) decodes
-  through the existing `getSoundSamples` (so it works from either format) and re-encodes; a new `COMPRESS_SOUND` editor-store
-  action replaces that one sound in `project.sounds`, undoably, logging the before/after byte count. A no-op if the sound is
-  already ima-adpcm (returns the same object, so the button doesn't show).
+- **Editor**: "Import Sound..." (main process, `assets-ipc.ts`'s `pickSound`) now asks a question right after the file is
+  chosen and before it's even read -- the same pattern `askRecalculateNormals` already uses for "Import Model...": a native
+  `dialog.showMessageBox` with "Compress (ima-adpcm)" / "Don't compress (pcm16)" (default and Esc/close both mean
+  compress). The answer (`PickSoundResult.compress`) flows back through IPC to `decodeSoundFile` (now takes a `compress`
+  parameter) and becomes `createSoundFromPcm`'s `format`. The byte-size readout in `AudioPlayerField.tsx` already calls
+  `getSoundByteSize`, which is format-agnostic, so a compressed import simply shows a smaller number with no further UI
+  change; sound preview (`sound-preview.ts`) already decodes through `getSoundSamples`, which handles ima-adpcm
+  transparently.
 
 ## Notes (built and verified)
 - Unit tests: `core/src/ima-adpcm.test.ts` (new: round-trips a tone closely, handles 0/1/odd sample counts, silence in/out),
   `core/src/imported-sound.test.ts` (existing resample/clip/fit-math tests pinned to `format: "pcm16"` since they're about
   that math specifically and compare exact sample values; new `describe("compressing to ima-adpcm by default", ...)`:
-  it's the default, about a quarter pcm16's size, round-trips lossily but closely, embeds the encoded bytes rather than
-  decoded samples, and fits a sound that would have needed resampling as pcm16 at full rate as ima-adpcm; new
-  `describe("compressing a sound already in the project", ...)`: re-encodes in place keeping id/name/rate, stays close to
-  the original tone, is a no-op on an already-compressed sound), persistence's `json-schema-project-snapshot-validator`
-  validation, `compiler/sounds.test.ts` (updated exact-string `GsSound`/sound-data C for the new fields),
-  `ui/state/sound-edits.test.ts` (new `describe("compressing a sound already in the project", ...)`: logs the before/after
-  byte count, undoable, no-op on an already-compressed or missing sound, no-op with no project open). Full fast suite
-  (1195 tests) and typecheck (core/persistence/compiler/ui) pass.
+  it's `createSoundFromPcm`'s own default when a caller omits `format`, about a quarter pcm16's size, round-trips lossily
+  but closely, embeds the encoded bytes rather than decoded samples, and fits a sound that would have needed resampling as
+  pcm16 at full rate as ima-adpcm), persistence's `json-schema-project-snapshot-validator` validation, `compiler/
+  sounds.test.ts` (updated exact-string `GsSound`/sound-data C for the new fields). Full fast suite (1189 tests) and
+  typecheck (core/persistence/compiler/ui) pass. The import-time dialog itself (`assets-ipc.ts`) is Electron main-process
+  code with no automated test, same as its `askRecalculateNormals` sibling.
 - **Also fixed along the way**: the owner hit the real-world case this story exists for -- an existing project with
   several scenes' worth of (pre-this-feature, still pcm16) music overflowing the DS's ARM9 binary size limit at Play/Export
   (`ld`: "region 'lma9' overflowed"). Investigating it surfaced a real, independent bug: `RomBuilder`'s `firstErrorLine`
@@ -87,10 +87,17 @@ IMA-ADPCM instead of a lower sample-rate ceiling or a manual per-import quality 
   just this one. Fixed to prefer (deduplicated) "undefined reference" lines when present. Also added: in dev,
   `play-ipc.ts` now streams the full raw toolchain output to the main process's own console (gated on `!app.isPackaged`),
   so a build failure the short in-app message doesn't fully explain can still be read in full without any extra setup.
+- **Tried and removed**: a one-time "Compress" button in the Inspector that re-encoded a sound already in the project to
+  ima-adpcm in place (`compressSoundToAdpcm` in core, a `COMPRESS_SOUND` editor-store action), so the owner's *existing*
+  pcm16 sounds could shrink without re-importing. The owner preferred the import-time question instead, so this was
+  removed again (code and tests); shrinking an existing sound now means re-importing its file and saying yes to the
+  question.
 - **Not verified:** an actual ROM build and real DS/emulator playback of an ima-adpcm sound (no `*.rom.test.ts` case) --
   in particular that the encoder's output is byte-for-byte what the DS hardware's decoder expects (the algorithm matches
-  the documented standard, but this hasn't been played back for real). **Not built:** a manual per-sound compression
-  choice in the Inspector for a *fresh* import (format is a `createSoundFromPcm` option, not exposed in the UI -- every
-  future import is simply compressed by default); streaming/on-demand per-scene assets, so a big enough multi-scene
-  project can still overflow the ARM9 binary size limit even with every sound compressed -- compressing sounds narrows
-  that ceiling's bite, it doesn't remove it.
+  the documented standard, but this hasn't been played back for real); the import-time dialog in the real app (no E2E).
+  **Not built:** a way to shrink a sound already in the project without re-importing its original file; streaming/
+  on-demand per-scene assets, so a big enough multi-scene project can still overflow the ARM9 binary size limit even with
+  every sound compressed -- compressing sounds narrows that ceiling's bite, it doesn't remove it. A second, larger,
+  separate gap found while investigating the owner's overflow: textures/meshes/sounds shared across more than one scene
+  are currently embedded once *per scene* in the ROM rather than deduplicated project-wide (`translateProject3D` compiles
+  each scene independently); fixing that is its own, bigger undertaking, not part of this story.

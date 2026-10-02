@@ -94,17 +94,6 @@ export function getSoundSamples(sound: ImportedSound): Int16Array {
   return samples;
 }
 
-/**
- * Re-encodes a sound already in the project to IMA-ADPCM, in place -- no original file needed, unlike a fresh import.
- * About a quarter the size afterward; already "ima-adpcm" is returned unchanged (not re-encoded a second time, which
- * would lose more to quantization for nothing). Keeps the id, name and sample rate; only `format`/`sampleCount`/`samples` change.
- */
-export function compressSoundToAdpcm(sound: ImportedSound): ImportedSound {
-  if (sound.format === "ima-adpcm") return sound;
-  const samples = getSoundSamples(sound);
-  return { ...sound, format: "ima-adpcm", sampleCount: samples.length, samples: bytesToBase64(encodeImaAdpcm(samples)) };
-}
-
 export type SoundImportResult =
   | { ok: true; sound: Omit<ImportedSound, "id">; warnings: string[] }
   | { ok: false; errors: string[] };

@@ -1,6 +1,7 @@
 import {
   checkScriptOnNodes,
   DS_HARDWARE_PROFILE,
+  triangleBudgetFor,
   DS_MAX_LIGHTS,
   describeMeshSource,
   flattenSceneTree,
@@ -305,9 +306,10 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     });
   }
 
-  // Triangle budget, from the same geometry that is emitted.
+  // Triangle budget, from the same geometry that is emitted. Targeting 30fps gives the GPU twice as long per frame, so
+  // it doubles how many triangles fit (triangleBudgetFor).
   const triangles = drawableMeshes.reduce((sum, { node }) => sum + resolveMeshGeometry(node.mesh!, project.meshes)!.triangleCount, 0);
-  const limit = DS_HARDWARE_PROFILE.graphics3D.approxTrianglesPerFrame;
+  const limit = triangleBudgetFor(options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget);
   if (triangles > limit) {
     diagnostics.push({
       severity: "error",

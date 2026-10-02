@@ -88,13 +88,15 @@ export interface ImportSpriteResult {
 
 /**
  * The outcome of asking for a sound file. On "ok", `bytes` is the file's content, undecoded: decoding audio needs the editor
- * window's decoder (WAV, MP3 and OGG), so the main process only picks and reads. On "error", `errors` says why the file
- * couldn't be read. On "canceled" both are empty.
+ * window's decoder (WAV, MP3 and OGG), so the main process only picks and reads. `compress` is whether the owner chose to
+ * compress it (asked once per import, before the file is even read -- requirements/audio/STORY.compressed-sound.md). On
+ * "error", `errors` says why the file couldn't be read. On "canceled" both are empty.
  */
 export interface PickSoundResult {
   outcome: ProjectDialogOutcome;
   fileName?: string;
   bytes?: Uint8Array;
+  compress?: boolean;
   errors: string[];
 }
 

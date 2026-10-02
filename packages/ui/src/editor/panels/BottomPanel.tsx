@@ -25,7 +25,7 @@ function HardwareBudgetTab(): JSX.Element {
   // exactly as the compiler counts them, so the live gauge here has to look inside instances too, not just the
   // nodes literally in this scene's own tree, or it can show "under budget" for a scene the compiler refuses.
   const shownRoot = useShownSceneRoot();
-  const budget = computeSceneBudget(shownRoot, state.project?.meshes, state.project?.textures, state.project?.sounds, state.project?.sprites);
+  const budget = computeSceneBudget(shownRoot, state.project?.meshes, state.project?.textures, state.project?.sounds, state.project?.sprites, state.fpsTarget);
 
   return (
     <div className="grid grid-cols-2 gap-4 p-3 text-xs">
@@ -101,7 +101,7 @@ function HardwareBudgetTab(): JSX.Element {
           </li>
           <li>RAM: {DS_HARDWARE_PROFILE.memory.mainRamBytes / (1024 * 1024)}MB</li>
           <li>VRAM: {Math.round(DS_HARDWARE_PROFILE.memory.videoRamBytes / 1024)}KB</li>
-          <li>3D polygon budget: ~{DS_HARDWARE_PROFILE.graphics3D.approxTrianglesPerFrame} triangles/frame</li>
+          <li>3D polygon budget: ~{DS_HARDWARE_PROFILE.graphics3D.approxTrianglesPerFrame} triangles/frame at 60fps (doubles at 30fps -- the gauge above already reflects this project's target)</li>
           <li>Max texture size: {DS_HARDWARE_PROFILE.graphics3D.maxTextureSizePx}px</li>
           <li>Total scene nodes: {budget.totalNodes}</li>
         </ul>

@@ -42,7 +42,6 @@ export function AudioPlayerField({
   /** The pointer was pressed or released on a slider, or it lost focus: the next change is a new undo step. */
   onGestureBoundary: () => void;
 }): JSX.Element {
-  const { compressSound } = useEditorStore();
   const settings = getAudioPlayer(node);
   const sound = sounds.find((candidate) => candidate.id === settings.soundId);
   const missing = settings.soundId !== undefined && !sound;
@@ -75,21 +74,7 @@ export function AudioPlayerField({
       <button type="button" onClick={onImport} className={buttonClasses}>
         Import Sound...
       </button>
-      {sound && (
-        <div className="flex items-center gap-2 text-[10px] text-editor-text-muted">
-          <span>{getSoundByteSize(sound)} bytes of the DS's sound memory.</span>
-          {sound.format !== "ima-adpcm" && (
-            <button
-              type="button"
-              className={`${buttonClasses} px-1.5 py-0.5 text-[10px]`}
-              onClick={() => compressSound(sound.id)}
-              title="Re-encode this sound as ima-adpcm, about a quarter the size, without needing the original file again"
-            >
-              Compress
-            </button>
-          )}
-        </div>
-      )}
+      {sound && <div className="text-[10px] text-editor-text-muted">{getSoundByteSize(sound)} bytes of the DS's sound memory.</div>}
 
       <div className="flex flex-col gap-1.5 rounded border border-editor-border bg-editor-panel-alt p-2">
         <div className="flex items-center gap-2">
@@ -190,7 +175,7 @@ export function AudioPlayerField({
  * list pattern as an AnimationPlayer's animations, with the clip's own sound, volume, pitch and loop below it.
  */
 function AudioClipsField({ node, sounds, onGestureBoundary }: { node: SceneNode; sounds: readonly ImportedSound[]; onGestureBoundary: () => void }): JSX.Element {
-  const { audioClips, compressSound } = useEditorStore();
+  const { audioClips } = useEditorStore();
   const data = getAudioPlayer(node);
   const clips = data.clips ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -256,21 +241,7 @@ function AudioClipsField({ node, sounds, onGestureBoundary }: { node: SceneNode;
               )}
             </select>
           </Field>
-          {clipSound && (
-            <div className="flex items-center gap-2 text-[10px] text-editor-text-muted">
-              <span>{getSoundByteSize(clipSound)} bytes of the DS's sound memory.</span>
-              {clipSound.format !== "ima-adpcm" && (
-                <button
-                  type="button"
-                  className={`${buttonClasses} px-1.5 py-0.5 text-[10px]`}
-                  onClick={() => compressSound(clipSound.id)}
-                  title="Re-encode this sound as ima-adpcm, about a quarter the size, without needing the original file again"
-                >
-                  Compress
-                </button>
-              )}
-            </div>
-          )}
+          {clipSound && <div className="text-[10px] text-editor-text-muted">{getSoundByteSize(clipSound)} bytes of the DS's sound memory.</div>}
           <Field label="Volume">
             <div className="flex items-center gap-2">
               <input

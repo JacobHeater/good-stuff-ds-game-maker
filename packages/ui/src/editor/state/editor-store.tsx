@@ -99,8 +99,7 @@ import {
   type DropPosition,
   uniqueScriptName,
   updateSceneNode,
-  DS_HARDWARE_PROFILE,
-  compressSoundToAdpcm
+  DS_HARDWARE_PROFILE
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
 import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
@@ -406,7 +405,6 @@ export type Action =
   | { type: "SET_LABEL"; id: string; change: LabelChange; at: number }
   | { type: "SET_TOUCH_AREA_3D"; id: string; change: TouchArea3DChange; at: number }
   | { type: "IMPORT_SOUND"; nodeId: string | null; sound: ImportedSound; warnings: string[] }
-  | { type: "COMPRESS_SOUND"; soundId: string }
   | { type: "SELECT_SCRIPT"; id: string | null }
   | { type: "CREATE_SCRIPT"; attachTo: string | null; id: string }
   | { type: "RENAME_SCRIPT"; id: string; name: string; at: number }
@@ -1191,19 +1189,6 @@ function applyAction(state: EditorState, action: Action): EditorState {
         outputLog: [...state.outputLog, `Imported sound "${sound.name}" (${details}) as node "${name}".`, ...warnings]
       };
     }
-    case "COMPRESS_SOUND": {
-      if (!state.project) return state;
-      const sound = state.project.sounds?.find((candidate) => candidate.id === action.soundId);
-      if (!sound || sound.format === "ima-adpcm") return state;
-      const before = getSoundByteSize(sound);
-      const compressed = compressSoundToAdpcm(sound);
-      const sounds = state.project.sounds!.map((candidate) => (candidate.id === sound.id ? compressed : candidate));
-      return {
-        ...state,
-        project: { ...state.project, sounds },
-        outputLog: [...state.outputLog, `Compressed "${sound.name}" to ima-adpcm: ${before} bytes -> ${getSoundByteSize(compressed)} bytes of sound memory.`]
-      };
-    }
     case "SELECT_SCRIPT":
       return state.selectedScriptId === action.id ? state : { ...state, selectedScriptId: action.id };
     case "CREATE_SCRIPT": {
@@ -1630,8 +1615,6 @@ interface EditorStoreValue {
    * nothing and is explained in the Output log; cancelling does nothing.
    */
   importSound: (nodeId: string | null) => Promise<void>;
-  /** Re-encodes a sound already in the project to ima-adpcm, in place (no original file needed). A no-op if it already is one. */
-  compressSound: (soundId: string) => void;
   /**
    * Asks for an .obj file and, if it is acceptable, adds a MeshInstance3D that uses it under the selected
    * node. A refused file changes nothing and is explained in the Output log; cancelling does nothing.
@@ -1780,10 +1763,6 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Change starting animation of ${nameOf(action.id)}` };
     case "IMPORT_SOUND":
       return { label: `Import sound ${action.sound.name}` };
-    case "COMPRESS_SOUND": {
-      const name = before.project?.sounds?.find((sound) => sound.id === action.soundId)?.name ?? "sound";
-      return { label: `Compress ${name}` };
-    }
     case "CREATE_SCRIPT":
       return { label: "Create script" };
     case "RENAME_SCRIPT":
@@ -2293,7 +2272,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
         refuse(picked.errors);
         return;
       }
-      const converted = await decodeSoundFile(picked.bytes, picked.fileName ?? "Sound");
+      const converted = await decodeSoundFile(picked.bytes, picked.fileName ?? "Sound", picked.compress ?? true);
       if (!converted.ok) {
         refuse(converted.errors);
         return;
@@ -2302,8 +2281,6 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     },
     [state.project]
   );
-
-  const compressSound = useCallback((soundId: string) => dispatch({ type: "COMPRESS_SOUND", soundId }), []);
 
   const importModel = useCallback(async (poses?: boolean): Promise<void> => {
     if (!state.project || state.project.mode !== "3D") return;
@@ -2552,7 +2529,6 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       animations,
       audioClips,
       importSound,
-      compressSound,
       importTexture,
       setSpriteImage,
       setNodeScreen,
@@ -2631,7 +2607,6 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       animations,
       audioClips,
       importSound,
-      compressSound,
       importTexture,
       setSpriteImage,
       setNodeScreen,

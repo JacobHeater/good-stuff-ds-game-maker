@@ -44,4 +44,16 @@ describe("a scene's triangle budget", () => {
     const expanded = expandSceneInstances(project, project.scene);
     expect(computeSceneBudget(expanded).trianglesUsed).toBe(getPrimitiveTriangleCount("cube") * 3);
   });
+
+  it("doubles the limit at 30fps, since half the frame rate gives the GPU twice as long per frame", () => {
+    const empty = createSceneNode({ name: "Main", kind: "Node3D" });
+    const at60 = computeSceneBudget(empty, undefined, undefined, undefined, undefined, 60);
+    const at30 = computeSceneBudget(empty, undefined, undefined, undefined, undefined, 30);
+    expect(at30.trianglesLimit).toBe(at60.trianglesLimit * 2);
+  });
+
+  it("defaults to 60fps's limit when no target is given", () => {
+    const empty = createSceneNode({ name: "Main", kind: "Node3D" });
+    expect(computeSceneBudget(empty).trianglesLimit).toBe(computeSceneBudget(empty, undefined, undefined, undefined, undefined, 60).trianglesLimit);
+  });
 });

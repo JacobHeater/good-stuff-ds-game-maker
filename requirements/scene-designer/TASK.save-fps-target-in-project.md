@@ -1,7 +1,7 @@
 ---
 status: proposed
 component: scene-designer
-related: [EPIC.scene-designer.md, STORY.workspace-tabs-and-screen-filter.md, persistence/TASK.define-project-snapshot-interfaces.md, persistence/TASK.generate-json-schema-from-interfaces.md, compiler/TASK.ds-scene-intermediate-representation.md]
+related: [EPIC.scene-designer.md, STORY.workspace-tabs-and-screen-filter.md, STORY.fps-scaled-triangle-budget.md, persistence/TASK.define-project-snapshot-interfaces.md, persistence/TASK.generate-json-schema-from-interfaces.md, compiler/TASK.ds-scene-intermediate-representation.md]
 ---
 
 # Task: Save the FPS target in the project
@@ -60,3 +60,6 @@ Scenario: The schema and the type agree
   Storing it in the project means deciding how that comparison should treat a
   setting outside the scene.
 - The compiler tests use the option today; keep it as an override.
+- **Update** (`STORY.fps-scaled-triangle-budget.md`): the triangle budget check (compiler) and the live Hardware panel
+  gauge (editor) both already read `fpsTarget` from this same option/session-state path and double the budget at 30fps --
+  nothing about that changes when this task lands; it will just start reading a persisted value instead of a per-session one.

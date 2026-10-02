@@ -56,3 +56,11 @@ export const DS_HARDWARE_PROFILE = {
 } as const;
 
 export type FpsTarget = (typeof DS_HARDWARE_PROFILE.frameRate.supportedFpsTargets)[number];
+
+/**
+ * The triangle budget at a frame rate: `approxTrianglesPerFrame` is what the DS can draw in one 60fps frame's worth of
+ * time, so targeting 30fps gives the GPU twice as long per frame and so doubles how many triangles fit in it.
+ */
+export function triangleBudgetFor(fpsTarget: FpsTarget): number {
+  return Math.round(DS_HARDWARE_PROFILE.graphics3D.approxTrianglesPerFrame * (DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget / fpsTarget));
+}

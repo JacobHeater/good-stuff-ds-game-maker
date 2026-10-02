@@ -185,6 +185,15 @@ describe("diagnostics", () => {
     expect(d.message).toContain("2048");
   });
 
+  it("doubles the triangle budget at 30fps, since the GPU gets twice as long per frame", () => {
+    const spheres = Array.from({ length: 20 }, (_, i) => createSceneNode({ name: `S${i}`, kind: "MeshInstance3D", mesh: "sphere" }));
+    const project = withChildren(cubeProject(), ...spheres); // over the 2048 budget at 60fps
+    expect(translateScene3D(project).scene).toBeNull();
+    const at30 = translateScene3D(project, { fpsTarget: 30 });
+    expect(hasErrors(at30.diagnostics)).toBe(false);
+    expect(at30.scene).not.toBeNull();
+  });
+
   it("the project's 3D screen decides where 3D is drawn, whatever a node's own screen says (the 3D engine drives one screen; the scene root records which)", () => {
     const stray = createSceneNode({ name: "Down", kind: "MeshInstance3D", mesh: "cube", screen: "bottom" });
     const r = translateScene3D(withChildren(cubeProject(), stray));

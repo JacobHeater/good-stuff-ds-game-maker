@@ -1,4 +1,4 @@
-import { DS_HARDWARE_PROFILE } from "./hardware";
+import { DS_HARDWARE_PROFILE, triangleBudgetFor, type FpsTarget } from "./hardware";
 import type { ImportedMesh } from "./imported-mesh";
 import { getSoundByteSize, type ImportedSound } from "./imported-sound";
 import { getSpriteByteSize, type ImportedSprite } from "./imported-sprite";
@@ -52,7 +52,8 @@ export function computeSceneBudget(
   importedMeshes?: readonly ImportedMesh[],
   textures?: readonly ImportedTexture[],
   sounds?: readonly ImportedSound[],
-  sprites?: readonly ImportedSprite[]
+  sprites?: readonly ImportedSprite[],
+  fpsTarget?: FpsTarget
 ): SceneBudgetReport {
   const nodes = flattenSceneTree(root);
 
@@ -99,7 +100,7 @@ export function computeSceneBudget(
     audioPlayersUsed: nodes.filter((node) => node.kind === "AudioStreamPlayer").length,
     audioChannelsLimit: DS_HARDWARE_PROFILE.audio.channels,
     trianglesUsed,
-    trianglesLimit: DS_HARDWARE_PROFILE.graphics3D.approxTrianglesPerFrame,
+    trianglesLimit: triangleBudgetFor(fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget),
     textureBytesUsed,
     textureBytesLimit: textureMemoryLimit(twoDHasSprites),
     soundBytesUsed,

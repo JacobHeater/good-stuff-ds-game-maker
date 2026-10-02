@@ -12,7 +12,6 @@ import { computeSceneBudget } from "./budget";
 import { DS_HARDWARE_PROFILE } from "./hardware";
 import { imaAdpcmByteSize } from "./ima-adpcm";
 import {
-  compressSoundToAdpcm,
   createSoundFromPcm,
   encodeSamples,
   formatSoundTime,
@@ -211,32 +210,6 @@ describe("compressing to ima-adpcm by default (requirements/audio/STORY.compress
     expect(result.sound.sampleRate).toBe(32000); // not resampled down to fit, unlike the pcm16 case above
     expect(result.warnings).toEqual([]);
     expect(getSoundByteSize(result.sound)).toBeLessThan(limit);
-  });
-});
-
-describe("compressing a sound already in the project (no original file needed)", () => {
-  it("re-encodes a pcm16 sound to ima-adpcm in place, to about a quarter the size, keeping id/name/rate", () => {
-    const pcm: ImportedSound = { id: "s1", name: "Song", sampleRate: 16000, samples: encodeSamples(new Int16Array(16000)) }; // 1s, 32000 bytes
-    const compressed = compressSoundToAdpcm(pcm);
-    expect(compressed).toMatchObject({ id: "s1", name: "Song", sampleRate: 16000, format: "ima-adpcm", sampleCount: 16000 });
-    expect(getSoundByteSize(compressed)).toBeLessThan(getSoundByteSize(pcm) / 3.5);
-  });
-
-  it("keeps the same decoded tone, lossily", () => {
-    const source = sine(16000, 0.5, 440);
-    const pcm: ImportedSound = { id: "s", name: "n", sampleRate: 16000, samples: encodeSamples(new Int16Array(Array.from(source, (v) => Math.round(v * 32767)))) };
-    const compressed = compressSoundToAdpcm(pcm);
-    const before = getSoundSamples(pcm);
-    const after = getSoundSamples(compressed);
-    expect(after).toHaveLength(before.length);
-    let worst = 0;
-    for (let i = 100; i < before.length - 100; i++) worst = Math.max(worst, Math.abs(after[i] / 32767 - before[i] / 32767));
-    expect(worst).toBeLessThan(0.05);
-  });
-
-  it("leaves an already-compressed sound alone instead of re-encoding it again", () => {
-    const already: ImportedSound = { id: "s", name: "n", sampleRate: 8000, format: "ima-adpcm", sampleCount: 4, samples: "AAAAAA==" };
-    expect(compressSoundToAdpcm(already)).toBe(already);
   });
 });
 

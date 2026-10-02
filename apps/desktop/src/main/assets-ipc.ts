@@ -148,6 +148,7 @@ async function pickSound(): Promise<PickSoundResult> {
     filters: [{ name: "Sound", extensions: [...SOUND_FILE_EXTENSIONS] }]
   });
   if (choice.canceled || choice.filePaths.length === 0) return { outcome: "canceled", errors: [] };
+  const compress = await askCompressSound();
   const filePath = choice.filePaths[0];
   const fileName = basename(filePath);
   try {
@@ -155,10 +156,29 @@ async function pickSound(): Promise<PickSoundResult> {
     if (size > MAX_SOUND_FILE_BYTES) {
       return { outcome: "error", fileName, errors: [`"${fileName}" is ${(size / 1024 / 1024).toFixed(0)} MB; that is too large to decode and convert. Use a shorter sound.`] };
     }
-    return { outcome: "ok", fileName, errors: [], bytes: new Uint8Array(await readFile(filePath)) };
+    return { outcome: "ok", fileName, compress, errors: [], bytes: new Uint8Array(await readFile(filePath)) };
   } catch (error) {
     return { outcome: "error", fileName, errors: [`Couldn't read "${fileName}": ${error instanceof Error ? error.message : String(error)}`] };
   }
+}
+
+/**
+ * Asked once per import (before the file is even read), the same way `askRecalculateNormals` asks about a model's normals:
+ * whether to compress the sound to IMA-ADPCM (requirements/audio/STORY.compressed-sound.md) -- about a quarter the size,
+ * at no runtime cost (the DS hardware decodes it as it plays), for a little quantization noise -- or keep it as plain,
+ * lossless 16-bit PCM.
+ */
+async function askCompressSound(): Promise<boolean> {
+  const result = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Compress (ima-adpcm)", "Don't compress (pcm16)"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Compress sound",
+    message: "Compress this sound?",
+    detail: "Compressing makes it about a quarter the size with no extra loading cost -- the DS hardware decodes it as it plays -- at the cost of a little quantization noise. Recommended unless you need it lossless."
+  });
+  return result.response === 0;
 }
 
 /**
