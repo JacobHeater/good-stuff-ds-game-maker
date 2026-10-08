@@ -33,7 +33,7 @@ const PENDING_GLOBAL_NODE_ID_PREFIX = "\u0000pending-global:";
 /** Names that mean something built in, so a script's own variables and functions can't use them. */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set([
   "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "randi", "randf", "atan2", "bool", "void",
-  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "delta"
+  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "tile_solid", "delta"
 ]);
 
 /** What the checker needs to know about the project the script lives in. */
@@ -462,7 +462,8 @@ class Checker {
       if (statement.op !== "=") {
         this.error(statement, `"${statement.op}" doesn't work on a whole vector; use = to copy another node's vector, or change .x, .y and .z one at a time.`);
       } else if (valueType === "vec3" && statement.value.res?.kind === "nodeVector") {
-        if (this.isSpriteTarget(statement.target.res.target) !== this.isSpriteTarget(statement.value.res.target)) {
+        const is2D = (t: NodeTarget): boolean => this.isSpriteTarget(t) || this.isCameraTarget(t);
+        if (is2D(statement.target.res.target) !== is2D(statement.value.res.target)) {
           this.error(statement, "A 2D node's vector can only be copied from another 2D node's, and a 3D node's from a 3D node's.");
           return;
         }
@@ -697,6 +698,10 @@ class Checker {
       expr.res = { kind: "nodeRef", target: { kind: "self" } };
       return "node";
     }
+    if (expr.name === "position" && this.isCameraTarget({ kind: "self" })) {
+      expr.res = { kind: "nodeVector", target: { kind: "self" }, prop: "position" };
+      return "vec3";
+    }
     if ((expr.name === "position" || expr.name === "rotation" || expr.name === "scale" || expr.name === "visible") && this.isSpriteTarget({ kind: "self" })) {
       return this.spriteMember(expr, { kind: "self" }, expr.name);
     }
@@ -795,10 +800,18 @@ class Checker {
     return kinds.length > 0 && kinds.every((kind) => kind === "Label");
   }
 
-  /** Whether `target` is a Sprite2D (for `self`: every node the script is attached to is one): its position, rotation and scale are 2D. */
+  /** Whether `target` is a Sprite2D, AnimatedSprite2D or CollisionShape2D (for `self`: every node the script is attached to is one):
+      its position, rotation and scale are 2D, the same slots and member shape a sprite's already are. */
   private isSpriteTarget(target: NodeTarget): boolean {
     const kinds = this.targetKinds(target);
-    return kinds.length > 0 && kinds.every((kind) => kind === "Sprite2D" || kind === "AnimatedSprite2D");
+    return kinds.length > 0 && kinds.every((kind) => kind === "Sprite2D" || kind === "AnimatedSprite2D" || kind === "CollisionShape2D");
+  }
+
+  /** Whether `target` is a Camera2D (for `self`: every node the script is attached to is one): only its `position` is scriptable
+      (requirements/scene-designer/STORY.standalone-2d-camera.md) -- no rotation, scale or visible, unlike a sprite's. */
+  private isCameraTarget(target: NodeTarget): boolean {
+    const kinds = this.targetKinds(target);
+    return kinds.length > 0 && kinds.every((kind) => kind === "Camera2D");
   }
 
   /**
@@ -821,7 +834,7 @@ class Checker {
   }
 
   private kindSupports(kind: SceneNodeKind, capability: NodeCapability): boolean {
-    if (capability === "collision") return kind === "CollisionShape3D";
+    if (capability === "collision") return kind === "CollisionShape3D" || kind === "CollisionShape2D";
     if (capability === "animation") return ANIMATED_KINDS.includes(kind);
     if (capability === "speed") return kind === "AnimationPlayer";
     if (capability === "touch") return kind === "TouchArea2D" || kind === "TouchArea3D";
@@ -851,7 +864,7 @@ class Checker {
         this.error(expr.nameSpan, `A vector has .x, .y and .z, not .${expr.name}.`);
         return "unknown";
       }
-      if (axis === 2 && this.isSpriteTarget(object.res.target)) {
+      if (axis === 2 && (this.isSpriteTarget(object.res.target) || this.isCameraTarget(object.res.target))) {
         this.error(expr.nameSpan, `A 2D node's ${object.res.prop} has .x and .y only.`);
         return "unknown";
       }
@@ -860,6 +873,10 @@ class Checker {
     }
     if (baseType === "node" && object.res && object.res.kind === "nodeRef") {
       const target = object.res.target;
+      if (expr.name === "position" && this.isCameraTarget(target)) {
+        expr.res = { kind: "nodeVector", target, prop: "position" };
+        return "vec3";
+      }
       if ((expr.name === "position" || expr.name === "rotation" || expr.name === "scale" || expr.name === "visible") && this.isSpriteTarget(target)) {
         return this.spriteMember(expr, target, expr.name);
       }
@@ -914,8 +931,11 @@ class Checker {
         case "is_on_ceiling":
           this.error(expr.nameSpan, `${expr.name} must be called: ${expr.name === "move_and_collide" ? "move_and_collide(dx, dy, dz)" : `${expr.name}()`}.`);
           return "unknown";
+        case "tile_solid":
+          this.error(expr.nameSpan, "tile_solid must be called: tile_solid(x, y).");
+          return "unknown";
         default:
-          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text.`);
+          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text, and (tile maps) tile_solid(x, y).`);
           return "unknown";
       }
     }
@@ -947,7 +967,8 @@ class Checker {
         if (callee.name === "move_and_collide" || callee.name === "is_on_floor" || callee.name === "is_on_wall" || callee.name === "is_on_ceiling" || callee.name === "probe_solid" || callee.name === "ray_cast") {
           return this.checkBodyCall(expr, callee.name, object.res.target, callee.nameSpan);
         }
-        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), and touch areas have is_touched(), is_touch_pressed() and is_touch_released().`);
+        if (callee.name === "tile_solid") return this.checkTileSolid(expr, object.res.target, callee.nameSpan);
+        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), touch areas have is_touched(), is_touch_pressed() and is_touch_released(), and tile maps have tile_solid(x, y).`);
         return "unknown";
       }
       this.error(callee, "This can't be called.");
@@ -1088,22 +1109,57 @@ class Checker {
     return false;
   }
 
-  /** Whether `target` is a CollisionShape3D (the only thing `overlaps()` works on); reports what to do when it isn't. */
+  /**
+   * `map.tile_solid(x, y)` (or `tile_solid(x, y)` for `self`): whether the tile under a world-space pixel position (the
+   * same space a node's own `position` is in) is solid ground (STORY.standalone-2d-tilemaps.md). The result is a bool
+   * even when something is wrong, so one mistake doesn't cascade into more.
+   */
+  private checkTileSolid(expr: Extract<Expr, { kind: "call" }>, target: NodeTarget, nameSpan: SourceSpan): ExprType {
+    if (expr.args.length !== 2) {
+      this.checkArgCount(expr, 2, "tile_solid()");
+      for (const arg of expr.args) this.typeOfExpr(arg);
+    } else {
+      for (const arg of expr.args) {
+        const value = this.asValue(this.typeOfExpr(arg), arg);
+        if (value !== null && !isNumeric(value)) this.error(arg, "tile_solid() needs numbers: the world position to check, like tile_solid(position.x, position.y + 8.0).");
+      }
+    }
+    if (this.requireTileMap(target, nameSpan)) expr.res = { kind: "tileSolidCall", target };
+    return "bool";
+  }
+
+  /** Whether `target` is a TileMap (what `tile_solid()` works on); reports what to do when it isn't. */
+  private requireTileMap(target: NodeTarget, at: SourceSpan): boolean {
+    if (target.kind === "self") {
+      for (const attached of this.context.attached) {
+        if (attached.kind === "TileMap") continue;
+        this.error(at, `tile_solid() works on a TileMap node, and this script is attached to ${attached.name} (a ${attached.kind}). Attach it to a TileMap, or name one: $MapName.tile_solid(x, y).`);
+        return false;
+      }
+      return true;
+    }
+    const kind = this.kindOf(target);
+    if (kind === null || kind === "TileMap") return true;
+    this.error(at, `tile_solid() works on a TileMap node, but $${target.name} is a ${kind}. Name a TileMap instead.`);
+    return false;
+  }
+
+  /** Whether `target` is a CollisionShape3D or CollisionShape2D (what `overlaps()` works on); reports what to do when it isn't. */
   private requireShape(target: NodeTarget, at: SourceSpan): boolean {
     if (target.kind === "self") {
       for (const attached of this.context.attached) {
-        if (attached.kind === "CollisionShape3D") continue;
+        if (attached.kind === "CollisionShape3D" || attached.kind === "CollisionShape2D") continue;
         this.error(
           at,
-          `overlaps() works on CollisionShape3D nodes, and this script is attached to ${attached.name} (a ${attached.kind}). Attach it to a shape, or name one: $ShapeName.overlaps($Other).`
+          `overlaps() works on CollisionShape3D or CollisionShape2D nodes, and this script is attached to ${attached.name} (a ${attached.kind}). Attach it to a shape, or name one: $ShapeName.overlaps($Other).`
         );
         return false;
       }
       return true;
     }
     const kind = this.kindOf(target);
-    if (kind === null || kind === "CollisionShape3D") return true;
-    this.error(at, `overlaps() works on CollisionShape3D nodes, but $${target.name} is a ${kind}. Add a CollisionShape3D under it and use that node's name.`);
+    if (kind === null || kind === "CollisionShape3D" || kind === "CollisionShape2D") return true;
+    this.error(at, `overlaps() works on CollisionShape3D or CollisionShape2D nodes, but $${target.name} is a ${kind}. Add one of those under it and use that node's name.`);
     return false;
   }
 
@@ -1418,6 +1474,8 @@ class Checker {
         return this.checkPlayOrStop(expr, name, { kind: "self" }, expr.callee);
       case "is_playing":
         return this.checkAnimationCall(expr, "is_playing", { kind: "self" }, expr.callee);
+      case "tile_solid":
+        return this.checkTileSolid(expr, { kind: "self" }, expr.callee);
     }
     for (const arg of expr.args) this.typeOfExpr(arg);
     this.error(expr.callee, `Unknown function "${name}".`);

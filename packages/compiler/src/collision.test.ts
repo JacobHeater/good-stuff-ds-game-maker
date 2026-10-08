@@ -125,6 +125,6 @@ describe("diagnostics for collision shapes", () => {
   it("stops the build for overlaps() on something that is not a shape, naming the script, line and column", () => {
     const r = translate("func _process(delta):\n    if $Cube.overlaps($B):\n        pass\n", [shape("B")]);
     expect(r.scene).toBeNull();
-    expect(r.diagnostics.find((d) => d.code === "script-error")!.message).toMatch(/^line 2, column 14: overlaps\(\) works on CollisionShape3D nodes, but \$Cube is a MeshInstance3D/);
+    expect(r.diagnostics.find((d) => d.code === "script-error")!.message).toMatch(/^line 2, column 14: overlaps\(\) works on CollisionShape3D or CollisionShape2D nodes, but \$Cube is a MeshInstance3D/);
   });
 });

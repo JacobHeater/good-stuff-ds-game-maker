@@ -112,7 +112,7 @@ describe("compiling an animated sprite into a 2D project", () => {
     expect(text).toContain("static const uint16_t top_animation_0_frames[] = { 0, 1, 2, 3 };");
     expect(text).toContain("{ top_animation_0_frames, 4, 1, 1638 },");
     expect(text).toContain("{ top_animation_1_frames, 1, 0, 1092 }");
-    expect(text).toContain("{ 92, 42, 0, 0, 0, 2 }"); // x, y, image, starts with animation 0, its animations begin at 0, and it has 2
+    expect(text).toContain("{ 92, 42, 0, -1, 0, -1, 0, 4096, 4096, 0, 0, 2 }"); // x, y, image, node, dynamic, affine, rotation, scaleX, scaleY, starts with animation 0, its animations begin at 0, and it has 2
     expect(text).toContain("{ 1, 1, top_images, top_sprites, 2, top_animations, 0, top_labels }");
   });
 

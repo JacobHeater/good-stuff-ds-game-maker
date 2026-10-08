@@ -1,19 +1,25 @@
 ---
 status: in-progress
 component: compiler
-related: [TASK.compile-2d-sprites.md, scene-designer/STORY.import-sprite-image.md, EPIC.compile-and-export-nds-rom.md, STORY.compile-3d-scene-to-nds-rom.md, STORY.compile-diagnostics-for-unsupported-content.md, scene-designer/SPIKE.custom-mesh-and-sprite-import.md, scene-designer/STORY.dual-screen-2d-viewport.md]
+related: [TASK.compile-2d-sprites.md, scene-designer/STORY.import-sprite-image.md, scene-designer/STORY.animated-sprites.md, scene-designer/STORY.labels-and-text.md, scene-designer/STORY.standalone-2d-scripting.md, scene-designer/STORY.standalone-2d-sound.md, scene-designer/STORY.standalone-2d-collision.md, scene-designer/STORY.standalone-2d-camera.md, scene-designer/STORY.standalone-2d-tilemaps.md, EPIC.compile-and-export-nds-rom.md, STORY.compile-3d-scene-to-nds-rom.md, STORY.compile-diagnostics-for-unsupported-content.md, scene-designer/SPIKE.custom-mesh-and-sprite-import.md, scene-designer/STORY.dual-screen-2d-viewport.md]
 ---
 
 # Story: Compile a 2D scene into a runnable DS ROM
 
 ## Context
-The 3D milestone came first because it was the only mode with real content. **The first 2D slice is built:**
-a `Sprite2D` can have an imported picture (`scene-designer/STORY.import-sprite-image.md`), and a 2D project
-compiles to a ROM that draws its sprites on both screens (`TASK.compile-2d-sprites.md`, verified pixel by pixel in
-the emulator). What is still missing for this story to be `done`: tile maps, text labels, animated sprites (sprite
-sheets), scripts, sound and animation players in 2D projects, and drawing the 2D nodes of a 3D project's 2D screen.
-The compiler warns about each of those (`two-d-node-not-built`, `two-d-scripts-not-built`) instead of silently
-dropping them.
+The 3D milestone came first because it was the only mode with real content. **Built so far:** a `Sprite2D`/`AnimatedSprite2D`
+can have an imported picture or sprite sheet (`scene-designer/STORY.import-sprite-image.md`, `STORY.animated-sprites.md`), a
+`Label` shows text (`STORY.labels-and-text.md`), a 2D project compiles to a ROM that draws them on both screens
+(`TASK.compile-2d-sprites.md`, verified pixel by pixel in the emulator), and **a script can run** (`STORY.standalone-2d-scripting.md`):
+read input, move/turn/scale/show/hide a sprite, change a label's text or value, and start/stop an AnimatedSprite2D's own
+animation by name. Since then: **sound** (`STORY.standalone-2d-sound.md`) -- an `AudioStreamPlayer` plays its own sound and
+named clips; **collision** (`STORY.standalone-2d-collision.md`) -- `overlaps()` works on `CollisionShape2D`; **a scrolling
+camera** (`STORY.standalone-2d-camera.md`) -- a `Camera2D` a script can move, with every sprite on its screen following it;
+**tile maps** (`STORY.standalone-2d-tilemaps.md`) -- a `TileMap` draws with the background hardware, scrolls with the
+camera, and a script can ask `tile_solid(x, y)`. What is still missing for this story to be `done`: an AnimationPlayer in
+2D projects (a script that reaches for one still compiles and runs -- it just doesn't do anything yet, the same way
+`play()` already does nothing on a 3D AudioStreamPlayer with no sound), and switching between a 2D project's scenes. The
+compiler warns about each node kind not built yet (`two-d-node-not-built`) instead of silently dropping it.
 
 ## Description
 Deferred until 2D content exists. When it does, compile a 2D project so the

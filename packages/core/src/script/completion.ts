@@ -119,10 +119,14 @@ interface Capabilities {
   /** `speed_scale` (an AnimationPlayer only). */
   speed: boolean;
   shape: boolean;
+  /** A CollisionShape2D: `overlaps()` only, unlike a 3D shape (which is also a body: move_and_collide() etc.). */
+  shape2D: boolean;
   body: boolean;
   touch: boolean;
   /** A Label: `visible`, `value` and `text`. */
   label: boolean;
+  /** A TileMap: `tile_solid(x, y)`. */
+  tileMap: boolean;
   /** The animation names to offer in `play("`. */
   animations: readonly string[];
 }
@@ -163,7 +167,8 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
     list.push(method("is_touch_pressed", "() -> bool", "Whether the stylus went down on it this frame.", "is_touch_pressed()"));
     list.push(method("is_touch_released", "() -> bool", "Whether the stylus was lifted this frame after touching it.", "is_touch_released()"));
   }
-  if (c.shape) list.push(method("overlaps", "(other) -> bool", "Whether it touches another collision shape.", "overlaps()", 1, true));
+  if (c.shape || c.shape2D) list.push(method("overlaps", "(other) -> bool", "Whether it touches another collision shape.", "overlaps()", 1, true));
+  if (c.tileMap) list.push(method("tile_solid", "(x, y) -> bool", "Whether the tile at that world position (in pixels, like position.x/.y) is solid ground.", "tile_solid(, )", 3));
   if (c.body) {
     list.push(method("move_and_collide", "(dx, dy, dz) -> bool", "Moves it by that much, stopped by solid collision shapes. True when it was stopped.", "move_and_collide(, , )", 5));
     list.push(method("probe_solid", "(y, x0, x1, x2) -> int", "Which of three points (x0, x1, x2 along the longer side of the body's collision shape, y up from the shape's center) are inside a solid shape, as a number: 1 for the first, 2 the second, 4 the third, added up.", "probe_solid(, , , )", 7));
@@ -177,10 +182,23 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
 
 function capabilitiesOfKind(kind: SceneNodeKind, hasShape: boolean, animations: readonly string[]): Capabilities {
   const shape = kind === "CollisionShape3D";
-  return { transform: is3DNodeKind(kind), sprite: kind === "Sprite2D" || kind === "AnimatedSprite2D", audio: kind === "AudioStreamPlayer", animation: kind === "AnimationPlayer" || kind === "AnimatedSprite2D" || (kind === "MeshInstance3D" && animations.length > 0), speed: kind === "AnimationPlayer", shape, body: shape || hasShape, touch: kind === "TouchArea2D" || kind === "TouchArea3D", label: kind === "Label", animations };
+  return {
+    transform: is3DNodeKind(kind),
+    sprite: kind === "Sprite2D" || kind === "AnimatedSprite2D",
+    audio: kind === "AudioStreamPlayer",
+    animation: kind === "AnimationPlayer" || kind === "AnimatedSprite2D" || (kind === "MeshInstance3D" && animations.length > 0),
+    speed: kind === "AnimationPlayer",
+    shape,
+    shape2D: kind === "CollisionShape2D",
+    body: shape || hasShape,
+    touch: kind === "TouchArea2D" || kind === "TouchArea3D",
+    label: kind === "Label",
+    tileMap: kind === "TileMap",
+    animations
+  };
 }
 
-const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, body: true, touch: true, label: false, animations: [] };
+const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, shape2D: true, body: true, touch: true, label: false, tileMap: true, animations: [] };
 
 /** What `self` can do: what every node the script is attached to can do (everything when it is attached to none yet). */
 function selfCapabilities(context: ScriptSceneContext): Capabilities {
@@ -193,9 +211,11 @@ function selfCapabilities(context: ScriptSceneContext): Capabilities {
     animation: each.every((c) => c.animation),
     speed: each.every((c) => c.speed),
     shape: each.every((c) => c.shape),
+    shape2D: each.every((c) => c.shape2D),
     body: each.every((c) => c.body),
     touch: each.every((c) => c.touch),
     label: each.every((c) => c.label),
+    tileMap: each.every((c) => c.tileMap),
     animations: [...new Set(each.flatMap((c) => c.animations))]
   };
 }

@@ -7,6 +7,7 @@ import { AudioPlayerField } from "./AudioPlayerField";
 import { CollisionShapeField } from "./CollisionShapeField";
 import { SpriteAnimationsField, SpriteSheetField } from "./AnimatedSpriteFields";
 import { SpriteTransformField } from "./SpriteTransformField";
+import { TileMapField } from "./TileMapField";
 import { TouchArea2DField, TouchArea3DField } from "./TouchAreaFields";
 import { LabelField } from "./LabelFields";
 import { NameField } from "./NameField";
@@ -249,7 +250,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setCameraCurrent, endEditGesture, attachScript, createScript, openScript } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -443,6 +444,19 @@ export function InspectorPanel(): JSX.Element {
         {node.kind === "Label" && <LabelField key={node.id} node={node} onChange={(change) => setLabel(node.id, change)} />}
 
         {node.kind === "TouchArea2D" && <TouchArea2DField key={node.id} node={node} onChange={(change) => setTouchArea2D(node.id, change)} />}
+
+        {node.kind === "TileMap" && (
+          <TileMapField
+            key={node.id}
+            node={node}
+            sprites={state.project?.sprites ?? []}
+            onChoose={(spriteId) => setTileMap(node.id, { spriteId })}
+            onImport={() => void importSprite(node.id, { width: 8, height: 8 })}
+            onResize={(columns, rows) => setTileMap(node.id, { columns, rows })}
+            onPaint={(column, row, tile) => paintTile(node.id, column, row, tile)}
+            onSetSolid={(tile, value) => setTileSolidAt(node.id, tile, value)}
+          />
+        )}
 
         {(node.kind === "Sprite2D" || node.kind === "AnimatedSprite2D") && <SpriteTransformField key={`transform-${node.id}`} node={node} onChange={(change) => setSpriteTransform(node.id, change)} />}
 

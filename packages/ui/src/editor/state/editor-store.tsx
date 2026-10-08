@@ -99,7 +99,11 @@ import {
   type DropPosition,
   uniqueScriptName,
   updateSceneNode,
-  DS_HARDWARE_PROFILE
+  DS_HARDWARE_PROFILE,
+  getTileMap,
+  resizeTileMapGrid,
+  setTileSolid,
+  type TileMapData
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
 import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
@@ -176,6 +180,12 @@ export interface CollisionShapeChange {
   radius?: number;
   height?: number;
   solid?: boolean;
+}
+/** A change to a TileMap's sheet or grid size (painting a cell and marking a tile solid are their own actions, below). */
+export interface TileMapChange {
+  spriteId?: string | null;
+  columns?: number;
+  rows?: number;
 }
 /** What a mesh is made of: one of the built-in shapes, or a model imported into the project. */
 export type MeshSource = { primitive: MeshPrimitive } | { importedMeshId: string };
@@ -400,6 +410,9 @@ export type Action =
   | { type: "AUDIO_CLIP_DELETE"; playerId: string; clipId: string }
   | { type: "AUDIO_CLIP_SET"; playerId: string; clipId: string; change: AudioClipChange; at: number }
   | { type: "SET_COLLISION_SHAPE"; id: string; change: CollisionShapeChange; at: number }
+  | { type: "SET_TILE_MAP"; id: string; change: TileMapChange }
+  | { type: "PAINT_TILE"; id: string; column: number; row: number; tile: number }
+  | { type: "SET_TILE_SOLID"; id: string; tile: number; value: boolean }
   | { type: "SET_SPRITE_TRANSFORM"; id: string; change: SpriteTransformChange; at: number }
   | { type: "SET_TOUCH_AREA_2D"; id: string; change: TouchArea2DChange; at: number }
   | { type: "SET_LABEL"; id: string; change: LabelChange; at: number }
@@ -852,6 +865,17 @@ function applyAction(state: EditorState, action: Action): EditorState {
       // names an image it doesn't have.
       const sprites = [...(state.project.sprites ?? []), sprite];
       const frames = getSpriteFrames(sprite);
+      if (target?.kind === "TileMap") {
+        // A tile sheet replaces the TileMap's own, same as a sprite sheet does for an AnimatedSprite2D -- its cell grid and
+        // solid flags (which count sheet frames, not cells) are left as they are, so repainting after a sheet change keeps
+        // whatever was there.
+        return {
+          ...state,
+          project: { ...state.project, sprites },
+          sceneRoot: updateSceneNode(state.sceneRoot, target.id, (node) => ({ ...node, tileMap: { ...getTileMap(node), spriteId: sprite.id } })),
+          outputLog: [...state.outputLog, `Imported tile sheet "${sprite.name}" (${details}, ${frames.count} tiles) onto "${target.name}".`, ...warnings]
+        };
+      }
       if (target?.kind === "Sprite2D" || target?.kind === "AnimatedSprite2D") {
         return {
           ...state,
@@ -1106,6 +1130,37 @@ function applyAction(state: EditorState, action: Action): EditorState {
         next.solid === current.solid;
       if (same) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, collision: next })) };
+    }
+    case "SET_TILE_MAP": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TileMap") return state;
+      const current = getTileMap(target);
+      const { change } = action;
+      let next: TileMapData = current;
+      if (change.spriteId !== undefined) next = { ...next, spriteId: change.spriteId === null ? undefined : change.spriteId };
+      if (change.columns !== undefined || change.rows !== undefined) next = resizeTileMapGrid(next, change.columns ?? next.columns, change.rows ?? next.rows);
+      if (next === current) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap: next })) };
+    }
+    case "PAINT_TILE": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TileMap") return state;
+      const current = getTileMap(target);
+      const { column, row } = action;
+      if (column < 0 || row < 0 || column >= current.columns || row >= current.rows) return state;
+      const index = row * current.columns + column;
+      if (current.tiles[index] === action.tile) return state;
+      const tiles = [...current.tiles];
+      tiles[index] = action.tile;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap: { ...current, tiles } })) };
+    }
+    case "SET_TILE_SOLID": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TileMap") return state;
+      const current = getTileMap(target);
+      const next = setTileSolid(current, action.tile, action.value);
+      if (next === current) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap: next })) };
     }
     case "SET_SPRITE_TRANSFORM": {
       const target = findSceneNode(state.sceneRoot, action.id);
@@ -1602,6 +1657,12 @@ interface EditorStoreValue {
   setAudioPlayer: (id: string, change: AudioPlayerChange) => void;
   /** Changes a CollisionShape3D's shape, box size, radius or height. Typing in a field is one undo step per pause. No-op for other nodes. */
   setCollisionShape: (id: string, change: CollisionShapeChange) => void;
+  /** Changes a TileMap's sheet or grid size (resizing keeps each existing cell at its column/row). No-op for other nodes. */
+  setTileMap: (id: string, change: TileMapChange) => void;
+  /** Paints one cell of a TileMap's grid with a tile index (a sheet frame), or -1 to clear it. No-op for other nodes. */
+  paintTile: (id: string, column: number, row: number, tile: number) => void;
+  /** Marks one of a TileMap's sheet frames solid ground (or not) for tile_solid(). No-op for other nodes. */
+  setTileSolidAt: (id: string, tile: number, value: boolean) => void;
   /** Changes a Sprite2D's rotation and scale. Typing in a field is one undo step per pause. No-op for other nodes. */
   setSpriteTransform: (id: string, change: SpriteTransformChange) => void;
   /** Changes a TouchArea2D's size in pixels / a TouchArea3D's shape and size. Typing in a field is one undo step per pause. No-op for other nodes. */
@@ -1790,6 +1851,15 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       const field = action.change.rotation !== undefined ? "rotation" : action.change.scaleX !== undefined ? "scale X" : "scale Y";
       return { label: `Change ${field} of ${nameOf(action.id)}`, mergeKey: `sprite-transform:${action.id}:${field}`, at: action.at };
     }
+    case "SET_TILE_MAP": {
+      const name = nameOf(action.id);
+      if (action.change.spriteId !== undefined) return { label: `Change tile sheet of ${name}` };
+      return { label: `Resize ${name}` };
+    }
+    case "PAINT_TILE":
+      return { label: `Paint a tile on ${nameOf(action.id)}` };
+    case "SET_TILE_SOLID":
+      return { label: `Turn solid ${action.value ? "on" : "off"} for a tile of ${nameOf(action.id)}` };
     case "SET_LABEL":
       // Typing is one undo step per pause; a color is one step per choice.
       if (action.change.text !== undefined) return { label: `Change text of ${nameOf(action.id)}`, mergeKey: `label-text:${action.id}`, at: action.at };
@@ -2258,6 +2328,10 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     []
   );
 
+  const setTileMap = useCallback((id: string, change: TileMapChange) => dispatch({ type: "SET_TILE_MAP", id, change }), []);
+  const paintTile = useCallback((id: string, column: number, row: number, tile: number) => dispatch({ type: "PAINT_TILE", id, column, row, tile }), []);
+  const setTileSolidAt = useCallback((id: string, tile: number, value: boolean) => dispatch({ type: "SET_TILE_SOLID", id, tile, value }), []);
+
   const importSound = useCallback(
     async (nodeId: string | null): Promise<void> => {
       if (!state.project) return;
@@ -2521,6 +2595,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setAudioSound,
       setAudioPlayer,
       setCollisionShape,
+      setTileMap,
+      paintTile,
+      setTileSolidAt,
       setTouchArea2D,
       setLabel,
       setSpriteTransform,
@@ -2599,6 +2676,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setAudioSound,
       setAudioPlayer,
       setCollisionShape,
+      setTileMap,
+      paintTile,
+      setTileSolidAt,
       setTouchArea2D,
       setLabel,
       setSpriteTransform,

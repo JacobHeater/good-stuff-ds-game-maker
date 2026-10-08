@@ -28,8 +28,8 @@ describe("compiling labels into a 2D project", () => {
     const { scene, diagnostics } = translateScene2D(project2D([label("Title", 12, 4, "Hello", 1), bottom]));
     expect(diagnostics).toEqual([]);
     // 12 / 8 = 1.5 rounds to column 2; 4 / 8 = 0.5 rounds to row 1
-    expect(scene!.top.labels).toEqual([{ name: "Title", column: 2, row: 1, color: 1, text: "Hello" }]);
-    expect(scene!.bottom.labels).toEqual([{ name: "Hint", column: 2, row: 5, color: 3, text: "Touch to start" }]);
+    expect(scene!.top.labels).toEqual([{ name: "Title", column: 2, row: 1, color: 1, text: "Hello", node: -1, visible: true }]);
+    expect(scene!.bottom.labels).toEqual([{ name: "Hint", column: 2, row: 5, color: 3, text: "Touch to start", node: -1, visible: true }]);
   });
 
   it("leaves out a hidden label, and one whose first cell is off the screen (with a warning)", () => {

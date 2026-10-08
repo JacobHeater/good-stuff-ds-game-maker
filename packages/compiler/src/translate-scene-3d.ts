@@ -101,7 +101,7 @@ export interface TranslateResult {
  * (`scene-data-writer.ts`) only spans this numeric prefix, and every string global sits safely past it, reset to
  * its compile-time value every time the game starts rather than loaded from a save file at all.
  */
-function orderGlobalsForRuntime(globals: readonly ProjectGlobal[]): ProjectGlobal[] {
+export function orderGlobalsForRuntime(globals: readonly ProjectGlobal[]): ProjectGlobal[] {
   return [...globals].sort((a, b) => Number(a.type === "string") - Number(b.type === "string"));
 }
 
@@ -913,8 +913,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   };
 }
 
-/** What the scripts in a project mean for the scene, worked out before the scene is walked. */
-interface ScriptPlan {
+/** What the scripts in a project mean for the scene, worked out before the scene is walked. Shared with the 2D translator (`translate-scene-2d.ts`), since checking scripts and building the global-variable table don't depend on anything 3D-specific. */
+export interface ScriptPlan {
   /** Nodes a script is attached to or names with `$Name`: they (and their ancestors) are kept even if hidden. */
   touchedIds: Set<string>;
   /** Nodes whose transform a script writes: these, and everything under them, are moved by the runtime each frame. */
@@ -939,7 +939,7 @@ interface ScriptPlan {
  * Checks every attached script against the scene (a script nothing uses isn't compiled, so a half-written one never blocks a build)
  * and reports each problem as a diagnostic naming the script, line and column.
  */
-function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[], sceneNames: readonly string[]): ScriptPlan {
+export function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[], sceneNames: readonly string[]): ScriptPlan {
   const plan: ScriptPlan = { touchedIds: new Set(), dynamicRootIds: new Set(), playedIds: new Set(), animPlayedIds: new Set(), overlapIds: new Set(), touchIds: new Set(), moveIds: new Set(), globals: [], compiled: [] };
   const scriptsById = new Map((project.scripts ?? []).map((script) => [script.id, script]));
   const attachments = new Map<string, SceneNode[]>();

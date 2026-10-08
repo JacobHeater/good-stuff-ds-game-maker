@@ -12,7 +12,8 @@ function scene(): SceneNode {
     children: [
       createSceneNode({ name: "Cube", kind: "MeshInstance3D" }),
       createSceneNode({ name: "Hero", kind: "Sprite2D", screen: "bottom" }),
-      createSceneNode({ name: "Pick", kind: "TouchArea3D" })
+      createSceneNode({ name: "Pick", kind: "TouchArea3D" }),
+      createSceneNode({ name: "View", kind: "Camera2D", screen: "bottom" })
     ]
   });
 }
@@ -63,5 +64,32 @@ describe("scripts on a Sprite2D", () => {
     root.children.push(createSceneNode({ name: "Text", kind: "Label", screen: "bottom" }));
     const r = checkScript("func _process(delta):\n    $Text.rotation = 1.0\n", { root, attached: attachedTo("MeshInstance3D") });
     expect(messages(r)[0]).toMatch(/\$Text is a Label, which has no "rotation"/);
+  });
+});
+
+/** requirements/scene-designer/STORY.standalone-2d-camera.md: a Camera2D only has `position` -- no rotation, scale or visible. */
+describe("scripts on a Camera2D", () => {
+  it("moves it: position.x/y, bare on the node, named, and with self.", () => {
+    const r = check("func _process(delta):\n    position.x += 40.0 * delta\n    position.y = 96.0\n", attachedTo("Camera2D"));
+    expect(errors(r)).toEqual([]);
+    expect(r.usage.selfWritesTransform).toBe(true);
+    expect(errors(check("func _process(delta):\n    $View.position.x = 10.0\n", attachedTo("MeshInstance3D")))).toEqual([]);
+    expect(errors(check("func _process(delta):\n    self.position.y = 3.0\n", attachedTo("Camera2D")))).toEqual([]);
+  });
+
+  it("has no rotation, scale or visible, unlike a sprite", () => {
+    expect(errors(check("func _process(delta):\n    rotation = 1.0\n", attachedTo("Camera2D"))).length).toBeGreaterThan(0);
+    expect(errors(check("func _process(delta):\n    scale.x = 1.0\n", attachedTo("Camera2D"))).length).toBeGreaterThan(0);
+    expect(errors(check("func _process(delta):\n    visible = false\n", attachedTo("Camera2D"))).length).toBeGreaterThan(0);
+  });
+
+  it("its position has .x and .y only", () => {
+    expect(messages(check("func _process(delta):\n    position.z = 1.0\n", attachedTo("Camera2D")))[0]).toMatch(/2D node's position has \.x and \.y only/);
+  });
+
+  it("can snap to a sprite's position, and a sprite to a camera's (both are 2D vectors)", () => {
+    expect(errors(check("func _process(delta):\n    $View.position = $Hero.position\n", attachedTo("MeshInstance3D")))).toEqual([]);
+    expect(errors(check("func _process(delta):\n    $Hero.position = $View.position\n", attachedTo("MeshInstance3D")))).toEqual([]);
+    expect(messages(check("func _process(delta):\n    $View.position = $Cube.position\n", attachedTo("MeshInstance3D")))[0]).toMatch(/2D node's vector can only be copied from another 2D node's/);
   });
 });

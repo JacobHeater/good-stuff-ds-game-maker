@@ -53,8 +53,8 @@ describe("overlaps()", () => {
   it("is an error to name something that isn't a shape, saying what to do", () => {
     const r = check("func _process(delta):\n    if $Coin.overlaps($CoinShape):\n        pass\n    if $PlayerShape.overlaps($Coin):\n        pass\n");
     expect(messages(r)).toEqual([
-      "overlaps() works on CollisionShape3D nodes, but $Coin is a MeshInstance3D. Add a CollisionShape3D under it and use that node's name.",
-      "overlaps() works on CollisionShape3D nodes, but $Coin is a MeshInstance3D. Add a CollisionShape3D under it and use that node's name."
+      "overlaps() works on CollisionShape3D or CollisionShape2D nodes, but $Coin is a MeshInstance3D. Add one of those under it and use that node's name.",
+      "overlaps() works on CollisionShape3D or CollisionShape2D nodes, but $Coin is a MeshInstance3D. Add one of those under it and use that node's name."
     ]);
     expect(r.usage.nodeOverlaps.size).toBe(0);
   });
@@ -88,5 +88,48 @@ describe("overlaps()", () => {
 
   it("gives no cascade when the first shape is unknown", () => {
     expect(messages(check("func f():\n    var x = $Missing.overlaps($CoinShape)\n"))).toEqual(['There is no node named "Missing" in the scene.']);
+  });
+});
+
+/** CollisionShape2D works the same way (requirements/scene-designer/STORY.standalone-2d-collision.md): overlaps() isn't 3D-only. */
+describe("overlaps() on CollisionShape2D", () => {
+  function scene2D(): SceneNode {
+    return createSceneNode({
+      name: "Main",
+      kind: "Node2D",
+      children: [
+        createSceneNode({ name: "PlayerShape", kind: "CollisionShape2D" }),
+        createSceneNode({ name: "CoinShape", kind: "CollisionShape2D" })
+      ]
+    });
+  }
+
+  it("checks two CollisionShape2D nodes by name, as a bool", () => {
+    const r = check("func _process(delta):\n    if $PlayerShape.overlaps($CoinShape):\n        pass\n", attachedTo("Sprite2D"), scene2D());
+    expect(errors(r)).toEqual([]);
+    expect(r.usage.nodeOverlaps.size).toBe(2);
+  });
+
+  it("works on self for a script attached to a CollisionShape2D", () => {
+    const root = scene2D();
+    const r = check("func _process(delta):\n    if overlaps($CoinShape):\n        pass\n", attachedTo("CollisionShape2D"), root);
+    expect(errors(r)).toEqual([]);
+    expect(r.usage.selfOverlaps).toBe(true);
+  });
+
+  it("lets a script read and write a CollisionShape2D's position, rotation, scale and visible, the same as a Sprite2D's", () => {
+    const r = check(
+      "func _process(delta):\n    position.x += 1 * delta\n    rotation += 1 * delta\n    scale.x = 2\n    visible = false\n",
+      attachedTo("CollisionShape2D"),
+      scene2D()
+    );
+    expect(errors(r)).toEqual([]);
+    expect(r.usage.selfWritesTransform).toBe(true);
+  });
+
+  it("a CollisionShape2D can overlap a CollisionShape3D's error message lists both kinds", () => {
+    const mixed = createSceneNode({ name: "Main", kind: "Node3D", children: [createSceneNode({ name: "Flat", kind: "CollisionShape2D" }), createSceneNode({ name: "Cube", kind: "MeshInstance3D" })] });
+    const r = check("func _process(delta):\n    if $Flat.overlaps($Cube):\n        pass\n", attachedTo("Node3D"), mixed);
+    expect(messages(r)[0]).toMatch(/overlaps\(\) works on CollisionShape3D or CollisionShape2D nodes, but \$Cube is a MeshInstance3D/);
   });
 });

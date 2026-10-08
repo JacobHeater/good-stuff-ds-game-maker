@@ -1,8 +1,10 @@
 import type { AnimationPlayerData } from "./animation";
 import type { AudioPlayerData } from "./audio-player";
 import type { CollisionShapeData } from "./collision-shape";
+import type { CollisionShape2DData } from "./collision-shape-2d";
 import type { LabelData } from "./label";
 import type { SpriteAnimationsData } from "./sprite-animation";
+import type { TileMapData } from "./tile-map";
 import type { TouchArea2DData, TouchArea3DData } from "./touch-area";
 import { getPrimitiveTriangleCount } from "./primitive-geometry";
 import type { ScreenId } from "./index";
@@ -195,6 +197,10 @@ export interface SceneNode {
   audio?: AudioPlayerData;
   /** Shape and size; only meaningful on a CollisionShape3D. Absent means the defaults (see `getCollisionShape`). */
   collision?: Partial<Omit<CollisionShapeData, "size">> & { size?: Partial<Vector3> };
+  /** Shape and size; only meaningful on a CollisionShape2D. Absent means the defaults (see `getCollisionShape2D`). */
+  collision2D?: Partial<Omit<CollisionShape2DData, "size">> & { size?: Partial<Vector2> };
+  /** The tile sheet and grid; only meaningful on a TileMap. Absent means an empty 32 x 24 grid with no sheet (see `getTileMap`). */
+  tileMap?: Partial<TileMapData>;
   /** Size in pixels; only meaningful on a TouchArea2D. Absent means the defaults (see `getTouchArea2D`). */
   touchArea2D?: Partial<TouchArea2DData>;
   /** Shape and size; only meaningful on a TouchArea3D. Absent means the defaults (see `getTouchArea3D`). */

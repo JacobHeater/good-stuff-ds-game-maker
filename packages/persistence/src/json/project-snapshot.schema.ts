@@ -289,6 +289,35 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         solid: { type: "boolean" }
       }
     },
+    // A CollisionShape2D's shape and size in pixels (see core's collision-shape-2d.ts); a missing field is its default.
+    collisionShape2DData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        shape: { enum: ["rect", "circle"] },
+        size: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            x: { type: "number", minimum: 1, maximum: 512 },
+            y: { type: "number", minimum: 1, maximum: 512 }
+          }
+        },
+        radius: { type: "number", minimum: 1, maximum: 512 }
+      }
+    },
+    // A TileMap's sheet and grid in pixels (see core's tile-map.ts); a missing field is its default (an empty 32 x 24 grid, no sheet).
+    tileMapData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        spriteId: { type: "string" },
+        columns: { type: "integer", minimum: 1, maximum: 32 },
+        rows: { type: "integer", minimum: 1, maximum: 32 },
+        tiles: { type: "array", items: { type: "integer", minimum: -1 } },
+        solid: { type: "array", items: { type: "boolean" } }
+      }
+    },
     // A Sprite2D's rotation (degrees) and scale (see core's sprite-transform.ts); a missing field is its default.
     transform2D: {
       type: "object",
@@ -414,6 +443,8 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         camera: { $ref: "#/definitions/cameraData" },
         audio: { $ref: "#/definitions/audioPlayerData" },
         collision: { $ref: "#/definitions/collisionShapeData" },
+        collision2D: { $ref: "#/definitions/collisionShape2DData" },
+        tileMap: { $ref: "#/definitions/tileMapData" },
         touchArea2D: { $ref: "#/definitions/touchArea2DData" },
         touchArea3D: { $ref: "#/definitions/touchArea3DData" },
         animation: { $ref: "#/definitions/animationPlayerData" },

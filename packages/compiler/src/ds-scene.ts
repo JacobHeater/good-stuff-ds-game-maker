@@ -60,6 +60,8 @@ export interface DsAudioPlayer {
   /** This player's own named clips (requirements/audio/STORY.named-audio-clips.md), playable with `play("name")`: `audioClips[clipStart .. clipStart + clipCount)`. */
   clipStart: number;
   clipCount: number;
+  /** In a 2D project only: this player's place in `DsScene2D.nodes`, or -1 when no script can reach it (`gs_node_audio_player` searches for it by this). Absent in a 3D project, which keeps the audio index on the node table entry instead. */
+  node?: number;
 }
 
 /** One named clip of an AudioStreamPlayer: its own sound and playback settings, independent of the player's own (unnamed) sound. */
@@ -293,8 +295,9 @@ export interface DsSpriteAnimation {
 }
 
 /**
- * One `Sprite2D` on a screen: which image and where its top-left corner sits, in screen pixels. In a 3D project (whose scripts can move, turn, scale and hide the
- * sprite) it also says which node holds its live state, whether the runtime must follow that node every frame, and which of the engine's rotation matrices it uses.
+ * One `Sprite2D` on a screen: which image and where its top-left corner sits, in screen pixels. When a script can reach it (either a 3D project's 2D screen, or a
+ * standalone 2D project -- `STORY.standalone-2d-scripting.md`) it also says which node holds its live state, whether the runtime must follow that node every frame,
+ * and which of the engine's rotation matrices it uses.
  */
 export interface DsSprite {
   /** The node's name, for comments. */
@@ -304,13 +307,13 @@ export interface DsSprite {
   /** The corner of the sprite as it starts. For a sprite with a rotation matrix it is the corner of the doubled box the hardware draws it in, centered on the picture. */
   x: number;
   y: number;
-  /** Index into `DsScene3D.nodes` (the node's position, rotation, scale and visibility are the sprite's), or -1 when no script can reach the sprite. Only in a 3D project. */
+  /** Index into the scene's node table (`DsScene3D.nodes` or `DsScene2D.nodes`) -- the node's position, rotation, scale and visibility are the sprite's -- or -1 when no script can reach the sprite. */
   node?: number;
-  /** A script can change the sprite, so the runtime reads its node every frame and updates the sprite. Only in a 3D project. */
+  /** A script can change the sprite, so the runtime reads its node every frame and updates the sprite. */
   dynamic?: boolean;
-  /** The rotation matrix (0..31) this sprite is drawn with, or -1 for none: a sprite that starts rotated or scaled, or that a script can change. Only in a 3D project. */
+  /** The rotation matrix (0..31) this sprite is drawn with, or -1 for none: a sprite that starts rotated or scaled, or that a script can change. */
   affine?: number;
-  /** The rotation (degrees, clockwise) and scale the sprite starts with, as `f32` (20.12). Only in a 3D project. */
+  /** The rotation (degrees, clockwise) and scale the sprite starts with, as `f32` (20.12). */
   rotation?: number;
   scaleX?: number;
   scaleY?: number;
@@ -325,7 +328,7 @@ export interface DsSprite {
 
 /**
  * One `Label` on a screen: text on the 8 x 8 grid (`column` 0..31, `row` 0..23), in one of the console's eight colors. `text` is plain ASCII (the compiler replaces anything the DS's
- * font hasn't got) and may hold `{}` where the label's value goes. In a 3D project `node` is the label's place in the node table (its visibility is the node's), or -1.
+ * font hasn't got) and may hold `{}` where the label's value goes. When a script can reach it, `node` is the label's place in the scene's node table (its visibility is the node's), or -1.
  */
 /**
  * One of the project's global variables (`global var`), as the runtime keeps it: for a number or bool, one 32-bit
@@ -345,8 +348,19 @@ export interface DsLabel {
   color: number;
   text: string;
   node?: number;
-  /** Whether it shows when the scene starts (a script can change it). Only in a 3D project. */
+  /** Whether it shows when the scene starts (a script can change it). Only present when a script can reach the label. */
   visible?: boolean;
+}
+
+/** One node a script in a 2D project can reach: its starting position, rotation, scale and visibility, exactly as `GsNodeState` holds them live. No parent or world
+ * transform -- a 2D project's positions are always absolute screen pixels (`translate-scene-2d.ts`). */
+export interface DsNode2D {
+  /** The node's name, for comments. */
+  name: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+  visible: boolean;
 }
 
 /** What one 2D engine draws. */
@@ -361,6 +375,51 @@ export interface DsScreen2D {
 }
 
 /**
+ * One CollisionShape2D a script can reach (`overlaps()` -- requirements/scene-designer/STORY.standalone-2d-collision.md):
+ * a rect or a circle, centered on its node's position. `p` is half the rect's width and height (f32, as a 3D box's half
+ * extents already are), or the circle's radius in `p[0]` (`p[1]` unused).
+ */
+export interface DsCollider2D {
+  /** The node's name, for comments. */
+  name: string;
+  shape: "rect" | "circle";
+  p: [number, number];
+  /** Index into `DsScene2D.nodes`. */
+  node: number;
+}
+
+/**
+ * One TileMap (requirements/scene-designer/STORY.standalone-2d-tilemaps.md): a scrollable grid of 8 x 8 tiles drawn with the
+ * DS's background hardware instead of the sprite engine, so a level can be bigger than the OAM sprite budget allows.
+ * Deliberately separate from `DsScreen2D`/`GsScreen2D` (which a 3D project's own 2D screen also uses) rather than a field on
+ * it, exactly like `topCamera`/`bottomCamera` -- a 3D project's 2D screen doesn't get tilemap rendering from this story.
+ *
+ * The tile graphics are a *4bpp* (15 colors + transparent) image, unlike a sprite's 255-color one: the DS background hardware
+ * this draws with reads one of its 16 shared sub-palettes per tile (not an independent 255-color palette the way a sprite's
+ * extended palette works), so this is a real hardware ceiling. `tiles` is `tileCount` physical 8 x 8 tiles of 32 (nibble-
+ * packed) bytes each; tile 0 is always a reserved, fully transparent blank (an empty cell points at it), so a sheet's own
+ * frame N is physical tile N + 1.
+ */
+export interface DsTileMap {
+  /** The node's name, for comments. */
+  name: string;
+  screen: "top" | "bottom";
+  columns: number;
+  rows: number;
+  /** All 16 entries as RGB15; entry 0 is transparent and unused entries are 0. */
+  palette: number[];
+  /** `tileCount * 32` nibble-packed bytes (two pixels a byte); tile 0 is the reserved blank. */
+  tiles: number[];
+  tileCount: number;
+  /** `columns * rows` entries, row by row: a physical tile index (into `tiles`), or 0 (the blank) for an empty cell. */
+  cells: number[];
+  /** One entry a *sheet frame* index (not a physical tile index): whether `tile_solid()` reports that tile as solid ground. */
+  solid: boolean[];
+  /** Index into `DsScene2D.nodes`, or -1 when nothing reaches this map's node (no script, and no camera on its screen). */
+  node: number;
+}
+
+/**
  * A 2D project described as the DS's two 2D engines will show it. Plain data, the output of `translateScene2D` and the input
  * to `writeScene2DDataC`. The top screen is the main engine and the bottom screen the sub engine.
  */
@@ -368,4 +427,26 @@ export interface DsScene2D {
   fps: 30 | 60;
   top: DsScreen2D;
   bottom: DsScreen2D;
+  /** Every node a script attaches to or names with `$Name`, across both screens -- what `GsNodeState` is initialized from. Empty when no script runs. */
+  nodes: DsNode2D[];
+  /** Every CollisionShape2D a script can reach (one that's in `nodes`). A shape nothing uses isn't in the ROM at all. */
+  colliders: DsCollider2D[];
+  /**
+   * Each screen's active Camera2D (requirements/scene-designer/STORY.standalone-2d-camera.md): its place in `nodes`, or -1 for
+   * no camera on that screen (every sprite stays at its own absolute position, as before this story). The first Camera2D on a
+   * screen, in tree order, wins; every Sprite2D/AnimatedSprite2D on a screen with a camera is treated as dynamic (`DsSprite.
+   * dynamic`), since its drawn position now depends on the camera's, whether or not a script ever actually moves either one.
+   */
+  topCamera: number;
+  bottomCamera: number;
+  /** The project's global variables (`global var`), in the order the generated script code lists them. */
+  globals: DsGlobal[];
+  /** Sounds used by any audio player or clip, in the order first used; each is embedded once however many players/clips use it. */
+  sounds: DsSound[];
+  audioPlayers: DsAudioPlayer[];
+  audioClips: DsAudioClip[];
+  /** Every TileMap with a sheet chosen, one per node (requirements/scene-designer/STORY.standalone-2d-tilemaps.md). */
+  tileMaps: DsTileMap[];
+  /** Generated C: every script's `_ready`/`_process` functions, its per-node variables, and the instance table the runtime walks each frame. Empty when no script runs. */
+  scriptCode: string;
 }

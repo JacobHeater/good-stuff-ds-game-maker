@@ -50,7 +50,12 @@ export type DiagnosticCode =
   | "touch-area-not-touchable"
   | "player-without-animations"
   | "animation-not-started"
-  | "animation-target-missing";
+  | "animation-target-missing"
+  | "tilemap-without-sheet"
+  | "tileset-wrong-frame-size"
+  | "tileset-too-many-colors"
+  | "tileset-too-many-tiles"
+  | "multiple-tilemaps";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;

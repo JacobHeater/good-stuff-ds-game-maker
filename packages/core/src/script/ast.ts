@@ -69,6 +69,8 @@ export type Resolution =
   | { kind: "rayCall"; target: NodeTarget }
   /** `body.is_on_floor()` etc.: what the body's last move ran into. */
   | { kind: "bodyState"; target: NodeTarget; state: "floor" | "wall" | "ceiling" }
+  /** `map.tile_solid(x, y)`: whether the tile under a world-space pixel position is solid ground. */
+  | { kind: "tileSolidCall"; target: NodeTarget }
   | { kind: "nodeRef"; target: NodeTarget };
 
 interface ExprBase extends SourceSpan {

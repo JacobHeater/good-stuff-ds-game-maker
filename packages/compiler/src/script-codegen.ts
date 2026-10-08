@@ -481,6 +481,11 @@ class ScriptWriter {
         return { code: `gs_touch_state(${this.nodeIndex(res.target)}, GS_TOUCH_${res.state.toUpperCase()})`, ty: "bool" as ScriptType };
       case "overlapsCall":
         return { code: `gs_overlaps(${this.nodeIndex(res.a)}, ${this.nodeIndex(res.b)})`, ty: "bool" as ScriptType };
+      case "tileSolidCall":
+        return {
+          code: `gs_tile_solid(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`,
+          ty: "bool" as ScriptType
+        };
       case "builtin":
         return this.builtin(expr, res.name);
       default:
