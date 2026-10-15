@@ -187,6 +187,12 @@ typedef struct {
 	const int16_t *positions;
 	const uint32_t *normals;
 	const int16_t *texcoords; /* two t16 (12.4, in texels) per vertex, or 0 when the table isn't textured */
+	/* 4 per vertex, indices into whichever drawing GsMesh's own skinJointStart..+skinJointCount run; 0 when the
+	   source model has no skin data at all. Present independent of any particular mesh instance's own
+	   skinJointCount -- see that field's own comment for why it's the instance, not this shared table, that decides
+	   whether it's actually used. */
+	const uint8_t *skinJoints;
+	const uint8_t *skinWeights; /* 4 per vertex, 0..255 (255 = full weight); 0 alongside skinJoints */
 } GsPrimitive;
 
 /*
@@ -230,6 +236,11 @@ typedef struct {
 	uint8_t unlit; /* 1: ignores the scene's lights, always shown at `diffuse`'s full brightness */
 	uint8_t cull;  /* a GS_CULL_* above */
 	uint8_t alpha; /* the geometry engine's polygon alpha, 0 (invisible) to 31 (fully opaque, the default) */
+	/* A run in GsScene.skinJoints/skinInverseBindMatrices: the bones this instance's vertices are really weighted to
+	   (MeshInstance3DData.smoothSkinning). skinJointCount 0 (the default): not smooth-skinned, drawn rigidly via
+	   `node` like every other mesh -- draw_mesh() in main.c branches on this. */
+	uint16_t skinJointStart;
+	uint16_t skinJointCount;
 } GsMesh;
 
 /* The DS only has parallel lights. */
@@ -263,6 +274,7 @@ typedef struct {
 	uint16_t animTrackCount;
 	uint16_t animKeyCount;
 	uint16_t touchAreaCount;
+	uint16_t skinJointCount; /* total, across every smooth-skinned mesh instance */
 	const GsNode *nodes;
 	const GsPrimitive *primitives;
 	const GsMesh *meshes;
@@ -282,6 +294,12 @@ typedef struct {
 	uint16_t meshAnimationCount;
 	const uint16_t *meshFrames;
 	const GsSpriteAnimation *meshAnimations;
+	/* Flat, parallel arrays: a smooth-skinned mesh instance's own run is skinJoints[skinJointStart..+skinJointCount],
+	   each an index into `nodes`, with skinInverseBindMatrices holding that bone's own inverse bind matrix at the
+	   same position -- already expressed relative to the owning mesh's own stored vertex space (see
+	   ImportedMeshSkin's own doc comment in core's imported-mesh.ts). */
+	const int16_t *skinJoints;
+	const GsMatrix *skinInverseBindMatrices;
 } GsScene;
 
 /*

@@ -55,7 +55,8 @@ export type DiagnosticCode =
   | "tileset-wrong-frame-size"
   | "tileset-too-many-colors"
   | "tileset-too-many-tiles"
-  | "multiple-tilemaps";
+  | "multiple-tilemaps"
+  | "smooth-skinning-missing-bone";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;

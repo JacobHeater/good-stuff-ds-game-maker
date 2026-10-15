@@ -13,7 +13,18 @@ export const ASSETS_IPC_CHANNELS = {
   importTexture: "assets:import-texture",
   importSprite: "assets:import-sprite",
   pickSound: "assets:pick-sound",
-  pickRiggedModel: "assets:pick-rigged-model"
+  pickRiggedModel: "assets:pick-rigged-model",
+  confirmSmoothSkinning: "assets:confirm-smooth-skinning"
+} as const;
+
+export const CONVERTER_IPC_CHANNELS = {
+  pngToNsbtx: "converter:png-to-nsbtx",
+  objToNsbmd: "converter:obj-to-nsbmd",
+  saveBinaryFile: "converter:save-binary-file",
+  nsbtxToPng: "converter:nsbtx-to-png",
+  nsbmdToObj: "converter:nsbmd-to-obj",
+  nsbmdToGlb: "converter:nsbmd-to-glb",
+  strmToWav: "converter:strm-to-wav"
 } as const;
 
 export const RECENTS_IPC_CHANNELS = {

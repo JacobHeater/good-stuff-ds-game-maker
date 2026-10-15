@@ -1,4 +1,4 @@
-import { createBlankSceneTree, createProjectSnapshot, expandSceneInstances, findSceneNode, flattenSceneTree, listScenes, withSceneTree } from "@goodstuff/core";
+import { createBlankSceneTree, createProjectSnapshot, createSceneNode, expandSceneInstances, findSceneNode, flattenSceneTree, listScenes, withSceneTree, type ProjectSnapshot } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { createInitialState, editorReducer, hasUnsavedChanges, savedProjectOf, type Action, type EditorState } from "./editor-store";
@@ -71,6 +71,22 @@ describe("instantiating a scene", () => {
     const saved = savedProjectOf(s);
     expect(saved.scene.children[0].instanceOf).toBe("player");
     expect(saved.scenes![0].scene.children).toHaveLength(1);
+  });
+
+  it("keeps a mesh's own data (smoothSkinning, importedMeshId, ...) when instancing a scene whose own root is that mesh, not a wrapper node", () => {
+    // A real bug: a "Player" scene built around a single rigged model with no separate Node3D wrapper around it --
+    // very plausible for a simple player/enemy scene. SCENE_INSTANTIATE used to build the wrapper node with
+    // createSceneNode, which only knows how to assemble a brand-new default node (a "cube" primitive mesh with no
+    // smoothSkinning), discarding the source scene's own mesh data entirely -- invisible in `withPlayer`'s own setup
+    // above, where the mesh always sits one level under a separate wrapper root untouched by this bug.
+    const meshRoot = { ...createSceneNode({ name: "Model", kind: "MeshInstance3D" }), mesh: { importedMeshId: "model-1", triangleCount: 10, smoothSkinning: true } };
+    const project: ProjectSnapshot = { ...createProjectSnapshot({ name: "P", mode: "3D", scene: createBlankSceneTree("3D") }), scenes: [{ id: "player", name: "Player", scene: meshRoot }] };
+    const opened = editorReducer(createInitialState(), { type: "PROJECT_OPENED", filePath: "p.gsds", project });
+    const s = run(opened, { type: "SCENE_INSTANTIATE", sceneId: "player" });
+    const node = findSceneNode(s.sceneRoot, s.selectedNodeId)!;
+    expect(node.kind).toBe("MeshInstance3D");
+    expect(node.mesh?.smoothSkinning).toBe(true);
+    expect(node.mesh?.importedMeshId).toBe("model-1");
   });
 
   it("selecting a node inside an instance selects the instance", () => {

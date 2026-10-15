@@ -26,6 +26,30 @@ export interface ImportedMesh {
    * Each has as many vertices as the first; only where they are and which way they face changes. Absent for a model with one pose.
    */
   frames?: ImportedMeshFrame[];
+  /**
+   * How a rigged import's vertices are actually weighted across bones, carried along even though the mesh's own
+   * `positions` are always rigidly stored in just its one assigned bone's space (see `gltf-import.ts`'s own "pulls
+   * its vertices hardest" rule) -- so a `MeshInstance3DData.smoothSkinning` toggle can later ask for a true weighted
+   * blend without re-importing the file. Absent for a model with no skin, or one imported before this existed (both
+   * mean "rigid only," same as today). `requirements/scene-designer/STORY.smooth-vertex-skinning.md`.
+   */
+  skin?: ImportedMeshSkin;
+}
+
+export interface ImportedMeshSkin {
+  /** The small set of bones (by `SceneNode.id`) this mesh's vertices actually reference -- usually just a handful, not the whole skeleton. */
+  jointNodeIds: string[];
+  /**
+   * One 4x4 matrix (16 floats, column-major) per entry in `jointNodeIds`, already expressed relative to this mesh's
+   * own `positions` space (not the file's raw inverse bind matrices) -- so the blended skinning matrix for a vertex
+   * is simply `Σ weight_i · jointNodeIds[i]'s current world matrix · inverseBindMatrices[i]`, applied directly to
+   * that vertex's stored (already-in-one-bone's-space) position, with no extra change of space needed.
+   */
+  inverseBindMatrices: number[];
+  /** 4 per vertex (same vertex order as `positions`), indices into `jointNodeIds`; unused slots are 0 with a matching 0 weight. */
+  joints: number[];
+  /** 4 per vertex, normalized to sum to 1 across the 4 slots. */
+  weights: number[];
 }
 
 /** One more pose of an imported model: the vertices' places and normals (the triangles and texture coordinates are the model's own). */
@@ -104,12 +128,24 @@ export function getImportedMeshGeometry(mesh: ImportedMesh): PrimitiveGeometry {
     const positions: number[] = [];
     const normals: number[] = [];
     const uvs: number[] | undefined = mesh.uvs ? [] : undefined;
+    const skinJoints: number[] | undefined = mesh.skin ? [] : undefined;
+    const skinWeights: number[] | undefined = mesh.skin ? [] : undefined;
     for (const index of mesh.indices) {
       positions.push(mesh.positions[index * 3], mesh.positions[index * 3 + 1], mesh.positions[index * 3 + 2]);
       normals.push(mesh.normals[index * 3], mesh.normals[index * 3 + 1], mesh.normals[index * 3 + 2]);
       uvs?.push(mesh.uvs![index * 2], mesh.uvs![index * 2 + 1]);
+      for (let k = 0; k < 4; k++) {
+        skinJoints?.push(mesh.skin!.joints[index * 4 + k]);
+        skinWeights?.push(mesh.skin!.weights[index * 4 + k]);
+      }
     }
-    geometry = { positions, normals, ...(uvs ? { uvs } : {}), triangleCount: getImportedTriangleCount(mesh) };
+    geometry = {
+      positions,
+      normals,
+      ...(uvs ? { uvs } : {}),
+      triangleCount: getImportedTriangleCount(mesh),
+      ...(mesh.skin ? { skin: { jointNodeIds: mesh.skin.jointNodeIds, inverseBindMatrices: mesh.skin.inverseBindMatrices }, skinJoints, skinWeights } : {})
+    };
     expanded.set(mesh, geometry);
   }
   return geometry;

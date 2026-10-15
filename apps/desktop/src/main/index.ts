@@ -4,6 +4,7 @@ import { join } from "node:path";
 import icon from "../../resources/icon.png?asset";
 
 import { registerAssetsIpcHandlers } from "./assets-ipc";
+import { registerConverterIpcHandlers } from "./converter-ipc";
 import { registerExportRomIpcHandler } from "./export-rom-ipc";
 import { registerPlayIpcHandler, stopPlaySession } from "./play-ipc";
 import { registerProjectIpcHandlers } from "./project-ipc";
@@ -54,6 +55,7 @@ app.whenReady().then(() => {
   registerExportRomIpcHandler();
   registerPlayIpcHandler();
   registerAssetsIpcHandlers();
+  registerConverterIpcHandlers();
   createMainWindow();
 
   app.on("activate", () => {

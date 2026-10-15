@@ -84,6 +84,10 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
     out.push(`static const int16_t primitive_${i}_positions[] = {\n${numbers(p.positions)}\n};`);
     out.push(`static const uint32_t primitive_${i}_normals[] = {\n${numbers(p.normals.map((n) => n))}\n};`);
     if (p.texcoords) out.push(`static const int16_t primitive_${i}_texcoords[] = {\n${numbers(p.texcoords)}\n};`);
+    if (p.skinJoints && p.skinWeights) {
+      out.push(`static const uint8_t primitive_${i}_skin_joints[] = {\n${numbers(p.skinJoints)}\n};`);
+      out.push(`static const uint8_t primitive_${i}_skin_weights[] = {\n${numbers(p.skinWeights)}\n};`);
+    }
     out.push("");
   });
 
@@ -187,10 +191,12 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("");
 
   out.push("static const GsPrimitive primitives[] = {");
-  if (scene.primitives.length === 0) out.push("  { 0, 0, 0, 0 }");
+  if (scene.primitives.length === 0) out.push("  { 0, 0, 0, 0, 0, 0 }");
   scene.primitives.forEach((p, i) => {
     const texcoords = p.texcoords ? `primitive_${i}_texcoords` : "0";
-    out.push(`  { ${p.triangleCount}, primitive_${i}_positions, primitive_${i}_normals, ${texcoords} }${i < scene.primitives.length - 1 ? "," : ""}`);
+    const skinJoints = p.skinJoints ? `primitive_${i}_skin_joints` : "0";
+    const skinWeights = p.skinWeights ? `primitive_${i}_skin_weights` : "0";
+    out.push(`  { ${p.triangleCount}, primitive_${i}_positions, primitive_${i}_normals, ${texcoords}, ${skinJoints}, ${skinWeights} }${i < scene.primitives.length - 1 ? "," : ""}`);
   });
   out.push("};");
   out.push("");
@@ -218,11 +224,19 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   });
   out.push("};");
   out.push("");
+  out.push(`static const int16_t skin_joints[] = { ${scene.skinJoints.length === 0 ? "0" : scene.skinJoints.join(", ")} };`);
+  out.push("static const GsMatrix skin_inverse_bind_matrices[] = {");
+  if (scene.skinInverseBindMatrices.length === 0) out.push(`  ${matrix(new Array(16).fill(0))}`);
+  scene.skinInverseBindMatrices.forEach((m, i) => {
+    out.push(`  ${matrix(m)}${i < scene.skinInverseBindMatrices.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
   out.push("static const GsMesh meshes[] = {");
-  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 31 }");
+  if (scene.meshes.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 31, 0, 0 }");
   scene.meshes.forEach((m, i) => {
     out.push(
-      `  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0}, ${CULL_CODES[m.cull]}, ${m.alpha} }${i < scene.meshes.length - 1 ? "," : ""}`
+      `  { ${m.primitive}, ${m.diffuse}, ${m.texture}, ${m.node}, ${m.frameStart}, ${m.frameCount}, ${m.animation}, ${m.animationFirst}, ${m.animationCount}, ${m.unlit ? 1 : 0}, ${CULL_CODES[m.cull]}, ${m.alpha}, ${m.skinJointStart}, ${m.skinJointCount} }${i < scene.meshes.length - 1 ? "," : ""}`
     );
   });
   out.push("};");
@@ -247,7 +261,10 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.audioClips.length}, ${scene.colliders.length}, ${hullPoints.length / 3}, /* sound, audio player, audio clip, collider, hull point counts */`);
   out.push(`  ${scene.animationPlayers.length}, ${scene.animations.length}, ${scene.animationTracks.length}, ${scene.animationKeys.length}, /* animation player, animation, track, key counts */`);
   out.push(`  ${scene.touchAreas.length}, /* touch area count */`);
-  out.push(`  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations`);
+  out.push(`  ${scene.skinJoints.length}, /* skin joint count */`);
+  out.push(
+    `  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
+  );
   out.push("};");
   out.push("");
   return out.join("\n");

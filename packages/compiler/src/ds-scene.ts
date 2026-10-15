@@ -5,6 +5,7 @@
  *
  * Matrices are 16 `f32` (20.12) values, column-major, as the geometry engine reads them.
  */
+import type { FpsTarget } from "@goodstuff/core";
 
 /** One mesh source's vertex data (a built-in primitive or an imported model), shared by every instance that uses it. */
 export interface DsPrimitive {
@@ -19,6 +20,15 @@ export interface DsPrimitive {
   positions: number[];
   /** One packed 10-bit-per-axis normal per vertex. */
   normals: number[];
+  /**
+   * 4 per vertex (same vertex order as `positions`), indices into the *owning* `DsMesh`'s own
+   * `skinJointStart..+skinJointCount` run (local, 0-based) -- present only for a model with real skin data
+   * (`ImportedMeshSkin`), whatever that mesh instance's own `smoothSkinning` is currently set to (see
+   * `DsMesh.skinJointCount`'s own doc comment for why it's the instance, not the primitive, that decides).
+   */
+  skinJoints?: number[];
+  /** 4 per vertex, 0..255 (255 = full weight); present only alongside `skinJoints`. */
+  skinWeights?: number[];
 }
 
 /** A texture's image, shared by every mesh that uses it. */
@@ -200,6 +210,15 @@ export interface DsMesh {
   cull: "none" | "back" | "front";
   /** This mesh's polygon alpha, 0 (invisible) to 31 (fully opaque, the default). Below 31 the geometry engine blends it and skips its depth write. */
   alpha: number;
+  /**
+   * A run in `DsScene3D.skinJoints`/`skinInverseBindMatrices`: the bones this instance's vertices are really
+   * weighted to (`MeshInstance3DData.smoothSkinning`). `skinJointCount` 0 (the default, and the only option for a
+   * primitive's own `skinJoints`/`skinWeights` being absent) means "not smooth-skinned" -- drawn rigidly via `node`,
+   * the only thing every other mesh ever does. This lives on the *instance*, not the primitive, because the exact
+   * same shared vertex table can be drawn by one smooth-skinned instance and one plain rigid one side by side.
+   */
+  skinJointStart: number;
+  skinJointCount: number;
 }
 
 /** The DS has only parallel (directional) lights. */
@@ -228,7 +247,7 @@ export interface DsScene3D {
   /** Which physical screen the 3D engine drives. The DS can only do 3D on one. */
   screen: "top" | "bottom";
   /** Presentation rate. */
-  fps: 30 | 60;
+  fps: FpsTarget;
   camera: DsCamera;
   /** At most `MAX_DS_LIGHTS`. */
   lights: DsLight[];
@@ -248,6 +267,10 @@ export interface DsScene3D {
   meshFrames: number[];
   /** Every frame animation of every animated mesh; a mesh's own are a run of it. `frames` are poses of the mesh (0 is its first). */
   meshAnimations: DsSpriteAnimation[];
+  /** Every bone a smooth-skinned mesh instance is weighted to, across every such instance, each one's own a run (`DsMesh.skinJointStart`/`skinJointCount`): index into `nodes`. */
+  skinJoints: number[];
+  /** Parallel to `skinJoints`: that bone's own inverse bind matrix (16 `f32`, column-major each), already expressed relative to the owning mesh's own stored vertex space -- see `ImportedMeshSkin`'s own doc comment in core's `imported-mesh.ts`. */
+  skinInverseBindMatrices: number[][];
   /**
    * The sprites on the project's 2D screen (the sub engine; the 3D engine is the main one). Empty when there are none, in which case the runtime keeps all four
    * VRAM banks for textures; with sprites, one bank holds their tiles and textures get three (384 KB).
@@ -424,7 +447,7 @@ export interface DsTileMap {
  * to `writeScene2DDataC`. The top screen is the main engine and the bottom screen the sub engine.
  */
 export interface DsScene2D {
-  fps: 30 | 60;
+  fps: FpsTarget;
   top: DsScreen2D;
   bottom: DsScreen2D;
   /** Every node a script attaches to or names with `$Name`, across both screens -- what `GsNodeState` is initialized from. Empty when no script runs. */

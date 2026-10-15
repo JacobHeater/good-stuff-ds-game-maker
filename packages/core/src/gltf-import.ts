@@ -1,5 +1,5 @@
 import type { Animation, AnimationKey, AnimationTrack } from "./animation";
-import { MAX_IMPORTED_COORDINATE, type ImportedMesh } from "./imported-mesh";
+import { MAX_IMPORTED_COORDINATE, type ImportedMesh, type ImportedMeshSkin } from "./imported-mesh";
 import { meshColorFromLevels } from "./mesh-color";
 import { createSceneNode, type SceneNode, type Vector3 } from "./scene-node";
 
@@ -17,6 +17,13 @@ import { createSceneNode, type SceneNode, type Vector3 } from "./scene-node";
 
 /** How many keys a second a clip is sampled at before thinning (the DS plays its animations at the game's frame rate; this is plenty for a walk cycle). */
 export const GLTF_SAMPLE_RATE = 15;
+
+/**
+ * The overall size (its bounding box's largest extent) a model is normalized to when its file's own raw vertex
+ * data forces a rescale (see `build`'s own comment on this below) -- "a person about 2 units tall" is right for
+ * this engine's own unit convention, same as this file used to say in its old, rejecting error message.
+ */
+const TARGET_IMPORT_EXTENT = 2;
 
 type Json = Record<string, unknown>;
 
@@ -149,6 +156,39 @@ function decompose(m: Mat): { t: number[]; q: number[]; s: number[] } {
   return { t: [m[12], m[13], m[14]], q, s: [sx, sy, sz] };
 }
 
+function multiplyMat(a: Mat, b: Mat): Mat {
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) out[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+  return out;
+}
+
+function transformPoint(m: Mat, p: readonly [number, number, number]): [number, number, number] {
+  return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]];
+}
+
+/** `m`'s own linear 3x3 part applied to `v`, with no translation added -- for un-doing an inverse's translation below. */
+function transformVector(m: Mat, v: readonly [number, number, number]): [number, number, number] {
+  return [m[0] * v[0] + m[4] * v[1] + m[8] * v[2], m[1] * v[0] + m[5] * v[1] + m[9] * v[2], m[2] * v[0] + m[6] * v[1] + m[10] * v[2]];
+}
+
+/** The inverse of an affine matrix (translation + any invertible linear part; every matrix this file builds or reads qualifies). A singular matrix (a zero-scaled bone) inverts to all zeros rather than throwing or producing NaN. */
+function invertAffine(m: Mat): Mat {
+  const [a, b, c, , d, e, f, , g, h, i] = m;
+  const det = a * (e * i - f * h) - d * (b * i - c * h) + g * (b * f - c * e);
+  const invDet = det !== 0 ? 1 / det : 0;
+  const inv: Mat = [
+    (e * i - f * h) * invDet, (c * h - b * i) * invDet, (b * f - c * e) * invDet, 0,
+    (f * g - d * i) * invDet, (a * i - c * g) * invDet, (b * g - a * h) * invDet, 0,
+    (d * h - e * g) * invDet, (c * d - a * f) * invDet, (a * e - b * d) * invDet, 0,
+    0, 0, 0, 1
+  ];
+  const t = transformVector(inv, [m[12], m[13], m[14]]);
+  inv[12] = -t[0];
+  inv[13] = -t[1];
+  inv[14] = -t[2];
+  return inv;
+}
+
 const RAD_TO_DEG = 180 / Math.PI;
 
 /** The Euler angles in degrees, in the editor's `XYZ` order (`Rx · Ry · Rz`), of a unit quaternion. */
@@ -243,6 +283,7 @@ interface BuiltMesh {
   normals: number[];
   indices: number[];
   material: number;
+  skin?: ImportedMeshSkin;
 }
 
 /** Puts a triangle's normals right for a vertex table that has none: the average of the faces around each vertex. */
@@ -294,6 +335,8 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
   const localMatrix = new Map<number, Mat>();
   const skinnedMeshNodes: number[] = [];
   const meshes: ImportedMesh[] = [];
+  /** Which gltf node (bone, or the mesh's own node when unskinned) each built mesh's positions are local to -- for measuring the model's real, overall world-space size once the whole tree's world matrices are known. */
+  const meshOwner = new Map<string, number>();
   let triangleCount = 0;
 
   const restOf = (node: Json): { t: number[]; q: number[]; s: number[] } => {
@@ -305,11 +348,17 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
     };
   };
 
-  const addMesh = (parent: SceneNode, nodeName: string, built: BuiltMesh): void => {
-    const check = built.positions.some((c) => Math.abs(c) > MAX_IMPORTED_COORDINATE);
-    if (check) throw new Error(`"${nodeName}" has a vertex more than ${MAX_IMPORTED_COORDINATE.toFixed(1)} units from its bone, which is more than the DS can hold. Scale the model down in the file (a person about 2 units tall is right).`);
-    const mesh: ImportedMesh = { id: crypto.randomUUID(), name: `${modelName}_${built.name}`, positions: built.positions, normals: built.normals, indices: built.indices };
+  const addMesh = (parent: SceneNode, ownerIndex: number, built: BuiltMesh): void => {
+    const mesh: ImportedMesh = {
+      id: crypto.randomUUID(),
+      name: `${modelName}_${built.name}`,
+      positions: built.positions,
+      normals: built.normals,
+      indices: built.indices,
+      ...(built.skin ? { skin: built.skin } : {})
+    };
     meshes.push(mesh);
+    meshOwner.set(mesh.id, ownerIndex);
     const triangles = built.indices.length / 3;
     triangleCount += triangles;
     const node = createSceneNode({ name: built.name, kind: "MeshInstance3D" });
@@ -357,7 +406,7 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
         const positions = Array.from(read.positions.data);
         const normals = read.normals ? Array.from(read.normals.data) : faceNormals(positions, read.indices);
         const partName = arr(gltfMesh?.primitives).length > 1 ? `${nodeName}_${p}` : `${nodeName}_mesh`;
-        addMesh(node, partName, { name: partName, positions, normals, indices: read.indices, material: read.material });
+        addMesh(node, index, { name: partName, positions, normals, indices: read.indices, material: read.material });
       });
     }
     for (const child of (source.children as number[] | undefined) ?? []) node.children.push(buildNode(child, seen));
@@ -365,6 +414,16 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
   };
   const seen = new Set<number>();
   const rootChildren = sceneRoots.map((index) => buildNode(index, seen));
+
+  // Every node's world matrix (as the file's own node tree says, before any rescale below), for measuring the
+  // model's real overall size -- same tree shape `buildNode` already walked, so `localMatrix` is complete by now.
+  const worldMatrix = new Map<number, Mat>();
+  const computeWorldMatrices = (index: number, parentWorld: Mat): void => {
+    const world = multiplyMat(parentWorld, localMatrix.get(index)!);
+    worldMatrix.set(index, world);
+    for (const child of (gltfNodes[index].children as number[] | undefined) ?? []) computeWorldMatrices(child, world);
+  };
+  for (const index of sceneRoots) computeWorldMatrices(index, IDENTITY);
 
   // 2. Skinned meshes: each triangle goes to the bone that pulls its vertices hardest, in that bone's own space.
   const jointNodes = new Set<number>();
@@ -386,7 +445,24 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
         : joints.map(() => IDENTITY);
     const gltfMesh = arr(json.meshes)[num(source.mesh, 0)];
     const label = typeof source.name === "string" ? source.name : `Node${meshNode}`;
-    const groups = new Map<string, { joint: number; material: number; vertexMap: Map<number, number>; positions: number[]; normals: number[]; indices: number[]; noNormals: boolean }>();
+    const groups = new Map<
+      string,
+      {
+        joint: number;
+        material: number;
+        vertexMap: Map<number, number>;
+        positions: number[];
+        normals: number[];
+        indices: number[];
+        noNormals: boolean;
+        /** The real, possibly-multi-bone weighting every vertex in this group actually has, for a later `smoothSkinning` toggle -- see `ImportedMeshSkin`'s own doc comment. `jointNodeIds`/`globalJointIndices` grow together as new bones are seen (same length, same order); `localJointIndex` is their reverse lookup; `skinJoints`/`skinWeights` are 4 entries per vertex, same order as `positions`. */
+        jointNodeIds: string[];
+        globalJointIndices: number[];
+        localJointIndex: Map<number, number>;
+        skinJoints: number[];
+        skinWeights: number[];
+      }
+    >();
     for (const primitive of arr(gltfMesh?.primitives)) {
       const read = readPrimitive(primitive, label);
       if (!read) continue;
@@ -407,7 +483,7 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
         const key = `${best}|${read.material}`;
         let group = groups.get(key);
         if (!group) {
-          group = { joint: best, material: read.material, vertexMap: new Map(), positions: [], normals: [], indices: [], noNormals: !read.normals };
+          group = { joint: best, material: read.material, vertexMap: new Map(), positions: [], normals: [], indices: [], noNormals: !read.normals, jointNodeIds: [], globalJointIndices: [], localJointIndex: new Map(), skinJoints: [], skinWeights: [] };
           groups.set(key, group);
         }
         const ibm = inverseBind[best] ?? IDENTITY;
@@ -431,6 +507,30 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
             } else {
               group.normals.push(0, 0, 0);
             }
+            // This vertex's real (up to 4-bone) weighting, normalized to sum to 1; no weight data at all falls back
+            // to "fully on this group's own dominant bone" (same effective result as the rigid path).
+            const raw =
+              read.joints && read.weights
+                ? Array.from({ length: 4 }, (_, k) => ({ g: read.joints!.data[v * 4 + k], w: read.weights!.data[v * 4 + k] }))
+                : [{ g: best, w: 1 }];
+            const sum = raw.reduce((s, r) => s + r.w, 0) || 1;
+            for (let k = 0; k < 4; k++) {
+              const { g, w } = raw[k] ?? { g: 0, w: 0 };
+              if (w <= 0) {
+                group.skinJoints.push(0);
+                group.skinWeights.push(0);
+                continue;
+              }
+              let local = group.localJointIndex.get(g);
+              if (local === undefined) {
+                local = group.jointNodeIds.length;
+                group.localJointIndex.set(g, local);
+                group.jointNodeIds.push(sceneNodes.get(joints[g])!.id);
+                group.globalJointIndices.push(g);
+              }
+              group.skinJoints.push(local);
+              group.skinWeights.push(w / sum);
+            }
           }
           group.indices.push(mapped);
         }
@@ -441,8 +541,108 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
       const bone = sceneNodes.get(boneIndex)!;
       const normals = group.noNormals ? faceNormals(group.positions, group.indices) : group.normals;
       const partName = `${bone.name}_mesh${groups.size > joints.length ? `_${group.material}` : ""}`;
-      addMesh(bone, partName, { name: partName, positions: group.positions, normals, indices: group.indices, material: group.material });
+      // Re-expresses every referenced bone's inverse bind matrix relative to this group's own dominant bone (the
+      // same space `group.positions` is already stored in), so the smooth-skinning blend at runtime can apply it
+      // directly to the stored position with no further change of space: worldVertex = Σ weight_i * jointWorld_i(now)
+      // * (invBind_i * dominantBoneBindWorld) * group.positions[v]. `dominantBoneBindWorld` is the inverse of this
+      // group's own `ibm` (the dominant bone's bind-pose world matrix) -- see `invertAffine`'s own doc comment.
+      const dominantBoneBindWorld = invertAffine(inverseBind[group.joint] ?? IDENTITY);
+      const inverseBindMatrices = group.globalJointIndices.flatMap((g) => multiplyMat(inverseBind[g] ?? IDENTITY, dominantBoneBindWorld));
+      const skin: ImportedMeshSkin = { jointNodeIds: group.jointNodeIds, inverseBindMatrices, joints: group.skinJoints, weights: group.skinWeights };
+      addMesh(bone, boneIndex, { name: partName, positions: group.positions, normals, indices: group.indices, material: group.material, skin });
     }
+  }
+
+  // Every mesh's vertex positions are in the bone they're attached to's own local space (real units, same as the
+  // file), and the DS GPU's vertex format (VTX_16) can't represent a raw coordinate past MAX_IMPORTED_COORDINATE --
+  // that's a hardware limit on the *raw* numbers a bone's matrix multiplies (the DS's own fixed-point conversion,
+  // `toV16`, throws if a mesh's stored position doesn't fit it, with no fallback -- see fixed-point.ts), not on the
+  // model's apparent size, so scaling the whole rig down visually in the source file doesn't help unless that scale
+  // is actually baked into the mesh and armature data (e.g. Blender's "Apply Transform"); the file's raw
+  // vertex-to-bone distances are the same either way.
+  //
+  // A single bone-local vertex offset past that limit is also a strong sign the *whole file* was authored in units
+  // this engine doesn't expect (centimeters, say, from a Mixamo export with no unit correction applied) -- no
+  // reasonably-proportioned "person about 2 units tall" model would ever need one. So rather than just barely
+  // satisfying the hardware limit, the whole model is scaled down by whichever is bigger: the hardware-driven
+  // factor, or whatever's needed to bring its real world-space bounding box (every bone's own world transform,
+  // composed from the file's node tree) down to TARGET_IMPORT_EXTENT. And rather than compensating with an inverse
+  // scale on the model's own wrapping root node (which would exactly cancel the shrink back out -- the file's
+  // original, too-big-for-this-engine size is exactly the thing being corrected here, not preserved), every
+  // bone/node's own rest position *and* mesh vertex data are divided by the same factor, uniformly, same as if the
+  // whole rig had actually been scaled down in the source file before export; animation position keyframes get the
+  // same treatment below, once they're built, so a moving bone still ends up in the right (now smaller) place.
+  let rescale = 1;
+  let maxAbs = 0;
+  for (const mesh of meshes) for (const c of mesh.positions) maxAbs = Math.max(maxAbs, Math.abs(c));
+  if (maxAbs > MAX_IMPORTED_COORDINATE) {
+    const bboxMin = [Infinity, Infinity, Infinity];
+    const bboxMax = [-Infinity, -Infinity, -Infinity];
+    for (const mesh of meshes) {
+      const world = worldMatrix.get(meshOwner.get(mesh.id)!) ?? IDENTITY;
+      for (let i = 0; i < mesh.positions.length; i += 3) {
+        const p = transformPoint(world, [mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]]);
+        for (let k = 0; k < 3; k++) {
+          bboxMin[k] = Math.min(bboxMin[k], p[k]);
+          bboxMax[k] = Math.max(bboxMax[k], p[k]);
+        }
+      }
+    }
+    const extent = Math.max(bboxMax[0] - bboxMin[0], bboxMax[1] - bboxMin[1], bboxMax[2] - bboxMin[2]);
+    const normalizeScale = extent > 0 ? extent / TARGET_IMPORT_EXTENT : 1;
+    const hardwareScale = maxAbs / (MAX_IMPORTED_COORDINATE - 0.5);
+    rescale = Math.max(normalizeScale, hardwareScale);
+    for (const mesh of meshes) for (let i = 0; i < mesh.positions.length; i++) mesh.positions[i] /= rescale;
+    // A skin's own inverse-bind matrices carry a real position offset too (in the file's original, un-rescaled
+    // units) -- only their translation (indices 12-14) needs dividing, same as a node's own position; the
+    // rotation/scale linear part isn't a distance, so it's unaffected by a uniform rescale. Missing this exact
+    // fix once already produced vertices thrown wildly out of place at runtime (the blend's bone-world-matrix side
+    // was already shrunk, but this side wasn't, so the two no longer agreed on what "one unit" meant).
+    for (const mesh of meshes) {
+      if (!mesh.skin) continue;
+      for (let m = 0; m < mesh.skin.inverseBindMatrices.length; m += 16) {
+        mesh.skin.inverseBindMatrices[m + 12] /= rescale;
+        mesh.skin.inverseBindMatrices[m + 13] /= rescale;
+        mesh.skin.inverseBindMatrices[m + 14] /= rescale;
+      }
+    }
+    const scalePositions = (scaled: SceneNode): void => {
+      if (scaled.transform3D) {
+        scaled.transform3D.position.x /= rescale;
+        scaled.transform3D.position.y /= rescale;
+        scaled.transform3D.position.z /= rescale;
+      }
+      scaled.children.forEach(scalePositions);
+    };
+    rootChildren.forEach(scalePositions);
+    // `rescale` can run bigger than the model's true visual size actually calls for, when a node somewhere in its
+    // tree (a Mixamo "Armature" wrapper, say) already carries its own unrelated scale (e.g. a 0.01 cm-to-m
+    // conversion): `hardwareScale` reacts to the *raw*, pre-that-scale vertex-to-bone distance (a hardware format
+    // limit on the stored number itself, unaffected by any node's scale -- see the comment above), so it can run far
+    // higher than `normalizeScale`, the shrink the model's already-scaled real size actually needs. Dividing every
+    // position by the bigger, hardware-driven `rescale` (above, unchanged from before) keeps mesh vertices and bone
+    // positions in step with each other, but shrinks the model's *true rendered size* by `rescale`, not just the
+    // `normalizeScale` its real size called for -- found on a real file where the true rendered height came out to
+    // about a tenth of a unit instead of two, making the smooth-skinning blend's fixed-point rounding (a fixed
+    // ~1/4096-unit step) big enough, relative to the now-tiny model, to show up as real distortion at the
+    // fingertips, where rigid skinning's simpler, single-matrix math hid the same rounding. Multiplying the import's
+    // own root node(s) by the ratio between the two corrects the *rendered* size back to what `normalizeScale` alone
+    // would have given, without changing a single stored vertex or bone position (still safely inside the hardware
+    // limit, divided by the full `rescale` above) -- 1 whenever `rescale` was already just `normalizeScale` (the
+    // ordinary case, with no such unrelated scale in the tree), so an ordinary file's output is unchanged.
+    const compensatingScale = rescale / normalizeScale;
+    if (compensatingScale !== 1) {
+      for (const root of rootChildren) {
+        if (!root.transform3D) continue;
+        root.transform3D.scale.x *= compensatingScale;
+        root.transform3D.scale.y *= compensatingScale;
+        root.transform3D.scale.z *= compensatingScale;
+      }
+    }
+    warnings.push(
+      `The model is bigger than the DS geometry engine's vertex range, so it was scaled down by ${rescale.toFixed(3)}x in the file (this engine's own convention is "a person is about 2 units tall" -- ` +
+        `check the result still looks right).`
+    );
   }
 
   // 3. The animation clips, sampled and thinned.
@@ -525,6 +725,16 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
         const thinned = thin(keys, path === "rotation" ? 0.4 : 0.004);
         const moves = thinned.some((key) => distance(key.value as Vector3, restValue) > (path === "rotation" ? 0.4 : 0.004));
         if (!moves) continue;
+        // Keeps a moving bone's keyframes in step with the rest-position rescale above (not applied any earlier,
+        // so the "moves" check just above still compares against the file's own original, unscaled units).
+        if (property === "position" && rescale !== 1) {
+          for (const key of thinned) {
+            const v = key.value as Vector3;
+            v.x /= rescale;
+            v.y /= rescale;
+            v.z /= rescale;
+          }
+        }
         tracks.push({ id: crypto.randomUUID(), nodeId: node.id, property, keys: thinned });
       }
     }

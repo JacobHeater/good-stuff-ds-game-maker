@@ -63,7 +63,7 @@ describe("compiling touch areas", () => {
     expect(text).toMatch(/, 2, \{ 0, 0, 0, 0 \}, \{ 2048, 0, 0 \} \}/);
     expect(text).toContain("0.4663");
     expect(text).toContain("2, /* touch area count */");
-    expect(text).toMatch(/animKeys, touchAreas, \{ 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels \}, 0, mesh_frames, mesh_animations\n\};/);
+    expect(text).toMatch(/animKeys, touchAreas, \{ 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels \}, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n\};/);
     expect(writeSceneDataC(scene!)).toBe(text);
   });
 

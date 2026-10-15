@@ -22,7 +22,7 @@ describe("sprites on the 2D screen of a 3D project", () => {
   it("a project without sprites has an empty 2D screen, so the runtime keeps all four texture banks", () => {
     const { scene } = translateScene3D(cubeProject());
     expect(scene!.sprites2D).toEqual({ images: [], animations: [], sprites: [], labels: [] });
-    expect(writeSceneDataC(scene!)).toMatch(/touchAreas, \{ 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels \}, 0, mesh_frames, mesh_animations\n\};/);
+    expect(writeSceneDataC(scene!)).toMatch(/touchAreas, \{ 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels \}, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n\};/);
   });
 
   it("are the same whichever screen the 3D scene is on: they are drawn on the other one", () => {
@@ -36,7 +36,7 @@ describe("sprites on the 2D screen of a 3D project", () => {
     const text = writeSceneDataC(translateScene3D(cubeWithSpritesProject()).scene!);
     expect(text).toContain("static const uint8_t two_d_image_0_tiles[]");
     expect(text).toContain("static const GsSprite two_d_sprites[] = {");
-    expect(text).toMatch(/touchAreas, \{ 4, 4, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels \}, 0, mesh_frames, mesh_animations\n\};/);
+    expect(text).toMatch(/touchAreas, \{ 4, 4, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels \}, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n\};/);
   });
 
   it("report the same problems as a 2D project's sprites: a missing image is an error, no image or off the screen only a warning", () => {

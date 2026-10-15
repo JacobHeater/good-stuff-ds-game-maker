@@ -1,3 +1,4 @@
+import type { ImportedMeshSkin } from "./imported-mesh";
 import type { MeshPrimitive } from "./scene-node";
 
 /**
@@ -33,6 +34,16 @@ export interface PrimitiveGeometry {
   /** u, v per vertex (image space, see above); absent when the geometry has no texture coordinates. */
   readonly uvs?: readonly number[];
   readonly triangleCount: number;
+  /**
+   * `ImportedMesh.skin`'s own `jointNodeIds`/`inverseBindMatrices`, unexpanded (every vertex of every triangle shares
+   * the same small bone list) -- present only when the source model has real skin data (see `ImportedMeshSkin`'s own
+   * doc comment in `imported-mesh.ts`), whatever `MeshInstance3DData.smoothSkinning` is currently set to.
+   */
+  readonly skin?: Pick<ImportedMeshSkin, "jointNodeIds" | "inverseBindMatrices">;
+  /** 4 per vertex (same vertex order as `positions`), indices into `skin.jointNodeIds`; present only alongside `skin`. */
+  readonly skinJoints?: readonly number[];
+  /** 4 per vertex, normalized to sum to 1 across the 4 slots; present only alongside `skin`. */
+  readonly skinWeights?: readonly number[];
 }
 
 /** Sphere: this many segments around, this many rings from pole to pole. */

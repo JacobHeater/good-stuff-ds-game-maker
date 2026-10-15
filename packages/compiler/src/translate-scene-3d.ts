@@ -561,6 +561,13 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       normals,
       ...(texture && geometry.uvs
         ? { texcoords: geometry.uvs.map((value, i) => toT16(value, i % 2 === 0 ? texture.width : texture.height)) }
+        : {}),
+      // Present whenever the source model has real skin data at all, whatever any particular instance's own
+      // `smoothSkinning` is set to (the instance, not this shared vertex table, decides whether it's used --
+      // `DsMesh.skinJointCount`). Weights are quantized to a byte; the small rounding error is invisible next to
+      // the softened-but-not-literally-continuous blend this is already approximating.
+      ...(geometry.skinJoints && geometry.skinWeights
+        ? { skinJoints: [...geometry.skinJoints], skinWeights: geometry.skinWeights.map((w) => Math.round(w * 255)) }
         : {})
     });
     primitiveIndex.set(key, primitives.length - 1);
@@ -570,12 +577,49 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   const dsMeshes: DsMesh[] = [];
   const meshFrames: number[] = [];
   const meshAnimations: DsSpriteAnimation[] = [];
+  const skinJoints: number[] = [];
+  const skinInverseBindMatrices: number[][] = [];
   const gameFps = options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget;
   for (const { node, world, index } of drawableMeshes) {
     const built = guard(node, () => {
       const texture = resolveMeshTexture(node.mesh!, project.textures);
       // Rotation and translation go to the DS as one matrix and scale as another thing: see `splitScale`.
       const { rigid, scale } = splitScale(world);
+      // Smooth skinning (STORY.smooth-vertex-skinning.md): resolve each referenced bone to its node index. A bone
+      // the scene doesn't have (e.g. from duplicating a rigged model, which doesn't carry its own copy of the skin
+      // data -- see that story's own note on this, the same pre-existing gap an AnimationPlayer's own track.nodeId
+      // already has) falls back to rigid for this one mesh, rather than drawing it with the wrong bones.
+      //
+      // A scene *instance* is different from a duplicate: expandSceneInstances (project-scenes.ts) does rename an
+      // AnimationPlayer's own track.nodeId when it renames the rest of an instanced subtree's node ids (an
+      // instanced node's id becomes `<instance id>/<its own id>`, so two instances of one scene don't collide) --
+      // but a skin's jointNodeIds live outside the scene tree entirely, on the shared ImportedMesh in
+      // `project.meshes`, so that renaming pass has no way to reach them; they still name the bones by their
+      // original, un-instanced ids. Resolving them against the instance's own prefix (the mesh instance's own
+      // expanded id, up through its last "/") finds the renamed bone instead of wrongly falling back to rigid for
+      // every instanced copy of a smooth-skinned model.
+      let skinJointStart = 0;
+      let skinJointCount = 0;
+      if (node.mesh!.smoothSkinning === true) {
+        const skin = project.meshes?.find((m) => m.id === node.mesh!.importedMeshId)?.skin;
+        if (skin) {
+          const instancePrefix = node.id.includes("/") ? node.id.slice(0, node.id.lastIndexOf("/") + 1) : "";
+          const resolvedJoints = skin.jointNodeIds.map((id) => keptIndexOf.get(id) ?? (instancePrefix ? keptIndexOf.get(instancePrefix + id) : undefined));
+          if (resolvedJoints.every((j): j is number => j !== undefined)) {
+            skinJointStart = skinJoints.length;
+            skinJointCount = resolvedJoints.length;
+            skinJoints.push(...resolvedJoints);
+            for (let j = 0; j < skin.jointNodeIds.length; j++) skinInverseBindMatrices.push(matrixF32(skin.inverseBindMatrices.slice(j * 16, j * 16 + 16)));
+          } else {
+            diagnostics.push({
+              severity: "warning",
+              code: "smooth-skinning-missing-bone",
+              nodeName: node.name,
+              message: "This mesh's smooth skinning references a bone the scene doesn't have (often from duplicating a rigged model, which doesn't yet carry its own copy of the skin data); it was drawn rigidly instead."
+            });
+          }
+        }
+      }
       // Frame animations: a model with several poses, and animations that say which pose to show when.
       const poses = getMeshFrameCount(node.mesh!, project.meshes);
       const authored = getSpriteAnimations(node);
@@ -627,7 +671,9 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         scale: scale.map(toF32) as [number, number, number],
         unlit: node.mesh!.unlit === true,
         cull: node.mesh!.cull ?? "none",
-        alpha: alphaLevelFromOpacity(node.mesh!.alpha ?? 1)
+        alpha: alphaLevelFromOpacity(node.mesh!.alpha ?? 1),
+        skinJointStart,
+        skinJointCount
       };
     });
     if (built) dsMeshes.push(built);
@@ -900,6 +946,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       touchAreas,
       meshFrames,
       meshAnimations,
+      skinJoints,
+      skinInverseBindMatrices,
       sprites2D: twoDSprites,
       globals: globals.map((g) => ({
         name: g.name,

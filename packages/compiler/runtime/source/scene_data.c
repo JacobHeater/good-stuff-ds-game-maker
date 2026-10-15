@@ -64,7 +64,7 @@ static const GsTouchArea touchAreas[] = {
 };
 
 static const GsPrimitive primitives[] = {
-  { 12, primitive_0_positions, primitive_0_normals, 0 }
+  { 12, primitive_0_positions, primitive_0_normals, 0, 0, 0 }
 };
 
 static const GsNode nodes[] = {
@@ -83,8 +83,13 @@ static const GsSpriteAnimation mesh_animations[] = {
   { 0, 0, 0, 0 }
 };
 
+static const int16_t skin_joints[] = { 0 };
+static const GsMatrix skin_inverse_bind_matrices[] = {
+  { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } }
+};
+
 static const GsMesh meshes[] = {
-  { 0, 25368, 0, 1, 0, 0, -1, 0, 0, 0, 0, 31 }
+  { 0, 25368, 0, 1, 0, 0, -1, 0, 0, 0, 0, 31, 0, 0 }
 };
 
 static const GsLight lights[] = {
@@ -117,5 +122,6 @@ const GsScene gs_scene_data_0 = {
   0, 0, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */
   0, 0, 0, 0, /* animation player, animation, track, key counts */
   0, /* touch area count */
-  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations
+  0, /* skin joint count */
+  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
 };

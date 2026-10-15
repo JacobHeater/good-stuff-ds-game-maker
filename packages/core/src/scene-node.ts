@@ -160,6 +160,15 @@ export interface MeshInstance3DData {
    */
   alpha?: number;
   /**
+   * True: this mesh's vertices are drawn with a true weighted blend of every bone the source file's own skin
+   * assigns them to, instead of rigidly following the one bone that pulls them hardest (the default; see
+   * `ImportedMesh.skin`'s own doc comment for why rigid skinning alone can tear at a joint). Only meaningful when
+   * the mesh is an imported model whose `ImportedMesh.skin` is present (a mesh without skin data has nothing to
+   * blend, and ignores this field) -- an explicit opt-in, since the blend is computed fresh every frame the mesh
+   * moves, a real ARM9 cost a plain rigid mesh doesn't pay (see STORY.smooth-vertex-skinning.md).
+   */
+  smoothSkinning?: boolean;
+  /**
    * Triangles this instance contributes to the DS's per-frame 3D budget, as of when the node was
    * created or its mesh last changed. A record of the count only: the budget and the compiler always
    * recompute it from the geometry (`resolveMeshGeometry`), so a project saved before the primitives

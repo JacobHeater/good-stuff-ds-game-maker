@@ -5,6 +5,7 @@ import {
   findSceneNode,
   getAnimationPlayer,
   getCollisionShape,
+  getImportedMeshGeometry,
   getTouchArea3D,
   getLightIntensity,
   getTextureTexels,
@@ -15,6 +16,7 @@ import {
   sampleAnimation,
   texelsToRgba,
   type ImportedMesh,
+  type ImportedMeshSkin,
   type ImportedTexture,
   type MeshInstance3DData,
   type ScreenId,
@@ -66,6 +68,25 @@ function toTuple(v: Vector3): [number, number, number] {
   return [v.x, v.y, v.z];
 }
 
+// ---- Small matrix math for `SmoothSkinnedMeshView`'s own per-frame skinning blend. Column-major 4x4 (element
+// [column * 4 + row]), the same convention as `gltf-import.ts`'s own (and three.js's `Matrix4.elements`), so a bone
+// `Object3D`'s live `matrixWorld.elements` can be used directly with no conversion.
+
+function multiplyMat4(a: readonly number[], b: readonly number[]): number[] {
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) out[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+  return out;
+}
+
+function transformPoint4(m: readonly number[], p: readonly [number, number, number]): [number, number, number] {
+  return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]];
+}
+
+/** `m`'s own linear 3x3 part applied to `v`, with no translation added -- for a normal, which has no position. */
+function transformDirection4(m: readonly number[], v: readonly [number, number, number]): [number, number, number] {
+  return [m[0] * v[0] + m[4] * v[1] + m[8] * v[2], m[1] * v[0] + m[5] * v[1] + m[9] * v[2], m[2] * v[0] + m[6] * v[1] + m[10] * v[2]];
+}
+
 /**
  * Sizes the DS-aspect-ratio working area to fill as much of `containerRef`
  * as possible (like CSS `object-fit: contain`), by watching the container
@@ -101,6 +122,49 @@ function useContainedSize(aspect: number): [React.RefObject<HTMLDivElement>, { w
 }
 
 /**
+ * The DS-accurate material for a mesh instance, shared by every way of drawing one (the ordinary rigid `MeshView`
+ * and the blended `SmoothSkinnedMeshView`): its texture (the DS's own blocky, tiling, ungamma'd picture), its cull
+ * side, and its DS lighting (`ds-lighting-material.ts`, not three.js's own).
+ */
+function useDsMeshMaterial(mesh: MeshInstance3DData, importedTextures: readonly ImportedTexture[] | undefined, hasUvs: boolean, selected: boolean) {
+  const stored = hasUvs ? resolveMeshTexture(mesh, importedTextures) : undefined;
+  const map = useMemo(() => {
+    if (!stored) return null;
+    const texture = new DataTexture(texelsToRgba(getTextureTexels(stored)), stored.width, stored.height, RGBAFormat);
+    texture.magFilter = NearestFilter;
+    texture.minFilter = NearestFilter;
+    texture.wrapS = RepeatWrapping;
+    texture.wrapT = RepeatWrapping;
+    // No color space: the DS shows the texel values as they are, with no gamma, so the shader must read them raw.
+    texture.needsUpdate = true;
+    return texture;
+  }, [stored]);
+  useEffect(() => () => map?.dispose(), [map]);
+
+  // Which side(s) are drawn follows the mesh's own cull setting (scene-designer/STORY.mesh-face-culling.md), the
+  // same as the ROM: "none" (the default) draws both, matching the runtime's own default of culling off (forgiving
+  // of a model whose winding wasn't checked on the way in).
+  const side = mesh.cull === "back" ? FrontSide : mesh.cull === "front" ? BackSide : DoubleSide;
+  // The mesh's own color as the DS holds it (5 bits a channel), or the default grey / white for a textured one.
+  const levels = getMeshDiffuseLevels(mesh, map !== null);
+  const ownDiffuse = useMemo(() => [levels[0] / 31, levels[1] / 31, levels[2] / 31] as const, [levels[0], levels[1], levels[2]]);
+  const material = useMemo(
+    () =>
+      createDsMaterial({
+        diffuse: selected && !map ? SELECTED_DIFFUSE : ownDiffuse,
+        tint: map && selected ? TEXTURED_SELECTED_TINT : undefined,
+        map,
+        side,
+        unlit: mesh.unlit === true,
+        opacity: getMeshOpacity(mesh)
+      }),
+    [map, selected, side, ownDiffuse, mesh.unlit, mesh.alpha]
+  );
+  useEffect(() => () => material.dispose(), [material]);
+  return material;
+}
+
+/**
  * A mesh drawn from the shared geometry in `@goodstuff/core` (a built-in primitive or an imported model,
  * resolved the same way the hardware budget and the compiler resolve it), so what's drawn, counted and
  * built can't disagree. A mesh whose model is missing from the project draws nothing.
@@ -128,44 +192,115 @@ function MeshView({
     return buffer;
   }, [shared]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
-
-  // The picture as the DS holds it (5-bit color), drawn blocky like the DS does: nearest-neighbor, tiling past the
-  // edges. Rows run top to bottom and so do the UVs, so no flip.
-  const stored = shared?.uvs ? resolveMeshTexture(mesh, importedTextures) : undefined;
-  const map = useMemo(() => {
-    if (!stored) return null;
-    const texture = new DataTexture(texelsToRgba(getTextureTexels(stored)), stored.width, stored.height, RGBAFormat);
-    texture.magFilter = NearestFilter;
-    texture.minFilter = NearestFilter;
-    texture.wrapS = RepeatWrapping;
-    texture.wrapT = RepeatWrapping;
-    // No color space: the DS shows the texel values as they are, with no gamma, so the shader must read them raw.
-    texture.needsUpdate = true;
-    return texture;
-  }, [stored]);
-  useEffect(() => () => map?.dispose(), [map]);
-
-  // The DS's lighting, not three.js's (ds-lighting-material.ts). Which side(s) are drawn follows the mesh's own cull
-  // setting (scene-designer/STORY.mesh-face-culling.md), the same as the ROM: "none" (the default) draws both, matching
-  // the runtime's own default of culling off (forgiving of a model whose winding wasn't checked on the way in).
-  const side = mesh.cull === "back" ? FrontSide : mesh.cull === "front" ? BackSide : DoubleSide;
-  // The mesh's own color as the DS holds it (5 bits a channel), or the default grey / white for a textured one.
-  const levels = getMeshDiffuseLevels(mesh, map !== null);
-  const ownDiffuse = useMemo(() => [levels[0] / 31, levels[1] / 31, levels[2] / 31] as const, [levels[0], levels[1], levels[2]]);
-  const material = useMemo(
-    () =>
-      createDsMaterial({
-        diffuse: selected && !map ? SELECTED_DIFFUSE : ownDiffuse,
-        tint: map && selected ? TEXTURED_SELECTED_TINT : undefined,
-        map,
-        side,
-        unlit: mesh.unlit === true,
-        opacity: getMeshOpacity(mesh)
-      }),
-    [map, selected, side, ownDiffuse, mesh.unlit, mesh.alpha]
-  );
-  useEffect(() => () => material.dispose(), [material]);
+  const material = useDsMeshMaterial(mesh, importedTextures, shared?.uvs !== undefined, selected);
   if (!geometry) return null;
+
+  return (
+    <mesh
+      geometry={geometry}
+      onPointerDown={(event: ThreeEvent<MouseEvent>) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <primitive object={material} attach="material" />
+    </mesh>
+  );
+}
+
+/**
+ * The blended alternative to `MeshView`, for a `MeshInstance3DData.smoothSkinning` mesh whose underlying
+ * `ImportedMesh.skin` has real multi-bone weight data (see `ImportedMeshSkin`'s own doc comment in
+ * `imported-mesh.ts`, and `gltf-import.ts`'s matching comment on why rigid skinning alone can tear at a joint).
+ *
+ * Unlike `MeshView`, this is mounted at the *scene root*, not nested under the mesh's own bone's `<group>`: every
+ * vertex's final position is recomputed in world space each frame (`useFrame`), blending the bones it's weighted to
+ * by their own *live* `matrixWorld` (already kept current by three.js/R3F every frame, dynamic or not) -- the exact
+ * same `Σ weight_i · jointWorld_i · inverseBindMatrices_i · storedPosition` formula `gltf-import.ts` derives and
+ * tests, just evaluated continuously instead of once at import. This is an editor-preview convenience only: the
+ * real DS ROM has its own, much cheaper runtime path, since a 67MHz ARM9 can't afford three.js's per-vertex JS math.
+ */
+function SmoothSkinnedMeshView({
+  nodeId,
+  meshData,
+  importedMesh,
+  importedTextures,
+  objects,
+  selected,
+  onSelect
+}: {
+  nodeId: string;
+  meshData: MeshInstance3DData;
+  importedMesh: ImportedMesh & { skin: ImportedMeshSkin };
+  importedTextures: readonly ImportedTexture[] | undefined;
+  objects: NodeObjects;
+  selected: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  // Expanded once per triangle-vertex reference (not deduplicated), the same shared geometry `MeshView`'s rigid path
+  // and the compiler both draw from, so the joint/weight data lines up 1:1 with the position/normal/uv attributes
+  // the GPU actually draws and there's exactly one place that knows how to expand an `ImportedMesh`'s skin data.
+  const expanded = useMemo(() => {
+    const geometry = getImportedMeshGeometry(importedMesh);
+    return {
+      positions: geometry.positions,
+      normals: geometry.normals,
+      uvs: geometry.uvs,
+      joints: geometry.skinJoints!,
+      weights: geometry.skinWeights!,
+      vertexCount: geometry.positions.length / 3
+    };
+  }, [importedMesh]);
+
+  const geometry = useMemo(() => {
+    const buffer = new BufferGeometry();
+    buffer.setAttribute("position", new Float32BufferAttribute(new Float32Array(expanded.positions), 3));
+    buffer.setAttribute("normal", new Float32BufferAttribute(new Float32Array(expanded.normals), 3));
+    if (expanded.uvs) buffer.setAttribute("uv", new Float32BufferAttribute(expanded.uvs, 2));
+    return buffer;
+  }, [expanded]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  useFrame(() => {
+    // A skin's own jointNodeIds name bones by their original, un-instanced ids (they live on the shared
+    // ImportedMesh, not the scene tree, so expandSceneInstances's own id-renaming pass -- which this mesh's own
+    // `nodeId` already went through, same as every node inside a scene instance -- can't reach them). Falling back
+    // to the instance's own prefix (this mesh's id up through its last "/", the same prefix every bone and mesh
+    // inside that same instance boundary shares) finds the renamed bone instead of silently freezing the mesh at
+    // its raw, un-posed local coordinates -- the same fix translate-scene-3d.ts's compiled path needed.
+    const instancePrefix = nodeId.includes("/") ? nodeId.slice(0, nodeId.lastIndexOf("/") + 1) : "";
+    const jointWorlds = importedMesh.skin.jointNodeIds.map((id) => (objects.get(id) ?? (instancePrefix ? objects.get(instancePrefix + id) : undefined))?.matrixWorld.elements);
+    if (jointWorlds.some((m) => !m)) return; // a joint hasn't mounted yet (e.g. this frame of a just-opened scene)
+    const position = geometry.attributes.position as Float32BufferAttribute;
+    const normal = geometry.attributes.normal as Float32BufferAttribute;
+    for (let v = 0; v < expanded.vertexCount; v++) {
+      const p: [number, number, number] = [expanded.positions[v * 3], expanded.positions[v * 3 + 1], expanded.positions[v * 3 + 2]];
+      const n: [number, number, number] = [expanded.normals[v * 3], expanded.normals[v * 3 + 1], expanded.normals[v * 3 + 2]];
+      let [px, py, pz] = [0, 0, 0];
+      let [nx, ny, nz] = [0, 0, 0];
+      for (let k = 0; k < 4; k++) {
+        const w = expanded.weights[v * 4 + k];
+        if (w <= 0) continue;
+        const j = expanded.joints[v * 4 + k];
+        const skinMatrix = multiplyMat4(jointWorlds[j]!, importedMesh.skin.inverseBindMatrices.slice(j * 16, j * 16 + 16));
+        const [wx, wy, wz] = transformPoint4(skinMatrix, p);
+        const [dx, dy, dz] = transformDirection4(skinMatrix, n);
+        px += wx * w;
+        py += wy * w;
+        pz += wz * w;
+        nx += dx * w;
+        ny += dy * w;
+        nz += dz * w;
+      }
+      position.setXYZ(v, px, py, pz);
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normal.setXYZ(v, nx / len, ny / len, nz / len);
+    }
+    position.needsUpdate = true;
+    normal.needsUpdate = true;
+  });
+
+  const material = useDsMeshMaterial(meshData, importedTextures, expanded.uvs !== undefined, selected);
 
   return (
     <mesh
@@ -353,6 +488,34 @@ const tidy = (value: number): number => Math.round(value * GIZMO_DECIMALS) / GIZ
 let lastGizmoInteractionAt = 0;
 const GIZMO_CLICK_GRACE_MS = 400;
 
+/** Grid-aligned (Ctrl/Cmd held) and fine (Shift held) snap increments for the gizmo -- see `useGizmoSnapModifiers`. */
+const POSITION_SNAP_COARSE = 1; // one grid cell (`gridHelper` below is 20 units across 20 divisions)
+const POSITION_SNAP_FINE = 0.1;
+const ROTATION_SNAP_COARSE = 15 * DEG_TO_RAD;
+const ROTATION_SNAP_FINE = 5 * DEG_TO_RAD;
+const SCALE_SNAP_COARSE = 0.25;
+const SCALE_SNAP_FINE = 0.05;
+
+/**
+ * Whether Ctrl/Cmd or Shift is currently held, for the gizmo's snap-to-grid modifiers: Ctrl/Cmd snaps to a coarse
+ * grid, Shift to a finer one (holding both snaps to the finer one, since that's the more precise result). Tracked
+ * at the window level, rather than read off a pointer event, because `TransformControls`' own `onObjectChange`
+ * callback (`write`, below) fires with no event to read modifier keys from.
+ */
+function useGizmoSnapModifiers(): { coarse: boolean; fine: boolean } {
+  const [modifiers, setModifiers] = useState({ coarse: false, fine: false });
+  useEffect(() => {
+    const update = (event: KeyboardEvent): void => setModifiers({ coarse: event.ctrlKey || event.metaKey, fine: event.shiftKey });
+    window.addEventListener("keydown", update);
+    window.addEventListener("keyup", update);
+    return () => {
+      window.removeEventListener("keydown", update);
+      window.removeEventListener("keyup", update);
+    };
+  }, []);
+  return modifiers;
+}
+
 /**
  * The transform gizmo's own three.js controls instance, while one is mounted (BUG.gizmo-drag-selects-mesh-behind-it.md).
  * TransformControls does its own raycasting against its handles directly on the canvas element -- it never goes through
@@ -404,6 +567,7 @@ function SelectionGizmo({
   onGestureEnd: () => void;
 }): JSX.Element | null {
   const [target, setTarget] = useState<Object3D | null>(null);
+  const { coarse, fine } = useGizmoSnapModifiers();
   // The group may be (re)created after this renders, so look for it every frame and only update on change.
   useFrame(() => {
     const found = objects.get(nodeId) ?? null;
@@ -437,6 +601,9 @@ function SelectionGizmo({
       mode={tool === "move" ? "translate" : tool}
       space={tool === "move" ? "world" : "local"}
       size={1.4}
+      translationSnap={fine ? POSITION_SNAP_FINE : coarse ? POSITION_SNAP_COARSE : null}
+      rotationSnap={fine ? ROTATION_SNAP_FINE : coarse ? ROTATION_SNAP_COARSE : null}
+      scaleSnap={fine ? SCALE_SNAP_FINE : coarse ? SCALE_SNAP_COARSE : null}
       onObjectChange={write}
       onMouseDown={() => (lastGizmoInteractionAt = performance.now())}
       onMouseUp={() => {
@@ -445,6 +612,33 @@ function SelectionGizmo({
       }}
     />
   );
+}
+
+/** A mesh instance that should be drawn by `SmoothSkinnedMeshView` (at the scene root) instead of `MeshView` (nested rigidly under its bone). */
+function isSmoothSkinned(mesh: MeshInstance3DData, importedMeshes: readonly ImportedMesh[] | undefined): boolean {
+  return mesh.smoothSkinning === true && importedMeshes?.find((m) => m.id === mesh.importedMeshId)?.skin !== undefined;
+}
+
+/**
+ * Walks the tree for every `isSmoothSkinned` mesh that would actually be drawn (same visibility/screen rules
+ * `SceneNodeView` applies, since a hidden ancestor hides this too), for the top-level `SmoothSkinnedMeshView`s --
+ * see that component's own doc comment for why it can't just be nested where `SceneNodeView` found it.
+ */
+function collectSmoothSkinnedMeshes(
+  node: SceneNode,
+  activeScreen: ScreenId,
+  importedMeshes: readonly ImportedMesh[] | undefined,
+  preview: PreviewOverrides | null,
+  visible: boolean,
+  out: Array<{ node: SceneNode; importedMesh: ImportedMesh & { skin: ImportedMeshSkin } }>
+): void {
+  const shown = preview?.get(node.id);
+  const nodeVisible = visible && (shown?.visible ?? node.visible);
+  if (!nodeVisible) return;
+  if (node.kind === "MeshInstance3D" && node.mesh && node.screen === activeScreen && isSmoothSkinned(node.mesh, importedMeshes)) {
+    out.push({ node, importedMesh: importedMeshes!.find((m) => m.id === node.mesh!.importedMeshId)! as ImportedMesh & { skin: ImportedMeshSkin } });
+  }
+  for (const child of node.children) collectSmoothSkinnedMeshes(child, activeScreen, importedMeshes, preview, nodeVisible, out);
 }
 
 /**
@@ -507,7 +701,7 @@ function SceneNodeView({
       rotation={toEuler(shown?.rotation ?? node.transform3D.rotation)}
       scale={scaled ? toTuple(shown?.scale ?? node.transform3D.scale) : [1, 1, 1]}
     >
-      {drawn && node.kind === "MeshInstance3D" && node.mesh && (
+      {drawn && node.kind === "MeshInstance3D" && node.mesh && !isSmoothSkinned(node.mesh, importedMeshes) && (
         <MeshView mesh={node.mesh} importedMeshes={importedMeshes} importedTextures={importedTextures} selected={selected} onSelect={select} />
       )}
       {drawn && node.kind === "CollisionShape3D" && <CollisionShapeView node={node} selected={selected} onSelect={select} />}
@@ -566,6 +760,11 @@ export function Viewport3D(): JSX.Element {
     }
     return values;
   }, [previewTime, state.sceneRoot, state.animationUi.playerId, state.animationUi.animationId]);
+  const smoothSkinnedMeshes = useMemo(() => {
+    const out: Array<{ node: SceneNode; importedMesh: ImportedMesh & { skin: ImportedMeshSkin } }> = [];
+    collectSmoothSkinnedMeshes(shownRoot, activeScreen, state.project?.meshes, previewOverrides, true, out);
+    return out;
+  }, [shownRoot, activeScreen, state.project?.meshes, previewOverrides]);
   const [containerRef, displaySize] = useContainedSize(DS_ASPECT);
   const dpr = DS_WIDTH / displaySize.width;
 
@@ -609,6 +808,21 @@ export function Viewport3D(): JSX.Element {
               }}
               preview={previewOverrides}
             />
+            {smoothSkinnedMeshes.map(({ node, importedMesh }) => (
+              <SmoothSkinnedMeshView
+                key={node.id}
+                nodeId={node.id}
+                meshData={node.mesh!}
+                importedMesh={importedMesh}
+                importedTextures={state.project?.textures}
+                objects={nodeObjects.current}
+                selected={state.selectedNodeId === node.id}
+                onSelect={() => {
+                  if (activeGizmoControls?.axis != null) return;
+                  selectNode(node.id);
+                }}
+              />
+            ))}
             {gizmoTool && (
               <SelectionGizmo
                 key={`${state.selectedNodeId}:${gizmoTool}`}

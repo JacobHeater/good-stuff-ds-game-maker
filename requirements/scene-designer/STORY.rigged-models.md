@@ -13,7 +13,7 @@ skeletal import is better: one model, small in memory, with the animation clips 
 ## Decisions (owner chose: glTF/GLB, rigid skinning, animation clips, and the bones must be animatable in the AnimationPlayer too)
 - **Format: glTF 2.0** (`.glb`, or `.gltf` with its `.bin`/embedded buffers). Blender, Mixamo (via glTF export) and most tools write it. FBX is not read (a closed, complicated format): convert it to glTF.
 - **Rigid skinning** (each vertex follows one bone), like the DS's own games: every triangle goes to the one bone whose weights over its three vertices are the largest, and is drawn under that bone. Joints look a little stiff or split at bends; low-poly
-  DS-style characters look right. Smooth blending of two bones is not built (it would cost CPU every frame).
+  DS-style characters look right. An opt-in weighted blend of every bone a vertex is really weighted to exists too now (costs real CPU every frame it's on) -- see `STORY.smooth-vertex-skinning.md`.
 - **It arrives as ordinary nodes, so nothing is special at run time.** Scene > **Import Rigged Model (.glb / .gltf)...** adds a `Node3D` named for the file containing: the file's node tree (every bone is a `Node3D` with the file's rest pose), a `MeshInstance3D`
   under each bone that has triangles (named `<Bone>_mesh`, its vertices in the bone's own space), and an **AnimationPlayer** holding the file's clips. Because bones are plain nodes, you can add your own tracks for any bone in the Animation panel,
   move a bone from a script (`$"mixamorig:Head".rotation.y = 30.0`), hide a part, or attach a script to one, all with what already exists.
@@ -32,5 +32,7 @@ skeletal import is better: one model, small in memory, with the animation clips 
 - Unit tests: `core/src/gltf-import.test.ts` (bones, rest pose, per-bone triangles in bone space, color, clips, thinning, cubic spline, .glb container, refusals), `compiler/src/rigged-models.test.ts` (compiles, animated bone chain is dynamic),
   `ui/.../rigged-model-edits.test.ts`.
 - Emulator: `testing/rigged-models.rom.test.ts`: an imported two-bone model stands upright, and with its imported clip playing the arm bone's bend swings the upper part out to the side (read from the picture).
-- **Not verified:** any real-world file (only a small glTF built in the test: try a Mixamo or Blender export and report what breaks), the file dialog and the imported model in the real editor viewport. **Not built:** FBX, textures, smooth skinning,
-  retargeting, morph targets, an importer for bone-attached props' own skins, or splitting one triangle's vertices across bones (joints can show hairline gaps).
+- **Verified against a real file, not just the test's own small glTF** (see `STORY.smooth-vertex-skinning.md`'s own Notes for the full account): a real Mixamo export needed the importer to tolerate vertex-to-bone distances past the DS's own
+  hardware limit by normalizing the whole model's scale, not just rejecting the file; the same real file's rigid-only rendering (visibly tearing at a bent joint, in the real editor viewport) is what motivated the smooth-skinning story.
+  **Still not verified:** the file dialog itself (only `importGltf` and its data have been exercised against a real file; the open-file flow hasn't). **Not built:** FBX, textures, retargeting, morph targets, an importer for bone-attached
+  props' own skins, or splitting one triangle's vertices across bones for the *rigid* path (smooth skinning covers that now, as an opt-in, per-mesh toggle).

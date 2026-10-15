@@ -90,6 +90,13 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     (model.frames ?? []).forEach((frame, f) => {
       if (frame.positions.length !== model.positions.length || frame.normals.length !== model.positions.length) issues.push(`${where}/frames/${f} must have as many vertices and normals as the model`);
     });
+    if (model.skin) {
+      const { jointNodeIds, inverseBindMatrices, joints, weights } = model.skin;
+      if (joints.length !== vertexCount * 4) issues.push(`${where}/skin/joints must have four entries for every vertex`);
+      if (weights.length !== vertexCount * 4) issues.push(`${where}/skin/weights must have four entries for every vertex`);
+      if (inverseBindMatrices.length !== jointNodeIds.length * 16) issues.push(`${where}/skin/inverseBindMatrices must hold one 4x4 matrix (16 numbers) per entry in jointNodeIds`);
+      if (joints.some((j) => j >= jointNodeIds.length)) issues.push(`${where}/skin/joints refers to a bone jointNodeIds doesn't have`);
+    }
   });
   // Textures: a size the DS supports, texel data of exactly the right length, unique ids.
   const textures: ImportedTexture[] = project.textures ?? [];

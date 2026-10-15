@@ -250,7 +250,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -326,6 +326,17 @@ export function InspectorPanel(): JSX.Element {
               <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="mesh-unlit">
                 <input type="checkbox" checked={node.mesh.unlit === true} onChange={(event) => setMeshUnlit(node.id, event.target.checked)} aria-label="Unlit" />
                 Unlit (ignores the scene's lights; always shown at full brightness)
+              </label>
+            )}
+            {node.mesh && state.project?.meshes?.find((model) => model.id === node.mesh?.importedMeshId)?.skin && (
+              <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="mesh-smooth-skinning">
+                <input
+                  type="checkbox"
+                  checked={node.mesh.smoothSkinning === true}
+                  onChange={(event) => setMeshSmoothSkinning(node.id, event.target.checked)}
+                  aria-label="Smooth skinning"
+                />
+                Smooth skinning (blends every bone this mesh is weighted to, instead of just the strongest one -- costs real CPU time every frame it moves)
               </label>
             )}
             {node.mesh && (

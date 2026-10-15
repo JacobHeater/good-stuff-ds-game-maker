@@ -1,6 +1,6 @@
 import { dialog, ipcMain } from "electron";
 import { dirname, join } from "node:path";
-import type { ExportRomResult, FpsTarget, ProjectSnapshot } from "@goodstuff/core";
+import { DS_HARDWARE_PROFILE, type ExportRomResult, type FpsTarget, type ProjectSnapshot } from "@goodstuff/core";
 import { checkProject, compileProject, describeCompileResult, hasErrors } from "@goodstuff/compiler";
 
 import { PROJECT_IPC_CHANNELS } from "../shared/project-ipc-channels";
@@ -24,8 +24,8 @@ export function registerExportRomIpcHandler(): void {
   ipcMain.handle(
     PROJECT_IPC_CHANNELS.exportRom,
     async (_event, snapshot: ProjectSnapshot, projectFilePath: string | null, fpsTarget?: FpsTarget): Promise<ExportRomResult> => {
-      // The frame rate is the editor's setting (the project file doesn't keep it); anything but 30 or 60 is the default.
-      const options = fpsTarget === 30 || fpsTarget === 60 ? { fpsTarget } : {};
+      // The frame rate is the editor's setting (the project file doesn't keep it); anything not in the supported list is the default.
+      const options = fpsTarget !== undefined && (DS_HARDWARE_PROFILE.frameRate.supportedFpsTargets as readonly number[]).includes(fpsTarget) ? { fpsTarget } : {};
       if (exporting) {
         return { outcome: "error", lines: ["An export is already running; wait for it to finish."] };
       }

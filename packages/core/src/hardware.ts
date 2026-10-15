@@ -49,8 +49,8 @@ export const DS_HARDWARE_PROFILE = {
     soundMemoryBytes: 2 * 1024 * 1024
   },
   frameRate: {
-    /** The DS LCD refreshes at ~59.8Hz; games target 60fps or a 30fps half-step. */
-    supportedFpsTargets: [30, 60] as const,
+    /** The DS LCD refreshes at ~59.8Hz; games target 60fps or an even fraction of it (30/15), plus 45 as a lighter step down from 60. */
+    supportedFpsTargets: [15, 30, 45, 60] as const,
     defaultFpsTarget: 60
   }
 } as const;

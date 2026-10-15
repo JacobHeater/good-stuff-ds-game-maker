@@ -1,7 +1,7 @@
 import { buildArm, createBlankSceneTree, createProjectSnapshot, findSceneNode, flattenSceneTree, importGltf, type RiggedModel } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
-import { createInitialState, editorReducer, hasUnsavedChanges, savedProjectOf, type Action, type EditorState } from "./editor-store";
+import { createInitialState, editorReducer, hasUnsavedChanges, meshesNeedingSmoothSkinningPrompt, savedProjectOf, type Action, type EditorState } from "./editor-store";
 
 /** requirements/scene-designer/STORY.rigged-models.md: putting an imported rigged model in the scene. */
 
@@ -51,5 +51,19 @@ describe("importing a rigged model into the scene", () => {
     const arm = nodes.find((n) => n.name === "Arm")!;
     const player = nodes.find((n) => n.kind === "AnimationPlayer")!;
     expect(player.animation!.animations![0].tracks[0].nodeId).toBe(arm.id);
+  });
+});
+
+describe("whether a freshly-imported model is worth asking about smooth skinning", () => {
+  it("has nothing to ask about when every mesh is purely rigid (one bone, weight 1)", () => {
+    expect(meshesNeedingSmoothSkinningPrompt(model())).toEqual([]);
+  });
+
+  it("finds exactly the mesh instance with a real multi-bone split", () => {
+    const built = buildArm({ splitWeight: true });
+    const r = importGltf({ json: built.json, buffers: [built.bin] }, "Robot");
+    if (!r.ok) throw new Error("should import");
+    const skinnable = meshesNeedingSmoothSkinningPrompt(r.model);
+    expect(skinnable.map((n) => n.name)).toEqual(["Hip_mesh"]);
   });
 });

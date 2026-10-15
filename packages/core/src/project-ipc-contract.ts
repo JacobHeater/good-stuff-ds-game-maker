@@ -119,6 +119,31 @@ export interface PlayProjectResult {
 }
 
 /**
+ * The outcome of a whole-file conversion ("Convert PNG to NSBTX...", "Convert OBJ to NSBMD..."): the main process
+ * picks the input file, converts it, and asks where to save the result, all in one round trip. On "ok", `savedTo`
+ * is where the converted file went and `warnings` says what was simplified or clamped along the way. On "error",
+ * `errors` says why nothing was written. On "canceled" (either dialog), both are empty.
+ */
+export interface ConvertFileResult {
+  outcome: ProjectDialogOutcome;
+  fileName?: string;
+  savedTo?: string;
+  warnings: string[];
+  errors: string[];
+}
+
+/**
+ * The outcome of saving bytes the renderer already produced (the Converter's WAV -> STRM path: the renderer
+ * decodes the sound and builds the STRM bytes itself, since only the editor window can decode WAV/MP3/OGG, then
+ * hands them here to be written). On "canceled", `errors` is empty.
+ */
+export interface SaveBinaryFileResult {
+  outcome: ProjectDialogOutcome;
+  filePath?: string;
+  errors: string[];
+}
+
+/**
  * The full shape of `window.goodstuff`, the preload bridge's exposed
  * API. Defined once here so the preload script (which implements it),
  * the desktop app's renderer `env.d.ts` (which declares the global),
@@ -166,6 +191,29 @@ export interface GoodStuffWindowApi {
     pickSound(): Promise<PickSoundResult>;
     /** Asks the user for a .glb or .gltf file and returns its bytes (and the files a .gltf refers to), for the renderer to import. Never changes any project. */
     pickRiggedModel(): Promise<PickRiggedModelResult>;
+    /** Asked once per rigged-model import, only when it actually has a vertex weighted across more than one bone: blend every bone it's really weighted to (true), or keep the DS's own cheap rigid default (false). Applies to the whole model, not one mesh at a time. */
+    confirmSmoothSkinning(): Promise<boolean>;
+  };
+  /**
+   * Converting a file straight to a real Nintendo DS native format, with no project involved (requirements/
+   * compiler/STORY.nitro-native-format-converter.md) -- NSBTX/NSBMD/STRM, the same container formats the official
+   * Nitro SDK's own tools produce, not this app's own project-internal data.
+   */
+  converter: {
+    /** Asks for a .png and a place to save it, converts it to an NSBTX (BTX0/TEX0, 256-color paletted texture), and writes it. */
+    pngToNsbtx(): Promise<ConvertFileResult>;
+    /** Asks for an .obj and a place to save it, converts it to a single-bone NSBMD (BMD0/MDL0), and writes it. */
+    objToNsbmd(): Promise<ConvertFileResult>;
+    /** Asks where to save `bytes` (already-converted STRM data -- the renderer builds these, since only it can decode WAV/MP3/OGG) and writes them. */
+    saveBinaryFile(suggestedName: string, filterName: string, extensions: string[], bytes: Uint8Array): Promise<SaveBinaryFileResult>;
+    /** Asks for an .nsbtx and a place to save it, decodes its (first) texture back to a plain PNG, and writes it. A file with more than one texture saves the rest alongside it and says so in `warnings`. */
+    nsbtxToPng(): Promise<ConvertFileResult>;
+    /** Asks for an .nsbmd and a place to save it, decodes it and flattens its bones into world space, and writes a plain Wavefront .obj. */
+    nsbmdToObj(): Promise<ConvertFileResult>;
+    /** Asks for an .nsbmd (and, optionally, a matching .nsbca to include as an animation) and a place to save it, and writes a self-contained .glb keeping the bone hierarchy. */
+    nsbmdToGlb(): Promise<ConvertFileResult>;
+    /** Asks for an .strm and a place to save it, decodes it to PCM16, and writes a plain .wav. Runs entirely in the main process: unlike the forward WAV -> STRM path, decoding an STRM needs no Web Audio API. */
+    strmToWav(): Promise<ConvertFileResult>;
   };
   /**
    * Recently opened projects. Recording is done by the main process itself on

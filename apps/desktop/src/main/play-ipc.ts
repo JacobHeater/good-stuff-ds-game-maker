@@ -1,6 +1,6 @@
 import { app, ipcMain } from "electron";
 import { join } from "node:path";
-import type { FpsTarget, PlayProjectResult, ProjectSnapshot } from "@goodstuff/core";
+import { DS_HARDWARE_PROFILE, type FpsTarget, type PlayProjectResult, type ProjectSnapshot } from "@goodstuff/core";
 import { compileProject, NodeBuildFileSystem, NodeEmulatorLauncher, NodeEmulatorLocator, PlaySession } from "@goodstuff/compiler";
 
 import { PROJECT_IPC_CHANNELS } from "../shared/project-ipc-channels";
@@ -36,7 +36,8 @@ export function stopPlaySession(): Promise<void> {
  */
 export function registerPlayIpcHandler(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.play, async (_event, snapshot: ProjectSnapshot, fpsTarget?: FpsTarget): Promise<PlayProjectResult> => {
-    const { outcome, lines } = await playSession().play(snapshot, fpsTarget === 30 || fpsTarget === 60 ? { fpsTarget } : {});
+    const supported = fpsTarget !== undefined && (DS_HARDWARE_PROFILE.frameRate.supportedFpsTargets as readonly number[]).includes(fpsTarget);
+    const { outcome, lines } = await playSession().play(snapshot, supported ? { fpsTarget } : {});
     return { outcome, lines };
   });
 }

@@ -283,6 +283,20 @@ export function savedProjectOf(state: Pick<EditorState, "project" | "sceneRoot" 
   return pruneUnusedAssets({ ...project, updatedAt: new Date().toISOString() });
 }
 
+/**
+ * Every `MeshInstance3D` of a freshly-imported rigged model whose own skin data genuinely weighs it to more than
+ * one bone -- the ones a smooth-skinning prompt is actually worth asking about (STORY.smooth-vertex-skinning.md).
+ * A mesh with no real multi-bone split (every `ImportedMesh` gets a `skin` object, even a fully rigid one, with
+ * exactly one bone at weight 1) has nothing to blend, so it's left out even if the user says yes to the prompt.
+ */
+export function meshesNeedingSmoothSkinningPrompt(model: RiggedModel): SceneNode[] {
+  return flattenSceneTree(model.root).filter((node) => {
+    if (node.kind !== "MeshInstance3D" || !node.mesh?.importedMeshId) return false;
+    const mesh = model.meshes.find((m) => m.id === node.mesh!.importedMeshId);
+    return (mesh?.skin?.jointNodeIds.length ?? 0) > 1;
+  });
+}
+
 /** The project's scenes with the scene being edited as it is now. */
 function currentSceneEntries(state: Pick<EditorState, "project" | "sceneRoot" | "activeSceneId">): SceneEntry[] {
   return state.project ? listScenes(withSceneTree(state.project, state.activeSceneId, state.sceneRoot)) : [];
@@ -371,6 +385,7 @@ export type Action =
   | { type: "SET_MESH_TEXTURE"; id: string; textureId: string | null }
   | { type: "SET_MESH_COLOR"; id: string; color: string | null; at: number }
   | { type: "SET_MESH_UNLIT"; id: string; unlit: boolean }
+  | { type: "SET_MESH_SMOOTH_SKINNING"; id: string; smoothSkinning: boolean }
   | { type: "SET_MESH_CULL"; id: string; cull: MeshCullMode }
   | { type: "SET_MESH_ALPHA"; id: string; alpha: number; at: number }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
@@ -785,6 +800,13 @@ function applyAction(state: EditorState, action: Action): EditorState {
       const chosen: MeshInstance3DData = action.unlit ? { ...withoutUnlit, unlit: true } : withoutUnlit;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
     }
+    case "SET_MESH_SMOOTH_SKINNING": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target?.mesh || (target.mesh.smoothSkinning ?? false) === action.smoothSkinning) return state;
+      const { smoothSkinning: _cleared, ...withoutSmoothSkinning } = target.mesh;
+      const chosen: MeshInstance3DData = action.smoothSkinning ? { ...withoutSmoothSkinning, smoothSkinning: true } : withoutSmoothSkinning;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, mesh: chosen })) };
+    }
     case "SET_MESH_CULL": {
       const target = findSceneNode(state.sceneRoot, action.id);
       if (!target?.mesh || (target.mesh.cull ?? "none") === action.cull) return state;
@@ -962,8 +984,12 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (parent.instanceOf !== undefined) return state; // an instance holds nothing of its own
       const name = uniqueNodeName(source.name, parent.children.map((child) => child.name));
       // It arrives where the scene's own root is, so the scene is drawn as it was made; moving it moves everything in it.
-      const created = createSceneNode({ name, kind: source.scene.kind, screen: screenOfNewNode(state, source.scene.kind, parent), position: { ...source.scene.position } });
-      const node: SceneNode = { ...created, ...(source.scene.transform3D ? { transform3D: source.scene.transform3D } : {}), instanceOf: source.id };
+      // Built with duplicateSceneNode, not createSceneNode (which only knows how to assemble a brand-new default
+      // node, e.g. a mesh primitive of "cube") -- so every kind-specific field the root itself carries (a mesh's
+      // smoothSkinning/unlit/cull/alpha/importedMeshId, a light's color, a sprite's frame, ...) survives onto the
+      // wrapper instead of being silently replaced with defaults. The wrapper holds none of the scene's own
+      // children of its own -- expandSceneInstances resolves those live from the source scene instead.
+      const node: SceneNode = { ...duplicateSceneNode(source.scene), name, screen: screenOfNewNode(state, source.scene.kind, parent), position: { ...source.scene.position }, children: [], instanceOf: source.id };
       return {
         ...state,
         sceneRoot: updateSceneNode(state.sceneRoot, parent.id, (target) => ({ ...target, children: [...target.children, node] })),
@@ -1598,6 +1624,8 @@ interface EditorStoreValue {
   setMeshColor: (id: string, color: string | null) => void;
   /** Sets whether a mesh ignores the scene's lights and always shows its own color at full brightness. No-op for a node without a mesh. */
   setMeshUnlit: (id: string, unlit: boolean) => void;
+  /** Sets whether a rigged mesh with real skin data blends every bone it's weighted to, instead of rigidly following just the strongest one. No-op for a node without a mesh. */
+  setMeshSmoothSkinning: (id: string, smoothSkinning: boolean) => void;
   /** Sets which side(s) of a mesh's triangles are drawn ("none": both, the default). No-op for a node without a mesh. */
   setMeshCull: (id: string, cull: MeshCullMode) => void;
   /** Sets a mesh's opacity, 0..1 (1, fully opaque, is the default). Dragging the slider is one undo step per pause. No-op for a node without a mesh. */
@@ -1681,7 +1709,12 @@ interface EditorStoreValue {
    * node. A refused file changes nothing and is explained in the Output log; cancelling does nothing.
    */
   importModel: (poses?: boolean) => Promise<void>;
-  /** Scene > Import Rigged Model: a .glb or .gltf with a skeleton becomes a tree of bone nodes with the mesh under its bones and the file's clips in an AnimationPlayer. */
+  /**
+   * Scene > Import Rigged Model: a .glb or .gltf with a skeleton becomes a tree of bone nodes with the mesh under its bones
+   * and the file's clips in an AnimationPlayer. If any mesh has a vertex weighted across more than one bone, asks once
+   * (not per mesh) whether to blend every bone each one is really weighted to instead of just the strongest -- smoother
+   * joints, at a real CPU cost (`meshesNeedingSmoothSkinningPrompt`).
+   */
   importRiggedModel: () => Promise<void>;
   addNode: (kind: SceneNodeKind) => void;
   deleteNode: (id: string) => void;
@@ -1757,6 +1790,8 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Change color of ${nameOf(action.id)}`, mergeKey: `mesh-color:${action.id}`, at: action.at };
     case "SET_MESH_UNLIT":
       return { label: `${action.unlit ? "Make" : "Stop making"} ${nameOf(action.id)} unlit` };
+    case "SET_MESH_SMOOTH_SKINNING":
+      return { label: `${action.smoothSkinning ? "Enable" : "Disable"} smooth skinning on ${nameOf(action.id)}` };
     case "SET_MESH_CULL":
       return { label: `Change face culling of ${nameOf(action.id)}` };
     case "SET_MESH_ALPHA":
@@ -2192,6 +2227,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
 
   const setMeshColor = useCallback((id: string, color: string | null) => dispatch({ type: "SET_MESH_COLOR", id, color, at: Date.now() }), []);
   const setMeshUnlit = useCallback((id: string, unlit: boolean) => dispatch({ type: "SET_MESH_UNLIT", id, unlit }), []);
+  const setMeshSmoothSkinning = useCallback((id: string, smoothSkinning: boolean) => dispatch({ type: "SET_MESH_SMOOTH_SKINNING", id, smoothSkinning }), []);
   const setMeshCull = useCallback((id: string, cull: MeshCullMode) => dispatch({ type: "SET_MESH_CULL", id, cull }), []);
   const setMeshAlpha = useCallback((id: string, alpha: number) => dispatch({ type: "SET_MESH_ALPHA", id, alpha, at: Date.now() }), []);
   const setMeshTexture = useCallback(
@@ -2383,6 +2419,13 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     if (!read.ok) return fail([read.error]);
     const result = importGltf(read.input, (picked.fileName ?? "Model").replace(/\.[^.]+$/, ""));
     if (!result.ok) return fail(result.errors);
+    // A joint only looks smooth when every mesh touching it agrees, so this is one decision for the whole model
+    // (STORY.smooth-vertex-skinning.md), asked once here, not a per-mesh Inspector toggle you'd have to remember to
+    // set consistently on every part around a joint.
+    const skinnable = meshesNeedingSmoothSkinningPrompt(result.model);
+    if (skinnable.length > 0 && (await window.goodstuff.assets.confirmSmoothSkinning())) {
+      for (const node of skinnable) node.mesh = { ...node.mesh!, smoothSkinning: true };
+    }
     dispatch({ type: "IMPORT_RIGGED_MODEL", model: result.model, warnings: result.warnings });
   }, [state.project]);
 
@@ -2583,6 +2626,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setMeshTexture,
       setMeshColor,
       setMeshUnlit,
+      setMeshSmoothSkinning,
       setMeshCull,
       setMeshAlpha,
       selectScript,

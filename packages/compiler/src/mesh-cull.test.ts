@@ -32,8 +32,8 @@ describe("a mesh's face culling", () => {
       const cubeIndex = scene!.meshes.findIndex((m) => scene!.nodes[m.node].name === "Cube");
       const c = writeSceneDataC(scene!);
       const rows = c.match(/static const GsMesh meshes\[\] = \{\n([\s\S]*?)\n\};/)![1].split("\n");
-      // cull is second-from-last now (alpha, always 31 here, is the trailing field).
-      return rows[cubeIndex].trim().replace(/[},]+$/, "").trim().split(",").at(-2)!.trim();
+      // cull is fourth-from-last now (alpha, always 31 here, and the two skin-joint-run fields follow it).
+      return rows[cubeIndex].trim().replace(/[},]+$/, "").trim().split(",").at(-4)!.trim();
     };
     expect(cullCodeOf("none")).toBe("0");
     expect(cullCodeOf("back")).toBe("1");

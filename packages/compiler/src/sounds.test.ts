@@ -134,7 +134,9 @@ describe("the generated C for sounds", () => {
     expect(text).toContain("static const GsSound sounds[] = {\n  { 16, 8000, 1, sound_0_data }\n};");
     expect(text).toContain("static const GsAudioClip audioClips[] = {\n  { 0, 0, 0, 0 }\n};");
     expect(text).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 16000, 64, 1, 1, 0, 0 },\n  { 0, 8000, 127, 0, 0, 0, 0 }\n};");
-    expect(text).toContain("  1, 2, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations\n};");
+    expect(text).toContain(
+      "  1, 2, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  0, /* skin joint count */\n  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n};"
+    );
   });
 
   it("is data only, and the same scene gives the same text", () => {

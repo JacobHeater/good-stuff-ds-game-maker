@@ -25,6 +25,7 @@ export function registerAssetsIpcHandlers(): void {
   ipcMain.handle(ASSETS_IPC_CHANNELS.importSprite, (_event, frame?: { width: number; height: number }) => importSprite(frame));
   ipcMain.handle(ASSETS_IPC_CHANNELS.pickSound, pickSound);
   ipcMain.handle(ASSETS_IPC_CHANNELS.pickRiggedModel, pickRiggedModel);
+  ipcMain.handle(ASSETS_IPC_CHANNELS.confirmSmoothSkinning, askUseSmoothSkinning);
 
   ipcMain.handle(ASSETS_IPC_CHANNELS.importMesh, async (_event, poses?: boolean): Promise<ImportMeshResult> => {
     const choice = await dialog.showOpenDialog({
@@ -104,6 +105,31 @@ async function pickRiggedModel(): Promise<PickRiggedModelResult> {
   } catch (error) {
     return { outcome: "error", fileName, errors: [`Couldn't read "${fileName}": ${error instanceof Error ? error.message : String(error)}`] };
   }
+}
+
+/**
+ * Asked once per rigged-model import, only when the file actually has a vertex weighted across more than one bone
+ * (the renderer decides this, since it's the one that parses the file -- see `pickRiggedModel`'s own doc comment on
+ * why): blend every bone a vertex is really weighted to (STORY.smooth-vertex-skinning.md), for smoother joints at a
+ * real CPU cost every frame they move, or keep the DS's own cheap default (rigid, one bone per vertex, which is
+ * what every joint in this project's own games and Mario Kart DS alike normally uses). Applies to every mesh in the
+ * model that has real multi-bone data, not one at a time -- a joint only looks smooth when *every* mesh touching it
+ * agrees, so this isn't offered as a per-mesh choice (the Inspector's own "Smooth skinning" checkbox is still there
+ * to turn it off again on a specific part afterward).
+ */
+async function askUseSmoothSkinning(): Promise<boolean> {
+  const result = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Rigid (default, free)", "Smooth skinning (blends joints, costs more CPU)"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Smooth skinning",
+    message: "This model has vertices weighted across more than one bone. Use smooth skinning for its joints?",
+    detail:
+      "Rigid skinning (the default) draws each vertex with just its strongest bone -- free, but a bent joint can visibly split apart. " +
+      "Smooth skinning blends every bone a vertex is really weighted to, like Mario Kart DS's own characters, but recomputes a matrix for every vertex, every frame it moves -- real, ongoing CPU cost. This applies to the whole model; you can still turn it off again on one part afterward in the Inspector."
+  });
+  return result.response === 1;
 }
 
 /** File names in the order a person means: walk2 before walk10. */

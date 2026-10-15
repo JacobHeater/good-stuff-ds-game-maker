@@ -25,12 +25,13 @@ describe("a mesh's opacity", () => {
     expect(byNode(translateScene3D(withAlpha(primitivesProject(), "Cube", 0.5)).scene, "Sphere").alpha).toBe(31);
   });
 
-  it("is emitted as the GsMesh struct's own trailing field in the generated C", () => {
+  it("is emitted as the GsMesh struct's own field in the generated C", () => {
     const { scene } = translateScene3D(withAlpha(primitivesProject(), "Cube", 0.5));
     const cubeIndex = scene!.meshes.findIndex((m) => scene!.nodes[m.node].name === "Cube");
     const c = writeSceneDataC(scene!);
     const rows = c.match(/static const GsMesh meshes\[\] = \{\n([\s\S]*?)\n\};/)![1].split("\n");
-    const alphaOf = (row: string): string => row.trim().replace(/[},]+$/, "").trim().split(",").at(-1)!.trim();
+    // alpha is third-from-last now (the two skin-joint-run fields follow it).
+    const alphaOf = (row: string): string => row.trim().replace(/[},]+$/, "").trim().split(",").at(-3)!.trim();
     expect(alphaOf(rows[cubeIndex])).toBe("16");
   });
 });

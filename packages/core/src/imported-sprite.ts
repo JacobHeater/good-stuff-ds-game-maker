@@ -141,7 +141,7 @@ export type SpriteImportResult =
   | { ok: false; errors: string[] };
 
 /** One color of the picture (5 bits per channel) and how many pixels have it. */
-interface ColorCount {
+export interface ColorCount {
   r: number;
   g: number;
   b: number;
@@ -150,9 +150,10 @@ interface ColorCount {
 
 /**
  * Median-cut: repeatedly splits the box of colors with the widest spread along one channel at its weighted median, until there
- * are `target` boxes, and returns each box's weighted average color. Deterministic for a given input.
+ * are `target` boxes, and returns each box's weighted average color. Deterministic for a given input. Exported for reuse by
+ * `nitro-formats/nsbtx.ts`, which quantizes to the DS GPU's 256-color texture palettes the same way.
  */
-function medianCut(colors: ColorCount[], target: number): { r: number; g: number; b: number }[] {
+export function medianCut(colors: ColorCount[], target: number): { r: number; g: number; b: number }[] {
   type Box = ColorCount[];
   const boxes: Box[] = [colors];
   const range = (box: Box): { channel: "r" | "g" | "b"; spread: number } => {

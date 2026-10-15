@@ -7,6 +7,7 @@
  */
 #include <nds.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "gs_api.h"
 #include "gs_runtime.h"
@@ -14,6 +15,26 @@
 
 /* Material colors shared by every mesh until the scene model has materials. */
 #define AMBIENT_COLOR RGB15(8, 8, 8)
+
+/* A smooth-skinned mesh instance blends up to this many distinct bones -- generous for any mesh that fits the DS's
+   own triangle budget. Extra joints past this are silently dropped (their weight is simply not applied); in
+   practice no real mesh group needs anywhere near this many. */
+#define GS_MAX_SKIN_JOINTS_PER_MESH 16
+
+/* `out = a * b`, both column-major 4x4 affine (20.12) matrices -- the one general 4x4 multiply this runtime needs
+   (compose_node's own node-to-node composition keeps rotation and scale apart on purpose; see its own comment in
+   gs_runtime.c). Both `a` and `b`'s own bottom row is assumed to be the implicit affine [0, 0, 0, 1]. */
+static void mat4_multiply(const int32_t *a, const int32_t *b, int32_t *out) {
+	for (int col = 0; col < 4; col++) {
+		for (int row = 0; row < 3; row++) {
+			int64_t sum = col == 3 ? (int64_t)a[12 + row] << 12 : 0; /* a's own translation, only for b's translation column (b's implicit w = 1 there) */
+			for (int k = 0; k < 3; k++) sum += (int64_t)a[k * 4 + row] * b[col * 4 + k];
+			out[col * 4 + row] = (int32_t)(sum >> 12);
+		}
+	}
+	out[3] = out[7] = out[11] = 0;
+	out[15] = GS_ONE;
+}
 
 /* The 3D backdrop. Not black, so screenshots can find the screen (tests read this value). */
 #define CLEAR_R 3
@@ -39,25 +60,60 @@ static void load_textures(void) {
 	}
 }
 
-static void draw_mesh(const GsMesh *mesh, int index, int lit) {
-	const GsPrimitive *primitive = &gs_scene.primitives[gs_mesh_primitive(index)];
+/* Draws a smooth-skinned mesh (MeshInstance3DData.smoothSkinning): a weighted blend of up to
+   GS_MAX_SKIN_JOINTS_PER_MESH bones' own current world transforms, computed fresh for each vertex
+   (nsbmd_docs.txt's own "Calculate Skinning Equation" -- the same technique real DS games with smooth joints use).
+   The GPU still only ever has one "current" matrix, so this loads a freshly-blended one before each vertex instead
+   of setting one matrix for the whole mesh -- real per-vertex CPU and GX FIFO cost, which is why it's opt-in rather
+   than the default (see draw_mesh's own rigid path). Each joint's own world scale is folded in and used for *both*
+   the position and the normal transform (unlike the rigid path's own position-only scale, which keeps a uniformly-
+   scaled mesh's lighting correct) -- an approximation that's exact whenever a bone's own scale is 1, which every
+   bone in a real character rig's skeleton normally is. */
+static void draw_skinned_mesh(const GsMesh *mesh, const GsPrimitive *primitive) {
+	int jointCount = mesh->skinJointCount;
+	if (jointCount > GS_MAX_SKIN_JOINTS_PER_MESH) jointCount = GS_MAX_SKIN_JOINTS_PER_MESH;
+	int32_t jointMatrix[GS_MAX_SKIN_JOINTS_PER_MESH][16];
+	for (int j = 0; j < jointCount; j++) {
+		int node = gs_scene.skinJoints[mesh->skinJointStart + j];
+		int32_t worldWithScale[16];
+		memcpy(worldWithScale, gs_world_matrix[node].m, sizeof(worldWithScale));
+		for (int col = 0; col < 3; col++) {
+			int32_t s = gs_world_scale[node][col];
+			for (int row = 0; row < 3; row++) worldWithScale[col * 4 + row] = gs_mulf(worldWithScale[col * 4 + row], s);
+		}
+		mat4_multiply(worldWithScale, gs_scene.skinInverseBindMatrices[mesh->skinJointStart + j].m, jointMatrix[j]);
+	}
+
 	const int16_t *p = primitive->positions;
 	const uint32_t *n = primitive->normals;
 	const int16_t *uv = mesh->texture ? primitive->texcoords : 0;
 	int vertexCount = primitive->triangleCount * 3;
 
+	glMatrixMode(GL_MODELVIEW);
+	glBegin(GL_TRIANGLES);
+	for (int i = 0; i < vertexCount; i++) {
+		int32_t blended[16] = { 0 };
+		for (int k = 0; k < 4; k++) {
+			int w = primitive->skinWeights[i * 4 + k];
+			if (w == 0) continue;
+			int j = primitive->skinJoints[i * 4 + k];
+			if (j >= jointCount) continue;
+			for (int e = 0; e < 16; e++) blended[e] += (jointMatrix[j][e] * w) / 255;
+		}
+		glLoadMatrix4x4((const m4x4 *)blended);
+		if (uv) glTexCoord2t16(uv[i * 2], uv[i * 2 + 1]);
+		glNormal(n[i]);
+		glVertex3v16(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+	}
+	glEnd();
+}
+
+static void draw_mesh(const GsMesh *mesh, int index, int lit) {
+	const GsPrimitive *primitive = &gs_scene.primitives[gs_mesh_primitive(index)];
+	const int16_t *uv = mesh->texture ? primitive->texcoords : 0;
+
 	/* Binding texture 0 turns texturing off for the polygons that follow. */
 	glBindTexture(0, uv ? textureNames[mesh->texture - 1] : 0);
-
-	glPushMatrix();
-	/* Rotation and translation go to the position matrix AND the vector (normal) matrix. Scale is applied to the
-	   position matrix alone: the geometry engine transforms a normal by the same matrix as a position and never
-	   renormalizes it, so scale left in the vector matrix would lengthen or shorten every normal and wreck the
-	   lighting (a mesh scaled 3x got no light at all). */
-	glMultMatrix4x4((const m4x4 *)&gs_world_matrix[mesh->node]);
-	glMatrixMode(GL_POSITION);
-	glScalef32(gs_world_scale[mesh->node][0], gs_world_scale[mesh->node][1], gs_world_scale[mesh->node][2]);
-	glMatrixMode(GL_MODELVIEW);
 
 	glMaterialf(GL_AMBIENT, AMBIENT_COLOR);
 	glMaterialf(GL_DIFFUSE, mesh->diffuse);
@@ -67,14 +123,30 @@ static void draw_mesh(const GsMesh *mesh, int index, int lit) {
 	   light drew pure black.) */
 	glMaterialf(GL_EMISSION, lit ? RGB15(0, 0, 0) : mesh->diffuse);
 
-	glBegin(GL_TRIANGLES);
-	for (int i = 0; i < vertexCount; i++) {
-		if (uv) glTexCoord2t16(uv[i * 2], uv[i * 2 + 1]);
-		glNormal(n[i]);
-		glVertex3v16(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
-	}
-	glEnd();
+	glPushMatrix();
+	if (mesh->skinJointCount > 0) {
+		draw_skinned_mesh(mesh, primitive);
+	} else {
+		const int16_t *p = primitive->positions;
+		const uint32_t *n = primitive->normals;
+		int vertexCount = primitive->triangleCount * 3;
+		/* Rotation and translation go to the position matrix AND the vector (normal) matrix. Scale is applied to the
+		   position matrix alone: the geometry engine transforms a normal by the same matrix as a position and never
+		   renormalizes it, so scale left in the vector matrix would lengthen or shorten every normal and wreck the
+		   lighting (a mesh scaled 3x got no light at all). */
+		glMultMatrix4x4((const m4x4 *)&gs_world_matrix[mesh->node]);
+		glMatrixMode(GL_POSITION);
+		glScalef32(gs_world_scale[mesh->node][0], gs_world_scale[mesh->node][1], gs_world_scale[mesh->node][2]);
+		glMatrixMode(GL_MODELVIEW);
 
+		glBegin(GL_TRIANGLES);
+		for (int i = 0; i < vertexCount; i++) {
+			if (uv) glTexCoord2t16(uv[i * 2], uv[i * 2 + 1]);
+			glNormal(n[i]);
+			glVertex3v16(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+		}
+		glEnd();
+	}
 	glPopMatrix(1);
 }
 

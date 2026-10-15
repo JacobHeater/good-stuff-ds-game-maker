@@ -7,8 +7,8 @@ export interface BuiltGltf {
   bin: Uint8Array;
 }
 
-/** A small arm made in the test: a "Hip" bone at the origin, an "Arm" bone one unit above it, a two-quad mesh (the lower quad hangs on the hip, the upper on the arm), and a clip that bends the arm 90 degrees about Z. */
-export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWeights?: boolean } = {}): BuiltGltf {
+/** A small arm made in the test: a "Hip" bone at the origin, an "Arm" bone one unit above it, a two-quad mesh (the lower quad hangs on the hip, the upper on the arm), and a clip that bends the arm 90 degrees about Z (or, with `positionAnimation`, slides it from y=1 to y=3 instead). With `splitWeight`, vertex 2 (the lower quad's top-right corner) is weighted half to Hip and half to Arm instead of fully to Hip, for testing real multi-bone blending. With `armatureScale`, "Hip" is wrapped under a new "Armature" node with that uniform scale (and nothing else) -- a real Mixamo export's own common shape, where a unit-conversion scale lives on a wrapper above every bone rather than on the bones themselves. */
+export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWeights?: boolean; positionAnimation?: boolean; splitWeight?: boolean; armatureScale?: number } = {}): BuiltGltf {
   const chunks: Uint8Array[] = [];
   const views: Array<Record<string, number>> = [];
   const push = (bytes: Uint8Array): number => {
@@ -24,6 +24,11 @@ export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWe
   const positions = [-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0, -0.5, 1, 0, 0.5, 1, 0, 0.5, 2, 0, -0.5, 2, 0];
   const joints = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
   const weights = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
+  if (extra.splitWeight) {
+    joints[9] = 1; // vertex 2: joints [0, 1, 0, 0]
+    weights[8] = 0.5;
+    weights[9] = 0.5; // vertex 2: weights [0.5, 0.5, 0, 0]
+  }
   const indices = new Uint8Array(new Uint16Array([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]).buffer);
   const ibm = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1];
   const accessors: Array<Record<string, unknown>> = [];
@@ -41,11 +46,17 @@ export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWe
     delete attributes.JOINTS_0;
     delete attributes.WEIGHTS_0;
   }
+  const nodes: Array<Record<string, unknown>> = [{ name: "Hip", children: [1] }, { name: "Arm", translation: [0, 1, 0] }, { name: "Body", mesh: 0, skin: 0 }];
+  const sceneRoots = [0, 2];
+  if (extra.armatureScale !== undefined) {
+    nodes.push({ name: "Armature", scale: [extra.armatureScale, extra.armatureScale, extra.armatureScale], children: [0] });
+    sceneRoots[0] = nodes.length - 1;
+  }
   const json: Record<string, unknown> = {
     asset: { version: "2.0" },
     scene: 0,
-    scenes: [{ nodes: [0, 2] }],
-    nodes: [{ name: "Hip", children: [1] }, { name: "Arm", translation: [0, 1, 0] }, { name: "Body", mesh: 0, skin: 0 }],
+    scenes: [{ nodes: sceneRoots }],
+    nodes,
     meshes: [{ primitives: [{ attributes, indices: indexAcc, material: 0 }] }],
     materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }],
     skins: [{ joints: [0, 1], inverseBindMatrices: ibmAcc }]
@@ -57,6 +68,11 @@ export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWe
     const values = extra.cubic ? [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, s, c, 0, 0, 0, 0] : [0, 0, 0, 1, 0, 0, s, c];
     const output = accessor(push(f32(values)), 5126, extra.cubic ? 6 : 2, "VEC4");
     json.animations = [{ name: "bend", samplers: [{ input: times, output, interpolation: extra.cubic ? "CUBICSPLINE" : "LINEAR" }], channels: [{ sampler: 0, target: { node: 1, path: "rotation" } }] }];
+  }
+  if (extra.positionAnimation) {
+    const times = accessor(push(f32([0, 1])), 5126, 2, "SCALAR");
+    const output = accessor(push(f32([0, 1, 0, 0, 3, 0])), 5126, 2, "VEC3");
+    json.animations = [{ name: "slide", samplers: [{ input: times, output, interpolation: "LINEAR" }], channels: [{ sampler: 0, target: { node: 1, path: "translation" } }] }];
   }
   json.accessors = accessors;
   json.bufferViews = views;

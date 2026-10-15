@@ -116,6 +116,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         unlit: { type: "boolean" },
         cull: { enum: ["none", "back", "front"] },
         alpha: { type: "number", minimum: 0, maximum: 1 },
+        smoothSkinning: { type: "boolean" },
         triangleCount: { type: "number", minimum: 0 }
       },
       oneOf: [{ required: ["primitive"] }, { required: ["importedMeshId"] }]
@@ -140,6 +141,19 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
             additionalProperties: false,
             required: ["positions", "normals"],
             properties: { positions: { type: "array", items: { type: "number" } }, normals: { type: "array", items: { type: "number" } } }
+          }
+        },
+        // The array lengths agreeing with each other (joints/weights sized to the vertex count, inverseBindMatrices
+        // to jointNodeIds) aren't expressible here either; JsonSchemaProjectSnapshotValidator checks them too.
+        skin: {
+          type: "object",
+          additionalProperties: false,
+          required: ["jointNodeIds", "inverseBindMatrices", "joints", "weights"],
+          properties: {
+            jointNodeIds: { type: "array", items: { type: "string", minLength: 1 } },
+            inverseBindMatrices: { type: "array", items: { type: "number" } },
+            joints: { type: "array", items: { type: "integer", minimum: 0 } },
+            weights: { type: "array", items: { type: "number", minimum: 0 } }
           }
         }
       }

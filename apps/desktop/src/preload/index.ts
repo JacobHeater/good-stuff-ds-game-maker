@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { GoodStuffWindowApi } from "@goodstuff/core";
 
-import { APP_IPC_CHANNELS, ASSETS_IPC_CHANNELS, PROJECT_IPC_CHANNELS, RECENTS_IPC_CHANNELS } from "../shared/project-ipc-channels";
+import { APP_IPC_CHANNELS, ASSETS_IPC_CHANNELS, CONVERTER_IPC_CHANNELS, PROJECT_IPC_CHANNELS, RECENTS_IPC_CHANNELS } from "../shared/project-ipc-channels";
 
 /**
  * Minimal, explicit API surface exposed to the renderer. Typed against
@@ -28,7 +28,17 @@ const api: GoodStuffWindowApi = {
     importTexture: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importTexture),
     importSprite: (frame?: { width: number; height: number }) => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.importSprite, frame),
     pickSound: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickSound),
-    pickRiggedModel: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickRiggedModel)
+    pickRiggedModel: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.pickRiggedModel),
+    confirmSmoothSkinning: () => ipcRenderer.invoke(ASSETS_IPC_CHANNELS.confirmSmoothSkinning)
+  },
+  converter: {
+    pngToNsbtx: () => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.pngToNsbtx),
+    objToNsbmd: () => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.objToNsbmd),
+    saveBinaryFile: (suggestedName, filterName, extensions, bytes) => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.saveBinaryFile, suggestedName, filterName, extensions, bytes),
+    nsbtxToPng: () => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.nsbtxToPng),
+    nsbmdToObj: () => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.nsbmdToObj),
+    nsbmdToGlb: () => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.nsbmdToGlb),
+    strmToWav: () => ipcRenderer.invoke(CONVERTER_IPC_CHANNELS.strmToWav)
   },
   recents: {
     list: () => ipcRenderer.invoke(RECENTS_IPC_CHANNELS.list),

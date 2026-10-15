@@ -75,6 +75,33 @@ describe("imported meshes in the project file", () => {
     expect(validator.validate(neither).valid).toBe(false);
   });
 
+  it("saves and reopens a skinned model's skin data identically", () => {
+    const project = projectWithModel();
+    const vertexCount = model.positions.length / 3;
+    const skinned: ImportedMesh = {
+      ...model,
+      skin: { jointNodeIds: ["bone-1", "bone-2"], inverseBindMatrices: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1], joints: new Array(vertexCount * 4).fill(0), weights: new Array(vertexCount * 4).fill(0).map((_, i) => (i % 4 === 0 ? 1 : 0)) }
+    };
+    project.meshes = [skinned];
+    const reopened = validator.assertValid(serializer.deserialize(serializer.serialize(project)));
+    expect(reopened.meshes).toEqual([skinned]);
+  });
+
+  it("rejects skin data whose joints/weights aren't sized to the vertex count", () => {
+    const project = projectWithModel();
+    project.meshes = [{ ...model, skin: { jointNodeIds: ["bone-1"], inverseBindMatrices: new Array(16).fill(0), joints: [0], weights: [1] } }];
+    const issues = issuesOf(roundTrip(project)).join(" ");
+    expect(issues).toMatch(/joints must have four entries for every vertex/);
+    expect(issues).toMatch(/weights must have four entries for every vertex/);
+  });
+
+  it("rejects skin data whose joints refer to a bone jointNodeIds doesn't have", () => {
+    const project = projectWithModel();
+    const vertexCount = model.positions.length / 3;
+    project.meshes = [{ ...model, skin: { jointNodeIds: ["bone-1"], inverseBindMatrices: new Array(16).fill(0), joints: new Array(vertexCount * 4).fill(5), weights: new Array(vertexCount * 4).fill(0) } }];
+    expect(issuesOf(roundTrip(project)).join(" ")).toMatch(/refers to a bone jointNodeIds doesn't have/);
+  });
+
   it("drops an unused model on save", () => {
     const project = projectWithModel();
     const emptyScene = createSceneNode({ name: "Main", kind: "Node3D" });
