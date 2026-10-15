@@ -38,6 +38,18 @@ function project(smoothSkinning: boolean): ProjectSnapshot {
   return { ...base, meshes: r.model.meshes, scene: { ...base.scene, children: [...base.scene.children.filter((n) => n.kind !== "MeshInstance3D"), r.model.root] } };
 }
 
+/** Both of the arm's meshes toggled smooth at once, not just Hip_mesh. */
+function bothSmoothProject(): ProjectSnapshot {
+  const built = buildArm({ animation: true, splitWeight: true });
+  const r = importGltf({ json: built.json, buffers: [built.bin] }, "Robot");
+  if (!r.ok) throw new Error(r.errors.join(" "));
+  const player = flattenSceneTree(r.model.root).find((n) => n.kind === "AnimationPlayer")!;
+  player.animation!.autoplay = player.animation!.animations![0].id;
+  for (const node of flattenSceneTree(r.model.root)) if (node.kind === "MeshInstance3D" && node.mesh?.importedMeshId) node.mesh.smoothSkinning = true;
+  const base = primitivesProject();
+  return { ...base, meshes: r.model.meshes, scene: { ...base.scene, children: [...base.scene.children.filter((n) => n.kind !== "MeshInstance3D"), r.model.root] } };
+}
+
 /** The model's pixels of the top screen in the left third, the middle third and the right third (same split as rigged-models.rom.test.ts). */
 function thirds(screen: Uint8Array): [number, number, number] {
   const [br, bg, bb] = BACKDROP_2D_PROJECT.top.map(shown);
@@ -76,4 +88,14 @@ describe.skipIf(!toolchain.found || !haveMelon)("smooth skinning in a real ROM",
     // arm's bend partway, changing the mesh's own shape (and so its pixel footprint) from the purely rigid version.
     expect(smooth.join("/")).not.toBe(rigid.join("/"));
   }, 240_000);
+
+  it("still draws the model when every one of its meshes is smooth-skinned at once, not just one", async () => {
+    // Regression: draw_skinned_mesh's own glLoadMatrix4x4 calls replace MODELVIEW outright, per vertex, instead of
+    // building on whatever glPushMatrix saved -- so the camera's own view transform never reached the GPU for a
+    // smooth-skinned mesh unless main.c folded it back in by hand. A single mesh near its bind pose can still land
+    // in frame by coincidence (the arm case above did, which is why it went unnoticed); a whole rigged model with
+    // every mesh smooth-skinned reliably did not, rendering nothing at all. See main.c's draw_skinned_mesh comment.
+    const both = await run(bothSmoothProject(), "both-smooth");
+    expect(both[1]).toBeGreaterThan(0);
+  }, 120_000);
 });

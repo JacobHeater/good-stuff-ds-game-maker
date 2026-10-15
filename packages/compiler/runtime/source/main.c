@@ -46,6 +46,11 @@ static void mat4_multiply(const int32_t *a, const int32_t *b, int32_t *out) {
 /* The texture names glGenTextures gave each of gs_scene.textures, in order. */
 static int *textureNames;
 
+/* The camera's view this frame (load_view, below), kept around rather than just loaded straight to the GPU:
+   draw_skinned_mesh's own glLoadMatrix4x4 calls -- one per vertex, replacing MODELVIEW outright instead of building
+   on whatever glPushMatrix saved -- need it folded back in by hand; see that function's own comment. */
+static GsMatrix gs_current_view;
+
 /* Uploads every texture to texture memory once, at startup. */
 static void load_textures(void) {
 	if (gs_scene.textureCount == 0) return;
@@ -68,7 +73,17 @@ static void load_textures(void) {
    than the default (see draw_mesh's own rigid path). Each joint's own world scale is folded in and used for *both*
    the position and the normal transform (unlike the rigid path's own position-only scale, which keeps a uniformly-
    scaled mesh's lighting correct) -- an approximation that's exact whenever a bone's own scale is 1, which every
-   bone in a real character rig's skeleton normally is. */
+   bone in a real character rig's skeleton normally is.
+
+   Every glLoadMatrix4x4 below *replaces* MODELVIEW rather than building on it, so draw_mesh's own glPushMatrix (which
+   saved the camera's view) never actually reaches the GPU for this mesh unless it's folded back in here by hand --
+   each joint's blend term gets the view matrix premultiplied in once, up front (view * (world * invBind), the same
+   for every vertex that bone influences), instead of once per vertex: matrix multiplication distributes over the
+   weighted sum, so premultiplying each joint and then blending gives an identical result to blending first and
+   multiplying by view after, for no extra per-vertex cost. Without this, a mesh at or near its bind pose blends to
+   very close to the identity matrix, which would put its vertices in raw local space instead of view space --
+   invisible (off-frustum) unless the camera's own view happens to be close enough to identity that neither is
+   distinguishable from the other, which is exactly what masked this for a single mesh in earlier testing. */
 static void draw_skinned_mesh(const GsMesh *mesh, const GsPrimitive *primitive) {
 	int jointCount = mesh->skinJointCount;
 	if (jointCount > GS_MAX_SKIN_JOINTS_PER_MESH) jointCount = GS_MAX_SKIN_JOINTS_PER_MESH;
@@ -81,7 +96,9 @@ static void draw_skinned_mesh(const GsMesh *mesh, const GsPrimitive *primitive) 
 			int32_t s = gs_world_scale[node][col];
 			for (int row = 0; row < 3; row++) worldWithScale[col * 4 + row] = gs_mulf(worldWithScale[col * 4 + row], s);
 		}
-		mat4_multiply(worldWithScale, gs_scene.skinInverseBindMatrices[mesh->skinJointStart + j].m, jointMatrix[j]);
+		int32_t boneWithBind[16];
+		mat4_multiply(worldWithScale, gs_scene.skinInverseBindMatrices[mesh->skinJointStart + j].m, boneWithBind);
+		mat4_multiply(gs_current_view.m, boneWithBind, jointMatrix[j]);
 	}
 
 	const int16_t *p = primitive->positions;
@@ -152,9 +169,8 @@ static void draw_mesh(const GsMesh *mesh, int index, int lit) {
 
 /* The camera's view, as the scene starts or as a script has moved it. */
 static void load_view(void) {
-	GsMatrix view;
-	gs_compute_view(&view);
-	glLoadMatrix4x4((const m4x4 *)&view);
+	gs_compute_view(&gs_current_view);
+	glLoadMatrix4x4((const m4x4 *)&gs_current_view);
 }
 
 /* The scripts of the scene being shown. */

@@ -193,8 +193,29 @@ correction: "it should ask if you want skin on import, it is not a toggle actual
      with a new `smooth-vertex-skinning.test.ts` assertion that every component is a plain integer and the identity
      rotation axis comes out to exactly 4096 (not 1); confirmed to fail (reading `1` instead of `4096`) with the fix
      disabled. **Not the explanation for everything**: a real file's own "all three segments of one leg smooth-skinned
-     together vanish entirely" failure (see "Not built" below) reproduces identically with this bug both present and
-     fixed, so it is a separate, still-open issue, not a second symptom of this one.
+     together vanish entirely" failure (bug 7 below) reproduced identically with this bug both present and fixed, so
+     it was a separate issue, not a second symptom of this one.
+  7. **`draw_skinned_mesh` never actually applied the camera's view transform.** `draw_mesh` wraps every mesh's draw
+     call in `glPushMatrix()`/`glPopMatrix(1)`, saving the camera's current view so the rigid path can safely build on
+     it with `glMultMatrix4x4`. The smooth path never did: `glLoadMatrix4x4` *replaces* the current matrix outright
+     (standard GL semantics, same as the DS's own hardware), so every one of its per-vertex blended-matrix loads threw
+     away the pushed view and substituted a pure `world * inverseBind` matrix instead -- putting that mesh's vertices
+     in raw local/world space, not view space. At or near a bone's bind pose that blend comes out close to the
+     identity matrix, so a single smooth-skinned mesh near the origin could still land somewhere on screen by sheer
+     coincidence (exactly what masked this in the ROM test above, and in all of this story's own earlier manual
+     testing). It stopped being coincidental, and the geometry simply vanished, as soon as more than one smooth-skinned
+     mesh was in the same scene with a less forgiving camera angle -- which is what finally made this reproducible on
+     demand with nothing more exotic than `buildArm`'s own two-bone test fixture, both meshes toggled at once, no real
+     file or large rig required. Every line of "ruled out" work this bug's investigation did (compiled scene data,
+     blend arithmetic replicated bit-for-bit in JS, GXSTAT/DISP3DCNT polled directly, both melonDS renderer backends,
+     both optimization levels) was correctly ruled out -- the bug was never in any of those, just in `main.c` loading
+     the wrong matrix. Fixed in `draw_skinned_mesh` by premultiplying each joint's own blend term by the camera's view
+     matrix (`gs_current_view`, now kept around by `load_view` instead of being loaded and discarded) before the
+     per-vertex weighted sum: matrix multiplication distributes over that sum, so `view * (Σ w·joint)` equals
+     `Σ w·(view * joint)`, meaning the view only needs multiplying in once per joint, not once per vertex -- no extra
+     per-vertex cost. Verified with a new `smooth-vertex-skinning.rom.test.ts` case that toggles every mesh of the
+     fixture's rigged model at once (not just one) and asserts the model still draws something; confirmed this fails
+     (nothing but backdrop) with the fix reverted and passes restored.
 - **Unit tests**: `gltf-import.test.ts` (a vertex split 50/50 between two bones round-trips its joints/weights/
   inverse-bind-matrices exactly, verified by reconstructing the vertex's real rest-pose world position from the
   stored data by hand, per the documented blend formula -- not just checking the data's shape; a further case inflates
@@ -224,21 +245,3 @@ correction: "it should ask if you want skin on import, it is not a toggle actual
   per-vertex blending (the DS's own per-vertex-matrix-load approach is already the closest practical thing to it);
   a CPU-cost budget or warning for how many smooth-skinned meshes/vertices a scene has (`hardware.ts`/`budget.ts`
   have no CPU-time concept at all today, only triangle/memory counts).
-- **A real, open bug, found on a real file, not yet root-caused**: toggling smooth skinning on *all three* meshes of
-  one full limb chain at once (a leg's upper segment, lower segment, and foot/toe together -- a real, ordinary rig
-  shape, not a contrived one) makes that limb, and everything drawn after it that frame, vanish from a real
-  ROM+melonDS capture -- not mispositioned, not torn, just never rasterized (confirmed by forcing the mesh's own
-  color to solid red: no red pixels appear anywhere). Any *one* of the three alone, and any *pair* of the three, both
-  render correctly; it takes the full three together, and it reproduces identically on both of melonDS's rendering
-  backends (software and OpenGL) and with compiler optimization on or off, which argues against an emulator-backend
-  quirk or a miscompile. Ruled out by direct measurement, not guesswork: the compiled scene data itself (bone
-  indices, per-mesh joint ranges, quantized weights); the blend arithmetic, replicated in JS with the exact same
-  32-bit integer semantics the C runtime uses (no overflow, no NaN-equivalent, every intermediate value sane); the
-  two DS hardware error conditions GBATEK documents for this exact technique (GXSTAT.15 matrix stack overflow,
-  DISP3DCNT.13 vertex/polygon RAM overflow -- polled directly after the frame, neither ever sets); and the bug 6
-  fixed-point conversion above (reproduces identically whether that bug is present or already fixed, so it is not
-  a second symptom of it). Reproduced in isolation with a minimal, hand-built 3-bone test fixture too, independent of
-  the real file's own data -- though that minimal case diverges from the real file in exactly which combinations
-  trigger it, suggesting weight *distribution* (how evenly split a vertex's blend is), not just topology, is part of
-  the real trigger. Needs either a GX command-level trace or real hardware to take further; until then, smooth
-  skinning on every segment of one limb at once is the one combination known not to work.
