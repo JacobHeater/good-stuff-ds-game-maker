@@ -26,6 +26,7 @@ function open(mode: "2D" | "3D" = "2D"): { state: EditorState; by: Record<string
 const click = (id: string): Action => ({ type: "SELECT_NODE", id });
 const ctrl = (id: string): Action => ({ type: "SELECT_NODE_MODIFIED", id, mode: "toggle" });
 const shift = (id: string): Action => ({ type: "SELECT_NODE_MODIFIED", id, mode: "range" });
+const box = (ids: string[]): Action => ({ type: "SELECT_NODES", ids });
 const names = (s: EditorState, ids: string[] = selectedNodeIdsOf(s)): string[] => ids.map((id) => findSceneNode(s.sceneRoot, id)!.name).sort();
 const shape = (node: SceneNode): string => (node.children.length === 0 ? node.name : `${node.name}(${node.children.map(shape).join(" ")})`);
 const undo: Action = { type: "UNDO" };
@@ -77,6 +78,49 @@ describe("selecting several nodes", () => {
     const { state, by } = open();
     const s = run(state, click(by.A.id), ctrl(by.B.id), ctrl(by.C.id), { type: "DELETE_NODE", id: by.A.id });
     expect(names(s)).toEqual(["B", "C"]);
+  });
+});
+
+describe("box-selecting several nodes (a viewport's own drag-rectangle hit test)", () => {
+  it("selects every id given, the first as the one the Inspector shows", () => {
+    const { state, by } = open();
+    const s = run(state, box([by.B.id, by.A.id, by.D.id]));
+    expect(names(s)).toEqual(["A", "B", "D"]);
+    expect(s.selectedNodeId).toBe(by.B.id);
+    expect(s.extraSelectedIds).toEqual([by.A.id, by.D.id]);
+  });
+
+  it("an empty box selects the scene root, same as clicking empty space", () => {
+    const { state, by } = open();
+    const some = run(state, click(by.A.id), ctrl(by.C.id));
+    const s = run(some, box([]));
+    expect(s.selectedNodeId).toBe(by.Main.id);
+    expect(s.extraSelectedIds).toEqual([]);
+  });
+
+  it("replaces whatever was already selected, not added to it", () => {
+    const { state, by } = open();
+    const some = run(state, click(by.A.id), ctrl(by.C.id));
+    const s = run(some, box([by.B.id, by.D.id]));
+    expect(names(s)).toEqual(["B", "D"]);
+  });
+
+  it("a single-id box behaves exactly like a plain click on that node", () => {
+    const { state, by } = open();
+    expect(run(state, box([by.C.id]))).toEqual(run(state, click(by.C.id)));
+  });
+
+  it("survives the post-action selection-normalization pass that strips extras after most actions", () => {
+    const { state, by } = open();
+    const s = run(state, box([by.A1.id, by.B.id, by.C1.id]));
+    expect(names(s)).toEqual(["A1", "B", "C1"]);
+  });
+
+  it("drops a boxed id that no longer exists (deleted by the time a deferred selectNodes call lands), keeping the rest", () => {
+    const { state, by } = open();
+    const afterDelete = run(state, { type: "DELETE_NODE", id: by.A1.id });
+    const s = run(afterDelete, box([by.A1.id, by.B.id]));
+    expect(names(s)).toEqual(["B"]);
   });
 });
 

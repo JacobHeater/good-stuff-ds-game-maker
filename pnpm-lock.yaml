@@ -180,6 +180,9 @@ importers:
       three:
         specifier: ^0.169.0
         version: 0.169.0
+      three-stdlib:
+        specifier: ^2.36.1
+        version: 2.36.1(three@0.169.0)
     devDependencies:
       '@types/react':
         specifier: ^18.3.12

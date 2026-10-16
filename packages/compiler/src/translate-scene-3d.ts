@@ -172,6 +172,121 @@ export function limitToTwoStrongestInfluences(geometry: PrimitiveGeometry): Prim
   return { ...geometry, skinJoints: newJoints, skinWeights: newWeights };
 }
 
+/**
+ * How many distinct (joint A, joint B) blend pairs one mesh's smooth skinning is allowed to actually use, by
+ * default -- see `limitBlendGroups`'s own comment for why this is the lever that matters most once a rig is
+ * bone-dense relative to its own triangle count (many joints packed into a low-poly mesh, e.g. a stock
+ * Mixamo/Blender-auto-weighted humanoid: 20 bones is common even for a few hundred triangles). Generous rather
+ * than aggressive -- the DS's own 20.12/byte-weight precision and this story's earlier levers (2-bone limit,
+ * 16-level weight quantization) already do most of the work for a normally-jointed mesh; this exists as the
+ * backstop for the genuinely bone-dense case, not as a quality cut every mesh is expected to hit.
+ */
+const DEFAULT_MAX_BLEND_GROUPS = 12;
+
+/**
+ * Real-time skinning that hits 60fps on fixed-function hardware -- MKDS's own included -- is authored with a
+ * handful of hand-picked blend joints per mesh piece, not one for every bone a rig happens to define. A 20-bone
+ * character squeezed into a few hundred triangles is far more bone-dense than any real DS game's own art pipeline
+ * produced, and every distinct (joint A, joint B) pair a mesh's vertices reference is its own blend group:
+ * `quantizeWeightLevels` (above) helps vertices *within* one such pair collapse onto an identical signature, but
+ * does nothing about how many different pairs there are, and that count -- not weight precision -- is what drives
+ * how many matrix loads a frame actually pays for, because a fresh load happens once per group a mesh's vertex
+ * stream transitions through, not once per vertex. That load is a fixed DS geometry-engine hardware cost (GBATEK:
+ * `MTX_LOAD_4x3` is 30 cycles at the engine's own 33.51MHz -- 60 ARM9-equivalent cycles, since the engine runs at
+ * half the ARM9's clock) no amount of CPU-side cleverness shrinks; the only way to pay it less is to need it less
+ * often.
+ *
+ * Keeps only the `maxGroups` most commonly used pairs -- the ones covering the most vertices, almost certainly a
+ * mesh's real, visually significant joints (an elbow, a knee) -- and collapses every vertex using a less-common
+ * pair down to single-bone rigid (its own strongest influence, full weight), the same shape
+ * `limitToTwoStrongestInfluences` already produces for a vertex with weak 3rd/4th influences, just decided
+ * mesh-wide by how many vertices actually use a pair instead of per-vertex by weight magnitude. A vertex near a
+ * joint nothing else on the mesh blends across was already a visually minor case -- losing its own soft blend
+ * there costs far less than every mesh paying for however many joints its source rig happens to define.
+ */
+export function limitBlendGroups(geometry: PrimitiveGeometry, maxGroups: number = DEFAULT_MAX_BLEND_GROUPS): PrimitiveGeometry {
+  const { skinJoints, skinWeights } = geometry;
+  if (!skinJoints || !skinWeights) return geometry;
+  const vertexCount = skinJoints.length / 4;
+  // A vertex's blend-pair key, order-independent (joint 5+7 and 7+5 are the same group) -- "" for a vertex that's
+  // already single-bone (or has no real influence at all), which costs nothing to keep regardless.
+  const pairKey = (i: number): string => {
+    const nonzero: number[] = [];
+    for (let k = 0; k < 4; k++) if (skinWeights[i + k] > 0) nonzero.push(skinJoints[i + k]);
+    if (nonzero.length < 2) return "";
+    const [a, b] = nonzero;
+    return a < b ? `${a}:${b}` : `${b}:${a}`;
+  };
+  const counts = new Map<string, number>();
+  for (let v = 0; v < vertexCount; v++) {
+    const key = pairKey(v * 4);
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (counts.size <= maxGroups) return geometry; // already within budget, nothing to collapse
+  const kept = new Set([...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxGroups).map(([key]) => key));
+  const newJoints = skinJoints.slice();
+  const newWeights = skinWeights.slice();
+  for (let v = 0; v < vertexCount; v++) {
+    const i = v * 4;
+    const key = pairKey(i);
+    if (!key || kept.has(key)) continue;
+    let bestK = 0;
+    for (let k = 1; k < 4; k++) if (skinWeights[i + k] > skinWeights[i + bestK]) bestK = k;
+    for (let k = 0; k < 4; k++) {
+      if (k === bestK) newWeights[i + k] = 1;
+      else {
+        newWeights[i + k] = 0;
+        newJoints[i + k] = 0;
+      }
+    }
+  }
+  return { ...geometry, skinJoints: newJoints, skinWeights: newWeights };
+}
+
+/**
+ * How many distinct weight splits a blended vertex can have, after `limitToTwoStrongestInfluences` -- not the byte
+ * (0..255) precision each weight is eventually quantized to for the GPU (that's about how exactly any one vertex's
+ * blend is represented); this is about how many vertices end up with the *exact same* blend as each other. 16 is
+ * already finer than a 20.12-fixed-point DS can usefully resolve a visual difference at.
+ */
+const WEIGHT_LEVELS = 16;
+
+/**
+ * Snaps each vertex's (already-limited-to-2) weight split onto one of `WEIGHT_LEVELS` fixed steps, instead of
+ * leaving it at whatever continuous value the source file gave it. A real, continuously-painted rig (Mixamo,
+ * Blender's auto weights) rarely repeats an identical weight split between two vertices even when they're a hair's
+ * width apart on the mesh -- 0.601 and 0.599, say -- so at the byte precision this data is eventually quantized to
+ * (`Math.round(w * 255)`, in `indexOfPrimitive` below), those come out as 153 and 152: two different signatures,
+ * not one. `draw_skinned_mesh`'s own per-vertex dedup (main.c) and `reorderSkinnedTrianglesByBlendSignature`'s own
+ * clustering (below) both key off exact signature equality, so neither can tell "close enough" from "different" --
+ * every vertex like this pair costs a full recompute and a fresh matrix load it didn't actually need to. Rounding
+ * to a small, fixed set of levels first turns "close" into "identical" for far more vertex pairs, directly
+ * multiplying how much of a real mesh those two mechanisms can actually collapse together. This is the same
+ * quality-for-speed trade real-time skinning has always made, just at the weight-value level instead of the
+ * bone-count level `limitToTwoStrongestInfluences` already makes it at -- a step this coarse is still finer than
+ * this engine's own 20.12 fixed point reliably shows on screen.
+ */
+export function quantizeWeightLevels(geometry: PrimitiveGeometry): PrimitiveGeometry {
+  const { skinJoints, skinWeights } = geometry;
+  if (!skinJoints || !skinWeights) return geometry;
+  const newWeights = skinWeights.slice();
+  for (let i = 0; i < skinWeights.length; i += 4) {
+    let sum = 0;
+    const levels = [0, 0, 0, 0];
+    for (let k = 0; k < 4; k++) {
+      const w = skinWeights[i + k];
+      if (w <= 0) continue;
+      // At least 1 level, so a real (if weak) influence never rounds away to nothing and silently vanishes.
+      const level = Math.max(1, Math.round(w * (WEIGHT_LEVELS - 1)));
+      levels[k] = level;
+      sum += level;
+    }
+    if (sum === 0) continue; // every slot already 0 -- not a real skinned vertex
+    for (let k = 0; k < 4; k++) if (levels[k] > 0) newWeights[i + k] = levels[k] / sum;
+  }
+  return { ...geometry, skinWeights: newWeights };
+}
+
 export function reorderSkinnedTrianglesByBlendSignature(geometry: PrimitiveGeometry): PrimitiveGeometry {
   const { skinJoints, skinWeights } = geometry;
   if (!skinJoints || !skinWeights) return geometry;
@@ -646,7 +761,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     const existing = primitiveIndex.get(key);
     if (existing !== undefined) return existing;
     const geometry = reorderSkinnedTrianglesByBlendSignature(
-      limitToTwoStrongestInfluences((frame > 0 ? resolveMeshFrameGeometry(mesh, project.meshes, frame) : resolveMeshGeometry(mesh, project.meshes))!)
+      quantizeWeightLevels(limitBlendGroups(limitToTwoStrongestInfluences((frame > 0 ? resolveMeshFrameGeometry(mesh, project.meshes, frame) : resolveMeshGeometry(mesh, project.meshes))!)))
     );
     const normals: number[] = [];
     for (let i = 0; i < geometry.normals.length; i += 3) {

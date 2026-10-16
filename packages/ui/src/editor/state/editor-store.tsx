@@ -217,6 +217,10 @@ export interface EditorState {
   screenFilter: ScreenFilter;
   fpsTarget: FpsTarget;
   activeTool: EditorTool;
+  /** Whether a viewport drag currently draws a box-select rectangle instead of its own ordinary behavior (orbit in
+   * the 3D viewport, nothing in the 2D one) -- toggled by the B key, independent of `activeTool` so a drag can
+   * still orbit the 3D camera when this is off even while the Select tool is active. */
+  boxSelectActive: boolean;
   /** Undo/redo steps for scene edits. Reset whenever a project is opened, created or closed. */
   history: EditHistory;
   outputLog: string[];
@@ -356,6 +360,8 @@ export type Action =
   | { type: "SELECT_NODE"; id: string }
   /** Ctrl+click (toggle the node in the selection) or Shift+click (select the range from the anchor to the node). */
   | { type: "SELECT_NODE_MODIFIED"; id: string; mode: "toggle" | "range" }
+  /** A box-select drag's result (a viewport's own drag-rectangle hit test): replaces the whole selection with `ids`, first as the primary. Empty selects the scene root, same as clicking empty space. */
+  | { type: "SELECT_NODES"; ids: string[] }
   /** Deletes the nodes (the whole selection when `ids` is left out); what is under a node goes with it. */
   | { type: "DELETE_NODES"; ids?: string[] }
   /** Duplicates the nodes (the whole selection when `ids` is left out) and selects the copies. */
@@ -373,6 +379,7 @@ export type Action =
   | { type: "SET_TWO_D_SCREEN"; screen: ScreenId }
   | { type: "SET_FPS_TARGET"; fps: FpsTarget }
   | { type: "SET_TOOL"; tool: EditorTool }
+  | { type: "TOGGLE_BOX_SELECT" }
   | { type: "MOVE_NODE"; id: string; x: number; y: number; at: number }
   | { type: "SET_TRANSFORM_3D"; id: string; field: Transform3DField; value: Vector3; at: number }
   | { type: "UNDO" }
@@ -461,6 +468,7 @@ export function createInitialState(): EditorState {
     screenFilter: "both",
     fpsTarget: DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget,
     activeTool: "select",
+    boxSelectActive: false,
     history: EMPTY_HISTORY,
     outputLog: ["Good Stuff DS Game Maker ready."],
     project: null,
@@ -530,6 +538,16 @@ function applyAction(state: EditorState, action: Action): EditorState {
       }
       const chosen = applyAction(state, { type: "SELECT_NODE", id: primary }); // the primary's own side effects (an AnimationPlayer opens its panel)
       return { ...chosen, extraSelectedIds: others, selectionAnchorId: anchor };
+    }
+    case "SELECT_NODES": {
+      // A box-select drag resolves its hits and dispatches this a tick later (see BoxSelectController), so a
+      // boxed id could in principle no longer exist by the time this runs; dropped here rather than trusted blindly
+      // (SELECT_NODE itself doesn't check -- a single click's own id always comes from what's on screen right now).
+      const live = action.ids.filter((id) => findSceneNode(state.sceneRoot, id) !== undefined);
+      if (live.length === 0) return applyAction(state, { type: "SELECT_NODE", id: state.sceneRoot.id }); // an empty (or now-empty) box, same as clicking empty space
+      const [primary, ...others] = live;
+      const chosen = applyAction(state, { type: "SELECT_NODE", id: primary }); // the primary's own side effects (an AnimationPlayer opens its panel)
+      return { ...chosen, extraSelectedIds: others, selectionAnchorId: primary };
     }
     case "SELECT_NODE": {
       if (action.id === state.selectedNodeId && state.extraSelectedIds.length === 0) return { ...state, selectionAnchorId: action.id };
@@ -695,6 +713,8 @@ function applyAction(state: EditorState, action: Action): EditorState {
       return { ...state, fpsTarget: action.fps };
     case "SET_TOOL":
       return state.activeTool === action.tool ? state : { ...state, activeTool: action.tool };
+    case "TOGGLE_BOX_SELECT":
+      return { ...state, boxSelectActive: !state.boxSelectActive };
     case "MOVE_NODE": {
       const target = findSceneNode(state.sceneRoot, action.id);
       // Setting a position to what it already is is not an edit: no undo step, no "unsaved changes".
@@ -1564,6 +1584,8 @@ function applyAction(state: EditorState, action: Action): EditorState {
 interface EditorStoreValue {
   state: EditorState;
   selectNode: (id: string) => void;
+  /** A box-select drag's result: replaces the whole selection with these nodes (first as primary). Empty selects the scene root. */
+  selectNodes: (ids: string[]) => void;
   setWorkspace: (workspace: WorkspaceId) => void;
   setBottomTab: (tab: BottomTabId) => void;
   setScreenFilter: (filter: ScreenFilter) => void;
@@ -1571,6 +1593,7 @@ interface EditorStoreValue {
   setTwoDScreen: (screen: ScreenId) => void;
   setFpsTarget: (fps: FpsTarget) => void;
   setActiveTool: (tool: EditorTool) => void;
+  toggleBoxSelect: () => void;
   /** Animations (requirements/animation/TASK.animation-timeline-editor.md). `playerId` is an AnimationPlayer's node id; times are seconds. */
   animations: {
     create: (playerId: string) => string;
@@ -2086,7 +2109,8 @@ export function selectedNodeIdsOf(state: Pick<EditorState, "selectedNodeId" | "e
  * Ctrl or Shift (or a duplicate, which selects its copies), and never include a node that is gone, or the primary itself.
  */
 function normalizeSelection(before: EditorState, after: EditorState, action: Action): EditorState {
-  const keepsMany = action.type === "SELECT_NODE_MODIFIED" || action.type === "DUPLICATE_NODES" || action.type === "TOGGLE_COLLAPSED" || action.type === "COLLAPSE_ALL";
+  const keepsMany =
+    action.type === "SELECT_NODE_MODIFIED" || action.type === "SELECT_NODES" || action.type === "DUPLICATE_NODES" || action.type === "TOGGLE_COLLAPSED" || action.type === "COLLAPSE_ALL";
   const primaryChanged = after.selectedNodeId !== before.selectedNodeId;
   const existing = new Set(flattenSceneTree(after.sceneRoot).map((node) => node.id));
   const extras = primaryChanged && !keepsMany ? [] : after.extraSelectedIds.filter((id) => id !== after.selectedNodeId && existing.has(id));
@@ -2151,6 +2175,8 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
 
   // A node inside an instance is selected as the instance (its id is `<instance id>/<node id>`).
   const selectNode = useCallback((id: string) => dispatch({ type: "SELECT_NODE", id: outerNodeId(id) }), []);
+  // A box-select's own raw hits: map each through the same instance-id resolution as a single click, then drop duplicates (a box can sweep over more than one node of the same instance).
+  const selectNodes = useCallback((ids: string[]) => dispatch({ type: "SELECT_NODES", ids: [...new Set(ids.map(outerNodeId))] }), []);
   const setWorkspace = useCallback((workspace: WorkspaceId) => dispatch({ type: "SET_WORKSPACE", workspace }), []);
   const setBottomTab = useCallback((tab: BottomTabId) => dispatch({ type: "SET_BOTTOM_TAB", tab }), []);
   const setScreenFilter = useCallback((filter: ScreenFilter) => dispatch({ type: "SET_SCREEN_FILTER", filter }), []);
@@ -2162,6 +2188,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   );
   const setCameraCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_CAMERA_CURRENT", id, current }), []);
   const setActiveTool = useCallback((tool: EditorTool) => dispatch({ type: "SET_TOOL", tool }), []);
+  const toggleBoxSelect = useCallback(() => dispatch({ type: "TOGGLE_BOX_SELECT" }), []);
   const moveNode = useCallback((id: string, x: number, y: number) => dispatch({ type: "MOVE_NODE", id, x, y, at: Date.now() }), []);
   const undo = useCallback(() => dispatch({ type: "UNDO" }), []);
   const redo = useCallback(() => dispatch({ type: "REDO" }), []);
@@ -2417,16 +2444,25 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     if (picked.outcome !== "ok" || !picked.bytes) return fail(picked.errors);
     const read = readGltfFile(picked.bytes, picked.files);
     if (!read.ok) return fail([read.error]);
-    const result = importGltf(read.input, (picked.fileName ?? "Model").replace(/\.[^.]+$/, ""));
+    const name = (picked.fileName ?? "Model").replace(/\.[^.]+$/, "");
+    const result = importGltf(read.input, name);
     if (!result.ok) return fail(result.errors);
     // A joint only looks smooth when every mesh touching it agrees, so this is one decision for the whole model
     // (STORY.smooth-vertex-skinning.md), asked once here, not a per-mesh Inspector toggle you'd have to remember to
     // set consistently on every part around a joint.
     const skinnable = meshesNeedingSmoothSkinningPrompt(result.model);
+    let finalResult = result;
     if (skinnable.length > 0 && (await window.goodstuff.assets.confirmSmoothSkinning())) {
-      for (const node of skinnable) node.mesh = { ...node.mesh!, smoothSkinning: true };
+      // Re-imports rather than flipping `smoothSkinning` on the pieces `result` already built: a model going
+      // smooth-skinned doesn't need (and shouldn't pay for) the per-bone split (gltf-import.ts's own
+      // `unifiedSkinning` option doc comment) -- and un-splitting pieces that already exist isn't a safe mechanical
+      // merge (their positions and inverse bind matrices are each already rebased into a different bone's own
+      // space), so the clean way to get the unified shape is to build it fresh from the file instead. A second
+      // parse is a one-time, import-time cost on a small character file.
+      const unified = importGltf(read.input, name, { unifiedSkinning: true });
+      if (unified.ok) finalResult = unified;
     }
-    dispatch({ type: "IMPORT_RIGGED_MODEL", model: result.model, warnings: result.warnings });
+    dispatch({ type: "IMPORT_RIGGED_MODEL", model: finalResult.model, warnings: finalResult.warnings });
   }, [state.project]);
 
   const [exporting, setExporting] = useState(false);
@@ -2606,12 +2642,14 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     () => ({
       state,
       selectNode,
+      selectNodes,
       setWorkspace,
       setBottomTab,
       setScreenFilter,
       setTwoDScreen,
       setFpsTarget,
       setActiveTool,
+      toggleBoxSelect,
       setLightIntensity,
       setCameraCurrent,
       undo,
@@ -2694,12 +2732,14 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     [
       state,
       selectNode,
+      selectNodes,
       setWorkspace,
       setBottomTab,
       setScreenFilter,
       setTwoDScreen,
       setFpsTarget,
       setActiveTool,
+      toggleBoxSelect,
       setLightIntensity,
       setCameraCurrent,
       undo,

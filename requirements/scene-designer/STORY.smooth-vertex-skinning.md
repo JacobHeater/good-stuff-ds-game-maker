@@ -316,6 +316,105 @@ correction: "it should ask if you want skin on import, it is not a toggle actual
       the DS's own ~2048-triangles-a-frame hardware ceiling (mentioned in `primitive-geometry.ts`'s own doc
       comment), and whether smooth skinning is turned on for every mesh of a character or could be limited to just
       the joints that visibly need it (an elbow or knee), leaving the rest on the already-cheap rigid path.
+  11. **One more lever that *is* still inside compiler cleverness, found by reconsidering why notes 8-9's own
+      clustering (the per-vertex dedup, the triangle reorder) helps this story's own simple test fixtures a lot
+      more than it likely helps a real character.** A hand-built fixture's weights are a few clean, repeated
+      values; a real, continuously-painted rig (Mixamo, Blender's auto weights) gives almost every vertex its own
+      slightly different split -- 0.601/0.399 one vertex over, 0.599/0.401 the next -- visually identical, but at
+      the byte precision this data is eventually quantized to (`Math.round(w * 255)`) those round to 153/152, not
+      153/153: two different signatures, not one. Neither the runtime dedup nor the reorder's clustering can tell
+      "close enough" from "different" -- they key off exact equality -- so on real content, most vertices that
+      *should* collapse together under note 8/9's own mechanisms simply don't, and pay the full per-vertex cost
+      regardless. `translate-scene-3d.ts`'s new `quantizeWeightLevels` runs right after `limitToTwoStrongestInfluences`
+      (before the reorder, so the reorder clusters on the *quantized* signature) and snaps each vertex's weight
+      split onto one of 16 fixed levels instead of leaving it continuous -- turning "close" into "identical" for far
+      more vertex pairs, which directly multiplies how much of a real mesh notes 8 and 9's own mechanisms can
+      actually collapse together. Same trade as note 10's bone-count limit, just made at the weight-*value* level
+      instead of the bone-*count* level, and still finer than this engine's own 20.12 fixed point reliably shows
+      on screen. Verified with new `quantizeWeightLevels` unit tests (two merely-close continuous splits, 0.601/0.399
+      and 0.599/0.401, come out byte-identical after quantizing -- the whole point; a quantized split still sums to
+      exactly 1, no gap; a single full-weight vertex is untouched; a weak-but-real second influence is never rounded
+      away to nothing; a mesh with no skin data is returned as the same object), the three skinning ROM tests, and
+      the full `vitest run` (1363 tests) and `tsc --noEmit`, all still passing. **Still not measured on real
+      hardware or against an actual Mixamo-style character** -- the mechanism (more vertices sharing an identical
+      signature) is sound and testable in isolation, but this story's own fixtures still can't demonstrate the
+      clustering *improvement* on realistic continuous weight data the way a real imported rig could.
+  12. **Real hardware A/B finally confirmed smooth skinning itself is the bottleneck** (a real scene, 3 characters,
+      352 triangles / 20 bones each: ~10-15fps smooth-skinned, a clean 60fps with it toggled off), and GBATEK's own
+      documented geometry-engine command timings (looked up directly this time, not guessed) sharpened exactly
+      *why* notes 8-11's own clustering doesn't help this kind of content much: `MTX_LOAD_4x3` costs 30 cycles at
+      the geometry engine's own clock, which runs at 33.51MHz -- **half** the ARM9's 67MHz -- so that's 60
+      ARM9-equivalent cycles per fresh matrix load, a fixed hardware cost no CPU-side cleverness shrinks. 20 bones
+      packed into only 352 triangles (~17.6 tris/bone) is far more bone-dense than any real DS game's own art
+      pipeline ever produced, which means a large share of vertices likely sit near *some* joint boundary --
+      exactly the shape of content note 9's clustering and note 11's weight-value quantization have the least to
+      work with, since both only collapse vertices that share one (joint A, joint B) *pair*, and a bone-dense rig
+      simply has many more distinct pairs in play than note 9's compile-time reordering can cluster into long
+      runs.
+      
+      `translate-scene-3d.ts`'s new `limitBlendGroups` (runs right after `limitToTwoStrongestInfluences`, before
+      the weight-level quantization, so the group count it sees is already final) attacks that directly: counts how
+      many vertices use each distinct (joint A, joint B) pair across a mesh, keeps only the `DEFAULT_MAX_BLEND_GROUPS`
+      (12) most-used pairs -- almost certainly a mesh's real, visually significant joints -- and collapses every
+      vertex using a less-common pair down to single-bone rigid (its own strongest influence, full weight), the
+      same shape `limitToTwoStrongestInfluences` already produces for a weak 3rd/4th influence, just decided
+      mesh-wide by vertex-count instead of per-vertex by weight magnitude. This is the one lever in this story that
+      reduces the *number of matrix loads a mesh can possibly need*, not just how cheap each one is or how well
+      consecutive ones cluster -- the first two levers (notes 8, 10-11) make each remaining load/blend cheaper; this
+      one means there are fewer of them to begin with. 12 is deliberately generous, not aggressive: this story's
+      earlier levers already do most of the work for a normally-jointed mesh, and this exists as a backstop for the
+      genuinely bone-dense case specifically, not a quality cut every mesh is expected to hit (a mesh already under
+      the budget is returned completely untouched, same object).
+      
+      Verified with new `limitBlendGroups` unit tests (a mesh already within budget is returned as the exact same
+      object; the most-used pairs survive untouched while a rarer one collapses to its own strongest influence; an
+      already single-bone vertex is never touched regardless of budget; the strongest influence is found correctly
+      no matter which of the 4 slots it started in; a mesh with no skin data is returned as the same object), the
+      three skinning ROM tests, and the full `vitest run` (1368 tests) and `tsc --noEmit`, all still passing.
+      **Still not re-measured on the real hardware scene that prompted this** -- the real A/B (confirming skinning
+      is the bottleneck at all) came from the user directly; whether this specific lever moves that 3-character,
+      10-15fps scene meaningfully still needs a retest on their own content, which this session has no access to.
+  13. **After note 12's levers, the real scene was still only ~15fps, and the user pointed out a structural cause
+      notes 8-12 never touched: every rigged model, smooth-skinned or not, still imported split into one piece per
+      dominant bone** (`gltf-import.ts`'s "2. Skinned meshes" loop) -- the right shape for *rigid* skinning (the DS
+      has no skinning hardware, so per-bone pieces are the only way a rigid model moves at all) but actively
+      counterproductive once a model goes smooth: splitting means N separate draw calls (each paying its own
+      `glPushMatrix`/material/texture-bind overhead) where one would do, and worse, notes 9/11/12's own clustering
+      (triangle reorder, weight quantization, the 12-pair blend-group cap) all operate *per mesh piece* -- splitting
+      a 20-bone character into 5 pieces means a 12-pair cap meant to bound the *character's* total complexity can
+      add up to 60 once spread across pieces, and each piece's own reorder has far less same-bone content to cluster
+      than one unified mesh would. A new `importGltf` option, `unifiedSkinning` (default off, so every existing
+      caller/test is byte-for-byte unaffected), adds a second, parallel path through the same loop: for a model going
+      smooth, each glTF primitive becomes exactly one `MeshInstance3D` (mirroring exactly how the *unskinned* path a
+      few lines up already builds one mesh per primitive with no grouping at all), parented to the mesh's own node
+      rather than to any bone, carrying the *whole* primitive's raw joints/weights/positions with no "pick one
+      dominant bone" reduction and no rebasing into any bone's local space -- glTF's raw per-primitive vertex data
+      and its skin's raw `inverseBindMatrices` are already defined in one consistent space by the format itself, so
+      leaving both alone (unlike the split path, which must rebase position and each referenced bone's inverse bind
+      matrix into the dominant bone's own frame -- investigated and deliberately ruled out as the fix's shape, since
+      un-merging that rebasing after the fact would be exactly the kind of fragile coordinate-space math that caused
+      bugs 4 and 7 above) just works unchanged with the runtime's existing `world[bone] * invBind[bone] * position`
+      blend formula. `editor-store.tsx`'s `importRiggedModel` still detects whether to prompt by importing once with
+      no options exactly as before (`meshesNeedingSmoothSkinningPrompt` on the resulting split pieces, unchanged);
+      only what happens on "yes" changed, from mutating `smoothSkinning` onto the already-split pieces to re-running
+      the whole import with `{ unifiedSkinning: true }` and using that second result instead -- a one-time, import-
+      time re-parse of a small character file, not worth threading the dialog's answer into a single pass. The
+      desktop dialog's own text (`assets-ipc.ts`) now says the rigid/smooth choice also decides one-piece-per-bone vs.
+      one-piece-total, and that toggling smooth skinning back off afterward in the Inspector makes the whole
+      (now-unified) model follow its own single node rigidly, not per-piece -- a real, intentional behavior change
+      from today's per-piece rigid fallback, not a bug. Verified with 5 new `gltf-import.test.ts` cases (a model with
+      vertices split across bones imports as one mesh per primitive, not one per bone, with `smoothSkinning: true`
+      set and the full, unreduced joint/weight data intact; a purely-rigid model under the same option still comes
+      back as one mesh per primitive with each vertex kept single-bone, not actually blended, since nothing in the
+      source file blends it; the default, no-option path is unchanged) -- 22/22 in that file, full `vitest run`
+      (1373 tests) and `tsc --noEmit` clean across core/ui/desktop, and the three skinning ROM tests
+      (`smooth-vertex-skinning`, `rigged-models`, `animated-meshes`) still pass unmodified, confirming the compiler
+      and runtime remain mesh-shape-agnostic as expected. **Not re-measured on the user's real 3-character scene**
+      -- same limitation as notes 10-12, this session has no access to their hardware; whether removing the
+      per-piece draw-call and per-piece-optimization-budget overhead moves the needle on their 10-15fps result
+      still needs their own retest. **Not manually clicked through in the running desktop app** for this specific
+      change (confirming the Scene Tree shows one node instead of several after answering the dialog) -- same gap
+      this story's existing "Not verified" note already names for the rest of the import-time prompt flow.
 - **Unit tests**: `gltf-import.test.ts` (a vertex split 50/50 between two bones round-trips its joints/weights/
   inverse-bind-matrices exactly, verified by reconstructing the vertex's real rest-pose world position from the
   stored data by hand, per the documented blend formula -- not just checking the data's shape; a further case inflates

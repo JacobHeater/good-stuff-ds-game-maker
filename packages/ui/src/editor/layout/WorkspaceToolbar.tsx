@@ -33,7 +33,7 @@ function tabClasses(active: boolean): string {
  * permanent) plus the mode-independent Script/Game tabs.
  */
 export function WorkspaceToolbar(): JSX.Element {
-  const { state, setWorkspace, setScreenFilter, setTwoDScreen, setFpsTarget, setActiveTool, play, playing } = useEditorStore();
+  const { state, setWorkspace, setScreenFilter, setTwoDScreen, setFpsTarget, setActiveTool, toggleBoxSelect, play, playing } = useEditorStore();
   const mode = state.project?.mode;
   const roles = screenRolesOf(state);
   const workspaces = mode ? workspacesForMode(mode) : [];
@@ -51,6 +51,20 @@ export function WorkspaceToolbar(): JSX.Element {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [mode, setActiveTool]);
+
+  // B toggles box-select, in both 2D and 3D projects (no "tool" concept in 2D, so this isn't folded into the
+  // Q/W/E/R handler above, which is 3D-only).
+  useEffect(() => {
+    if (!mode) return undefined;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      if (event.key.toLowerCase() === "b") toggleBoxSelect();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mode, toggleBoxSelect]);
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-editor-border bg-editor-panel px-3">
@@ -83,6 +97,18 @@ export function WorkspaceToolbar(): JSX.Element {
             </button>
           ))}
         </div>
+      )}
+
+      {mode && (
+        <button
+          type="button"
+          title="Box Select: drag a rectangle in the viewport to select everything it sweeps over (B)"
+          aria-pressed={state.boxSelectActive}
+          className={tabClasses(state.boxSelectActive)}
+          onClick={() => toggleBoxSelect()}
+        >
+          Box Select
+        </button>
       )}
 
       <div className="flex items-center gap-3">

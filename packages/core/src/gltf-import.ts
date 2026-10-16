@@ -284,6 +284,7 @@ interface BuiltMesh {
   indices: number[];
   material: number;
   skin?: ImportedMeshSkin;
+  smoothSkinning?: boolean;
 }
 
 /** Puts a triangle's normals right for a vertex table that has none: the average of the faces around each vertex. */
@@ -312,18 +313,30 @@ function baseColor(json: Json, materialIndex: number): string | undefined {
   return levels.every((l) => l >= 30) ? undefined : meshColorFromLevels(levels);
 }
 
+export interface ImportGltfOptions {
+  /** Skip the usual "every triangle to the one bone that pulls it hardest" split (STORY.rigged-models.md) and
+   * instead keep each skinned glTF primitive as one unified `MeshInstance3D`, with its own full per-vertex,
+   * possibly-many-bone weighting and `smoothSkinning` already on. The per-bone split exists only so the DS's
+   * bone-free GPU can still show a *rigid* model's joints moving at all -- a model going smooth-skinned doesn't
+   * need it, and splitting one anyway only fragments it into more draw calls and, worse, feeds the compiler's own
+   * per-mesh smooth-skinning optimizations (STORY.smooth-vertex-skinning.md's triangle reordering and blend-group
+   * cap) smaller, more fragmented pieces than a unified mesh would give them. See `importRiggedModel`
+   * (editor-store.tsx), which re-imports with this on once the user confirms they want smooth skinning. */
+  unifiedSkinning?: boolean;
+}
+
 /**
  * Turns a glTF file into a rigged model. Never throws: a file that can't be used comes back as errors. `name` is what the model is called (the file's name without its extension).
  */
-export function importGltf(input: GltfInput, name: string): ImportGltfResult {
+export function importGltf(input: GltfInput, name: string, options: ImportGltfOptions = {}): ImportGltfResult {
   try {
-    return build(input, name);
+    return build(input, name, options);
   } catch (error) {
     return { ok: false, errors: [error instanceof Error ? error.message : String(error)] };
   }
 }
 
-function build(input: GltfInput, modelName: string): ImportGltfResult {
+function build(input: GltfInput, modelName: string, options: ImportGltfOptions): ImportGltfResult {
   const { json } = input;
   const warnings: string[] = [];
   const gltfNodes = arr(json.nodes);
@@ -363,7 +376,7 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
     triangleCount += triangles;
     const node = createSceneNode({ name: built.name, kind: "MeshInstance3D" });
     const color = baseColor(json, built.material);
-    node.mesh = { importedMeshId: mesh.id, triangleCount: triangles, ...(color ? { color } : {}) };
+    node.mesh = { importedMeshId: mesh.id, triangleCount: triangles, ...(color ? { color } : {}), ...(built.smoothSkinning ? { smoothSkinning: true } : {}) };
     parent.children.push(node);
   };
 
@@ -445,6 +458,62 @@ function build(input: GltfInput, modelName: string): ImportGltfResult {
         : joints.map(() => IDENTITY);
     const gltfMesh = arr(json.meshes)[num(source.mesh, 0)];
     const label = typeof source.name === "string" ? source.name : `Node${meshNode}`;
+
+    if (options.unifiedSkinning) {
+      // One `MeshInstance3D` per primitive, parented to the mesh's own node (not any one bone) -- no per-triangle
+      // dominant-bone grouping, and no rebasing of positions or inverse bind matrices into any bone's space.
+      // glTF's own raw per-primitive vertex data and its skin's raw inverseBindMatrices are already defined in one
+      // consistent space by the format itself, so leaving both alone is what makes this correct with zero new
+      // matrix math: draw_skinned_mesh's own runtime blend (main.c) is `world[bone] * invBind[bone] * position`,
+      // which this data already satisfies directly.
+      const node = sceneNodes.get(meshNode)!;
+      arr(gltfMesh?.primitives).forEach((primitive, p) => {
+        const read = readPrimitive(primitive, label);
+        if (!read) return;
+        if (!read.joints || !read.weights) warnings.push(`"${label}" has a mesh with a skin but no bone weights; it is attached to the first bone.`);
+        const positions = Array.from(read.positions.data);
+        const normals = read.normals ? Array.from(read.normals.data) : faceNormals(positions, read.indices);
+        const vertexCount = positions.length / 3;
+        // Every bone this primitive's vertices actually reference, gathered into a small per-mesh list -- same
+        // jointNodeIds/localJointIndex/globalJointIndices bookkeeping the dominant-bone split path below uses,
+        // just scoped to the whole primitive instead of one dominant-bone group.
+        const jointNodeIds: string[] = [];
+        const globalJointIndices: number[] = [];
+        const localJointIndex = new Map<number, number>();
+        const skinJoints: number[] = [];
+        const skinWeights: number[] = [];
+        for (let v = 0; v < vertexCount; v++) {
+          const raw =
+            read.joints && read.weights
+              ? Array.from({ length: 4 }, (_, k) => ({ g: read.joints!.data[v * 4 + k], w: read.weights!.data[v * 4 + k] }))
+              : [{ g: 0, w: 1 }];
+          const sum = raw.reduce((s, r) => s + r.w, 0) || 1;
+          for (let k = 0; k < 4; k++) {
+            const { g, w } = raw[k] ?? { g: 0, w: 0 };
+            if (w <= 0) {
+              skinJoints.push(0);
+              skinWeights.push(0);
+              continue;
+            }
+            let local = localJointIndex.get(g);
+            if (local === undefined) {
+              local = jointNodeIds.length;
+              localJointIndex.set(g, local);
+              jointNodeIds.push(sceneNodes.get(joints[g])!.id);
+              globalJointIndices.push(g);
+            }
+            skinJoints.push(local);
+            skinWeights.push(w / sum);
+          }
+        }
+        const inverseBindMatrices = globalJointIndices.flatMap((g) => inverseBind[g] ?? IDENTITY);
+        const skin: ImportedMeshSkin = { jointNodeIds, inverseBindMatrices, joints: skinJoints, weights: skinWeights };
+        const partName = arr(gltfMesh?.primitives).length > 1 ? `${label}_${p}` : `${label}_mesh`;
+        addMesh(node, meshNode, { name: partName, positions, normals, indices: read.indices, material: read.material, skin, smoothSkinning: true });
+      });
+      continue;
+    }
+
     const groups = new Map<
       string,
       {

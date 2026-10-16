@@ -273,6 +273,88 @@ describe("importing a rigged model", () => {
   });
 });
 
+describe("importing with unifiedSkinning (no per-bone split -- a model going smooth-skinned doesn't need one)", () => {
+  it("makes one mesh node, not one per bone, parented to the mesh's own node rather than any bone", () => {
+    const r = importGltf(input(buildArm({ splitWeight: true })), "Robot", { unifiedSkinning: true });
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    expect(r.model.meshes).toHaveLength(1); // not 2 (Hip_mesh + Arm_mesh), as the default (split) import gives
+    const body = byName(r.model.root, "Body"); // buildArm's mesh node itself, unused in the default split import
+    const part = byName(body, "Body_mesh");
+    expect(part.kind).toBe("MeshInstance3D");
+    expect(part.mesh?.smoothSkinning).toBe(true); // opted in directly, no separate Inspector toggle needed
+    // Not nested under Hip or Arm at all -- the whole point of not splitting.
+    const hip = byName(r.model.root, "Hip");
+    const arm = byName(r.model.root, "Arm");
+    expect(hip.children.some((n) => n.name === "Body_mesh")).toBe(false);
+    expect(arm.children.some((n) => n.name === "Body_mesh")).toBe(false);
+  });
+
+  it("keeps every vertex's real (possibly multi-bone) weighting, not reduced to one dominant bone", () => {
+    const r = importGltf(input(buildArm({ splitWeight: true })), "Robot", { unifiedSkinning: true });
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    const mesh = r.model.meshes[0];
+    const hip = byName(r.model.root, "Hip");
+    const arm = byName(r.model.root, "Arm");
+    expect(mesh.skin!.jointNodeIds).toEqual([hip.id, arm.id]);
+    // Vertex 2 (the lower quad's top-right corner) is split 50/50 between Hip and Arm, same as the file authored it.
+    expect(mesh.skin!.joints.slice(2 * 4, 2 * 4 + 4)).toEqual([0, 1, 0, 0]);
+    expect(mesh.skin!.weights.slice(2 * 4, 2 * 4 + 4)).toEqual([0.5, 0.5, 0, 0]);
+  });
+
+  it("stores positions and inverse bind matrices in the file's own raw space (no rebasing), and the blend formula still reconstructs the real rest-pose position", () => {
+    // The critical regression check for this path's whole premise: skipping the dominant-bone-split path's own
+    // rebasing (position into a chosen bone's local space, inverse bind matrices re-expressed relative to it) is
+    // only correct if glTF's raw vertex data and raw inverseBindMatrices are already consistent with each other on
+    // their own -- this reconstructs a known vertex's real authored position by hand, the same way the split path's
+    // own equivalent test above does, to prove that's actually true rather than assumed.
+    const r = importGltf(input(buildArm({ splitWeight: true })), "Robot", { unifiedSkinning: true });
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    const mesh = r.model.meshes[0];
+    const hip = byName(r.model.root, "Hip");
+    const arm = byName(r.model.root, "Arm");
+    const skin = mesh.skin!;
+    const worldOf = (p: { x: number; y: number; z: number }): number[] => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, p.z, 1];
+    const jointWorlds = [worldOf(hip.transform3D!.position), worldOf(arm.transform3D!.position)];
+    const p = mesh.positions.slice(2 * 3, 2 * 3 + 3);
+    const apply = (m: number[], v: number[]): number[] => [m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12], m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13], m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14]];
+    const blended = [0, 0, 0];
+    for (let i = 0; i < 2; i++) {
+      const w = skin.weights[2 * 4 + i];
+      const local = apply(skin.inverseBindMatrices.slice(i * 16, i * 16 + 16), p);
+      const world = apply(jointWorlds[i], local);
+      for (let k = 0; k < 3; k++) blended[k] += w * world[k];
+    }
+    expect(blended[0]).toBeCloseTo(0.5, 5);
+    expect(blended[1]).toBeCloseTo(1, 5);
+    expect(blended[2]).toBeCloseTo(0, 5);
+  });
+
+  it("still gives a purely-rigid (no vertex actually split between bones) model just one mesh, each vertex kept single-bone", () => {
+    // buildArm() without splitWeight has no vertex blending between bones -- the lower quad is 100% Hip, the upper
+    // 100% Arm -- but the mesh as a whole still spans both bones (different vertices, different single bones), so
+    // its joint list correctly has both, same as the default split import's own two pieces would together.
+    const r = importGltf(input(buildArm()), "Robot", { unifiedSkinning: true });
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    expect(r.model.meshes).toHaveLength(1); // one mesh, not split into Hip_mesh + Arm_mesh
+    const skin = r.model.meshes[0].skin!;
+    expect(skin.jointNodeIds).toHaveLength(2); // the mesh overall still touches both bones
+    // But no individual vertex blends between them: exactly one nonzero (full) weight per vertex.
+    const vertexCount = skin.weights.length / 4;
+    for (let v = 0; v < vertexCount; v++) {
+      const nonzero = skin.weights.slice(v * 4, v * 4 + 4).filter((w) => w > 0);
+      expect(nonzero).toEqual([1]);
+    }
+  });
+
+  it("leaves the default (no options, or unifiedSkinning: false) import exactly as it was -- still split by dominant bone", () => {
+    const withOptions = importGltf(input(buildArm({ splitWeight: true })), "Robot", { unifiedSkinning: false });
+    const withoutOptions = importGltf(input(buildArm({ splitWeight: true })), "Robot");
+    if (!withOptions.ok || !withoutOptions.ok) throw new Error("expected both imports to succeed");
+    expect(withOptions.model.meshes).toHaveLength(2);
+    expect(withoutOptions.model.meshes).toHaveLength(2);
+  });
+});
+
 describe("quaternion to the editor's Euler angles", () => {
   it("turns quarter turns about each axis into 90 degrees on that axis", () => {
     const s = Math.SQRT1_2;

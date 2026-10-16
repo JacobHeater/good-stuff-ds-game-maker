@@ -2,7 +2,7 @@ import { buildArm, expandSceneInstances, flattenSceneTree, importGltf, type Prim
 import { describe, expect, it } from "vitest";
 
 import { primitivesProject } from "./fixtures";
-import { limitToTwoStrongestInfluences, reorderSkinnedTrianglesByBlendSignature, translateScene3D } from "./translate-scene-3d";
+import { limitBlendGroups, limitToTwoStrongestInfluences, quantizeWeightLevels, reorderSkinnedTrianglesByBlendSignature, translateScene3D } from "./translate-scene-3d";
 
 /** STORY.smooth-vertex-skinning.md: an opt-in weighted blend of every bone a mesh's real skin data weighs it to, instead of just the strongest one. */
 
@@ -211,5 +211,95 @@ describe("limitToTwoStrongestInfluences (performance: STORY.smooth-vertex-skinni
   it("leaves a mesh with no skin data untouched -- the very same object, not even a copy", () => {
     const geometry: PrimitiveGeometry = { triangleCount: 1, positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 1, 0, 0, 1, 0, 0, 1, 0] };
     expect(limitToTwoStrongestInfluences(geometry)).toBe(geometry);
+  });
+});
+
+describe("quantizeWeightLevels (performance: STORY.smooth-vertex-skinning.md note 11)", () => {
+  function oneVertexGeometry(joints: number[], weights: number[]): PrimitiveGeometry {
+    return { triangleCount: 0, positions: [], normals: [], skinJoints: joints, skinWeights: weights };
+  }
+
+  it("snaps two merely-close (not identical) continuous splits onto the exact same quantized signature", () => {
+    // The whole point: a real, continuously-painted rig rarely repeats a weight split exactly, but 0.601/0.399 and
+    // 0.599/0.401 are visually indistinguishable -- after this, they must come out byte-identical, or
+    // reorderSkinnedTrianglesByBlendSignature's own clustering can't tell they belong together.
+    const a = quantizeWeightLevels(oneVertexGeometry([0, 1, 0, 0], [0.601, 0.399, 0, 0]));
+    const b = quantizeWeightLevels(oneVertexGeometry([0, 1, 0, 0], [0.599, 0.401, 0, 0]));
+    expect(a.skinWeights).toEqual(b.skinWeights);
+  });
+
+  it("still sums to 1 (so the runtime blend covers full weight, not a gap) after rounding to discrete levels", () => {
+    const limited = quantizeWeightLevels(oneVertexGeometry([0, 1, 0, 0], [0.73, 0.27, 0, 0]));
+    expect(limited.skinWeights![0] + limited.skinWeights![1]).toBeCloseTo(1, 10);
+  });
+
+  it("leaves a single full-weight (rigid) vertex at exactly full weight, no quantization artifact", () => {
+    const limited = quantizeWeightLevels(oneVertexGeometry([0, 0, 0, 0], [1, 0, 0, 0]));
+    expect(limited.skinWeights![0]).toBe(1);
+  });
+
+  it("never rounds a real but weak influence away to nothing", () => {
+    // 0.01 alone would round to level 0 (0.01 * 15 = 0.15); the function's own floor at 1 keeps a vertex that is
+    // genuinely still split between two bones from silently collapsing to single-bone.
+    const limited = quantizeWeightLevels(oneVertexGeometry([0, 1, 0, 0], [0.99, 0.01, 0, 0]));
+    expect(limited.skinWeights![1]).toBeGreaterThan(0);
+    expect(limited.skinWeights![0] + limited.skinWeights![1]).toBeCloseTo(1, 10);
+  });
+
+  it("leaves a mesh with no skin data untouched -- the very same object, not even a copy", () => {
+    const geometry: PrimitiveGeometry = { triangleCount: 1, positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 1, 0, 0, 1, 0, 0, 1, 0] };
+    expect(quantizeWeightLevels(geometry)).toBe(geometry);
+  });
+});
+
+describe("limitBlendGroups (performance: STORY.smooth-vertex-skinning.md note 12)", () => {
+  function vertex(joints: number[], weights: number[]): { joints: number[]; weights: number[] } {
+    return { joints, weights };
+  }
+  function geometryOf(vertices: ReturnType<typeof vertex>[]): PrimitiveGeometry {
+    return { triangleCount: 0, positions: [], normals: [], skinJoints: vertices.flatMap((v) => v.joints), skinWeights: vertices.flatMap((v) => v.weights) };
+  }
+
+  it("leaves everything alone -- the very same object -- when the mesh already uses fewer pairs than the budget", () => {
+    const geometry = geometryOf([vertex([1, 2, 0, 0], [0.6, 0.4, 0, 0]), vertex([3, 4, 0, 0], [0.5, 0.5, 0, 0])]);
+    expect(limitBlendGroups(geometry, 12)).toBe(geometry);
+  });
+
+  it("keeps the pairs used by the most vertices, collapsing a rarer one to single-bone rigid", () => {
+    const common1 = vertex([1, 2, 0, 0], [0.6, 0.4, 0, 0]);
+    const common2 = vertex([3, 4, 0, 0], [0.7, 0.3, 0, 0]);
+    const rare = vertex([5, 6, 0, 0], [0.55, 0.45, 0, 0]);
+    // Pair (1,2) used by 3 vertices, (3,4) by 2, (5,6) by 1 -- a budget of 2 keeps the first two, drops the third.
+    const geometry = geometryOf([common1, common1, common1, common2, common2, rare]);
+    const limited = limitBlendGroups(geometry, 2);
+    expect(limited.skinJoints!.slice(0, 8)).toEqual([1, 2, 0, 0, 1, 2, 0, 0]); // the common pairs: untouched
+    expect(limited.skinWeights!.slice(0, 8)).toEqual([0.6, 0.4, 0, 0, 0.6, 0.4, 0, 0]);
+    const last = 5 * 4;
+    expect(limited.skinJoints!.slice(last, last + 4)).toEqual([5, 0, 0, 0]); // the rare pair: collapsed to its own strongest joint
+    expect(limited.skinWeights!.slice(last, last + 4)).toEqual([1, 0, 0, 0]);
+  });
+
+  it("never touches an already single-bone vertex, regardless of budget", () => {
+    const rigid = vertex([9, 0, 0, 0], [1, 0, 0, 0]);
+    const geometry = geometryOf([vertex([1, 2, 0, 0], [0.6, 0.4, 0, 0]), vertex([3, 4, 0, 0], [0.6, 0.4, 0, 0]), vertex([5, 6, 0, 0], [0.6, 0.4, 0, 0]), rigid]);
+    const limited = limitBlendGroups(geometry, 1);
+    const i = 3 * 4;
+    expect(limited.skinJoints!.slice(i, i + 4)).toEqual(rigid.joints);
+    expect(limited.skinWeights!.slice(i, i + 4)).toEqual(rigid.weights);
+  });
+
+  it("finds the strongest influence to keep regardless of which slots it's in", () => {
+    const common = vertex([1, 2, 0, 0], [0.6, 0.4, 0, 0]);
+    const rare = vertex([10, 0, 0, 11], [0.3, 0, 0, 0.7]); // strongest (joint 11, 0.7) sits in slot 3, not slot 0
+    const geometry = geometryOf([common, common, common, rare]);
+    const limited = limitBlendGroups(geometry, 1);
+    const i = 3 * 4;
+    expect(limited.skinJoints!.slice(i, i + 4)).toEqual([0, 0, 0, 11]);
+    expect(limited.skinWeights!.slice(i, i + 4)).toEqual([0, 0, 0, 1]);
+  });
+
+  it("leaves a mesh with no skin data untouched -- the very same object, not even a copy", () => {
+    const geometry: PrimitiveGeometry = { triangleCount: 1, positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 1, 0, 0, 1, 0, 0, 1, 0] };
+    expect(limitBlendGroups(geometry)).toBe(geometry);
   });
 });

@@ -115,7 +115,11 @@ async function pickRiggedModel(): Promise<PickRiggedModelResult> {
  * what every joint in this project's own games and Mario Kart DS alike normally uses). Applies to every mesh in the
  * model that has real multi-bone data, not one at a time -- a joint only looks smooth when *every* mesh touching it
  * agrees, so this isn't offered as a per-mesh choice (the Inspector's own "Smooth skinning" checkbox is still there
- * to turn it off again on a specific part afterward).
+ * to turn it off again on a specific part afterward). The answer also decides how the model is even built: "yes"
+ * re-imports with `ImportGltfOptions.unifiedSkinning` on (one mesh per smooth-skinned glTF primitive, not one per
+ * bone -- a rigid model's own per-bone split exists only so the DS can still move each piece without skinning
+ * hardware, which a smooth-skinned model doesn't need and shouldn't pay the extra draw calls for), not just a flag
+ * flipped on the pieces the default (rigid) import already built.
  */
 async function askUseSmoothSkinning(): Promise<boolean> {
   const result = await dialog.showMessageBox({
@@ -126,8 +130,8 @@ async function askUseSmoothSkinning(): Promise<boolean> {
     title: "Smooth skinning",
     message: "This model has vertices weighted across more than one bone. Use smooth skinning for its joints?",
     detail:
-      "Rigid skinning (the default) draws each vertex with just its strongest bone -- free, but a bent joint can visibly split apart. " +
-      "Smooth skinning blends every bone a vertex is really weighted to, like Mario Kart DS's own characters, but recomputes a matrix for every vertex, every frame it moves -- real, ongoing CPU cost. This applies to the whole model; you can still turn it off again on one part afterward in the Inspector."
+      "Rigid skinning (the default) draws each vertex with just its strongest bone, which means the model imports split into one piece per bone (so the DS can still move each part) -- free, but a bent joint can visibly split apart. " +
+      "Smooth skinning blends every bone a vertex is really weighted to, like Mario Kart DS's own characters, so the model imports as a single piece instead -- no per-bone split needed, and fewer pieces for the DS to draw. It recomputes a matrix for every vertex, every frame it moves, though -- real, ongoing CPU cost. This applies to the whole model; if you turn it back off afterward in the Inspector, the whole model follows its own one point rigidly (not per-bone anymore, since there's only one piece now)."
   });
   return result.response === 1;
 }

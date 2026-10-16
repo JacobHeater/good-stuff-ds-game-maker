@@ -166,6 +166,7 @@ describe("what counts as one step", () => {
     const s = run(
       opened,
       { type: "SET_TOOL", tool: "move" },
+      { type: "TOGGLE_BOX_SELECT" },
       { type: "SET_SCREEN_FILTER", filter: "bottom" },
       { type: "SET_FPS_TARGET", fps: 30 },
       { type: "SET_BOTTOM_TAB", tab: "Hardware" },
@@ -174,8 +175,18 @@ describe("what counts as one step", () => {
     expect(s.history).toEqual(opened.history);
     const undone = run(s, undo);
     expect(undone.activeTool).toBe("move"); // nothing was undone
+    expect(undone.boxSelectActive).toBe(true);
     expect(undone.screenFilter).toBe("bottom");
     expect(undone.fpsTarget).toBe(30);
+  });
+
+  it("TOGGLE_BOX_SELECT (the B key, WorkspaceToolbar.tsx) flips boxSelectActive and starts off", () => {
+    const opened = openProject();
+    expect(opened.boxSelectActive).toBe(false);
+    const on = run(opened, { type: "TOGGLE_BOX_SELECT" });
+    expect(on.boxSelectActive).toBe(true);
+    const off = run(on, { type: "TOGGLE_BOX_SELECT" });
+    expect(off.boxSelectActive).toBe(false);
   });
 });
 

@@ -3,6 +3,7 @@ import {
   getMeshDiffuseLevels,
   getMeshOpacity,
   findSceneNode,
+  flattenSceneTree,
   getAnimationPlayer,
   getCollisionShape,
   getImportedMeshGeometry,
@@ -24,7 +25,7 @@ import {
   type Vector3
 } from "@goodstuff/core";
 import { OrbitControls, TransformControls } from "@react-three/drei";
-import { Canvas, useFrame, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BackSide,
@@ -39,6 +40,7 @@ import {
   type Group,
   type Object3D
 } from "three";
+import { SelectionBox } from "three-stdlib";
 
 import { useEditorStore, type EditorTool } from "../state/editor-store";
 import { useShownSceneRoot } from "../state/shown-scene";
@@ -304,6 +306,12 @@ function SmoothSkinnedMeshView({
 
   return (
     <mesh
+      ref={(object: Object3D | null) => {
+        // Unlike SceneNodeView's own group, this mesh isn't kept in `objects` by its own identity (it only reads
+        // `objects` above, to look up its influencing bones) -- tagged directly so a box-select drag can still
+        // resolve a hit on it back to this node; see BoxSelectController.
+        if (object) object.userData.nodeId = nodeId;
+      }}
       geometry={geometry}
       onPointerDown={(event: ThreeEvent<MouseEvent>) => {
         event.stopPropagation();
@@ -694,8 +702,12 @@ function SceneNodeView({
   return (
     <group
       ref={(object: Object3D | null) => {
-        if (object) objects.set(node.id, object);
-        else objects.delete(node.id);
+        // Tagged with its own node id (not just kept in `objects`, which is keyed the other way round) so a
+        // box-select drag can resolve a raw hit three.js object back to the node it belongs to; see BoxSelectController.
+        if (object) {
+          objects.set(node.id, object);
+          object.userData.nodeId = node.id;
+        } else objects.delete(node.id);
       }}
       position={toTuple(shown?.position ?? node.transform3D.position)}
       rotation={toEuler(shown?.rotation ?? node.transform3D.rotation)}
@@ -715,6 +727,137 @@ function SceneNodeView({
   );
 }
 
+/** Screen pixels a pointer must travel before a press-and-release counts as a drag rather than a click. */
+const BOX_SELECT_DRAG_THRESHOLD = 6;
+
+/**
+ * Click-drag a rectangle over the viewport, the Select tool only, and only while the B-toggled box-select mode
+ * (`EditorState.boxSelectActive`) is on -- Blender's Select Box tool / Godot's editor: selects every node the box
+ * swept over. `OrbitControls` owns plain left-drag everywhere else (camera rotate), so this only engages while
+ * `activeTool === "select"` AND `boxSelectActive`, disabling orbit for exactly the drag's own duration and
+ * restoring it on release; every other tool is untouched, and orbit still works there exactly as it does today --
+ * including on the Select tool itself when box-select mode is off, which is the whole point of gating this on the
+ * toggle rather than on the tool alone.
+ *
+ * Listens on the canvas's own native pointer events, not R3F's per-object synthetic ones: this must fire starting
+ * from empty space too, where no object's own `onPointerDown` runs, the same reason `onPointerMissed` exists for
+ * the plain-click case below. Reuses `three-stdlib`'s `SelectionBox` (the same primitive `@react-three/drei`'s own
+ * `<Select box multiple>` is built on; its own source is what this technique -- toggling `controls.enabled`,
+ * NDC-space start/end points, a `position: fixed` DOM overlay instead of a React-rendered one -- is drawn from) for
+ * the actual frustum-intersection test, rather than hand-rolling per-object screen-space projection.
+ */
+function BoxSelectController({
+  activeTool,
+  boxSelectActive,
+  selectableIds,
+  selectNodes
+}: {
+  activeTool: EditorTool;
+  boxSelectActive: boolean;
+  /** Every node id a box-select may legally land on: the active screen's own drawn, selectable nodes. Everything
+   * else (the other screen's nodes, `gridHelper`/`axesHelper`, gizmo handles) never carries `userData.nodeId` at
+   * all, so it's filtered out by the hit-resolution walk below regardless, but checking against this set too keeps
+   * that walk from trusting a stale tag left on an object that `SceneNodeView` has since stopped drawing. */
+  selectableIds: ReadonlySet<string>;
+  selectNodes: (ids: string[]) => void;
+}): null {
+  const { camera, scene, gl, controls } = useThree();
+
+  useEffect(() => {
+    if (activeTool !== "select" || !boxSelectActive) return;
+    const element = gl.domElement;
+    const orbit = controls as { enabled: boolean } | null;
+    let overlay: HTMLDivElement | null = null;
+    let start: { x: number; y: number } | null = null;
+    let dragging = false;
+
+    const ndc = (clientX: number, clientY: number): [number, number] => {
+      const rect = element.getBoundingClientRect();
+      return [((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1];
+    };
+
+    const cleanupOverlay = (): void => {
+      overlay?.remove();
+      overlay = null;
+    };
+
+    function onPointerDown(event: PointerEvent): void {
+      if (event.button !== 0) return;
+      start = { x: event.clientX, y: event.clientY };
+      dragging = false;
+      if (orbit) orbit.enabled = false;
+    }
+
+    function onPointerMove(event: PointerEvent): void {
+      if (!start) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (!dragging) {
+        if (Math.hypot(dx, dy) < BOX_SELECT_DRAG_THRESHOLD) return;
+        dragging = true;
+        overlay = document.createElement("div");
+        overlay.style.position = "fixed";
+        overlay.style.border = `1px solid ${EDITOR_ACCENT}`;
+        overlay.style.backgroundColor = "rgba(79, 168, 255, 0.15)";
+        overlay.style.pointerEvents = "none";
+        overlay.style.zIndex = "9999";
+        document.body.appendChild(overlay);
+      }
+      const o = overlay!;
+      o.style.left = `${Math.min(start.x, event.clientX)}px`;
+      o.style.top = `${Math.min(start.y, event.clientY)}px`;
+      o.style.width = `${Math.abs(dx)}px`;
+      o.style.height = `${Math.abs(dy)}px`;
+    }
+
+    function onPointerUp(event: PointerEvent): void {
+      if (!start) return;
+      const wasDragging = dragging;
+      const dragStart = start;
+      start = null;
+      dragging = false;
+      cleanupOverlay();
+      if (orbit) orbit.enabled = true;
+      if (!wasDragging) return; // a plain click: today's existing onSelect/onPointerMissed handling is untouched
+
+      const selBox = new SelectionBox(camera, scene);
+      const [sx, sy] = ndc(dragStart.x, dragStart.y);
+      const [ex, ey] = ndc(event.clientX, event.clientY);
+      selBox.startPoint.set(sx, sy, 0);
+      selBox.endPoint.set(ex, ey, 0);
+      const ids = new Set<string>();
+      for (const hit of selBox.select()) {
+        let current: Object3D | null = hit;
+        while (current) {
+          const id = current.userData.nodeId as string | undefined;
+          if (id !== undefined) {
+            if (selectableIds.has(id)) ids.add(id);
+            break;
+          }
+          current = current.parent;
+        }
+      }
+      // Deferred a tick: guarantees this box-select result is what's left standing even if the native pointerup
+      // above also satisfies R3F's own click/onPointerMissed handling and briefly reselects the scene root.
+      const result = [...ids];
+      setTimeout(() => selectNodes(result), 0);
+    }
+
+    element.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      element.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      cleanupOverlay();
+      if (orbit) orbit.enabled = true;
+    };
+  }, [activeTool, boxSelectActive, camera, scene, gl, controls, selectableIds, selectNodes]);
+
+  return null;
+}
+
 /**
  * The 3D scene viewport: the DS-specific equivalent of Godot's 3D editor,
  * showing whichever single screen currently owns the 3D engine (the DS can
@@ -729,9 +872,15 @@ function SceneNodeView({
  */
 export function Viewport3D(): JSX.Element {
   const shownRoot = useShownSceneRoot();
-  const { state, selectNode, setTransform3D, endEditGesture } = useEditorStore();
+  const { state, selectNode, selectNodes, setTransform3D, endEditGesture } = useEditorStore();
   const activeScreen: ScreenId = state.screenFilter === "both" ? "top" : state.screenFilter;
   const nodeObjects = useRef<NodeObjects>(new Map());
+  // Every id a box-select drag may land on: the active screen's own drawn 3D nodes (what SceneNodeView actually
+  // tags with `userData.nodeId`; see BoxSelectController).
+  const boxSelectableIds = useMemo(
+    () => new Set(flattenSceneTree(shownRoot).filter((n) => n.screen === activeScreen && is3DNodeKind(n.kind) && n.transform3D).map((n) => n.id)),
+    [shownRoot, activeScreen]
+  );
   const selected = findSceneNode(state.sceneRoot, state.selectedNodeId);
   // A gizmo needs something to manipulate: a drawn, non-root 3D node; and a camera or light is never scaled.
   const gizmoTool =
@@ -834,6 +983,12 @@ export function Viewport3D(): JSX.Element {
               />
             )}
             <OrbitControls makeDefault />
+            <BoxSelectController
+              activeTool={state.activeTool}
+              boxSelectActive={state.boxSelectActive}
+              selectableIds={boxSelectableIds}
+              selectNodes={selectNodes}
+            />
           </Canvas>
         </div>
       </div>
