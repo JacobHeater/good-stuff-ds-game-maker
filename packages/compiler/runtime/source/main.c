@@ -51,6 +51,25 @@ static int *textureNames;
    on whatever glPushMatrix saved -- need it folded back in by hand; see that function's own comment. */
 static GsMatrix gs_current_view;
 
+/* draw_skinned_mesh's own (view * world * invBind) blend, one packed 4x3 matrix per node, cached for the rest of the
+   current frame: a rigged character is normally several meshes (head, torso, arms, legs, ...) all skinned to the
+   same one skeleton, so the same bone is a joint of more than one of them, and recomputing its blend from scratch
+   for every mesh that references it -- the same cost gs_runtime.c's own ComposeMemo exists to avoid for plain node
+   composition -- wastes real work once a scene has more than one smooth-skinned mesh sharing a bone (exactly the
+   "3-5-8 skinned characters" case this matters for). Sized to the scene's own node count and allocated alongside
+   gs_world_matrix in enter_scene; gs_skin_blend_frame[node] holds which frame number last computed that node's
+   entry, so a stale one (an old frame, or never computed) is detected by a single integer compare. */
+static int32_t (*gs_skin_blend_cache)[12];
+static uint16_t *gs_skin_blend_frame;
+static uint16_t gs_frame_number;
+/* What invBindMatrix the cached entry above was actually computed from, so a cache "hit" is only trusted once its
+   source is confirmed identical -- never just assumed from the node matching. Two meshes sharing a bone normally do
+   share the exact same inverse-bind values (one skeleton has one bind pose, regardless of how many meshes are
+   skinned to it), but the compiler currently writes each mesh's own copy into gs_scene.skinInverseBindMatrices
+   rather than one shared entry, so the values must be compared, not just assumed equal from the node index alone --
+   this is what keeps the cache correct even if that compiler-side assumption is ever wrong for some mesh. */
+static int32_t (*gs_skin_blend_source)[16];
+
 /* Uploads every texture to texture memory once, at startup. */
 static void load_textures(void) {
 	if (gs_scene.textureCount == 0) return;
@@ -66,14 +85,22 @@ static void load_textures(void) {
 }
 
 /* Draws a smooth-skinned mesh (MeshInstance3DData.smoothSkinning): a weighted blend of up to
-   GS_MAX_SKIN_JOINTS_PER_MESH bones' own current world transforms, computed fresh for each vertex
-   (nsbmd_docs.txt's own "Calculate Skinning Equation" -- the same technique real DS games with smooth joints use).
-   The GPU still only ever has one "current" matrix, so this loads a freshly-blended one before each vertex instead
-   of setting one matrix for the whole mesh -- real per-vertex CPU and GX FIFO cost, which is why it's opt-in rather
-   than the default (see draw_mesh's own rigid path). Each joint's own world scale is folded in and used for *both*
-   the position and the normal transform (unlike the rigid path's own position-only scale, which keeps a uniformly-
-   scaled mesh's lighting correct) -- an approximation that's exact whenever a bone's own scale is 1, which every
-   bone in a real character rig's skeleton normally is.
+   GS_MAX_SKIN_JOINTS_PER_MESH bones' own current world transforms, recomputed whenever a vertex's own joint/weight
+   signature differs from the previous vertex's (nsbmd_docs.txt's own "Calculate Skinning Equation" -- the same
+   technique real DS games with smooth joints use; MKDS itself draws this way, which is exactly how it affords doing
+   it at 60 fps). The GPU still only ever has one "current" matrix, so a mesh with more than one distinct blend
+   across it needs more than one matrix load -- real CPU and GX FIFO cost, which is why it's opt-in rather than the
+   default (see draw_mesh's own rigid path) -- but three things keep that cost down to roughly what the rigid path
+   already pays for an ordinary mesh: (1) consecutive vertices sharing one signature (most of any real mesh, away
+   from a joint seam, where one bone carries full weight for a long run of vertices) skip the blend and the matrix
+   load entirely, reusing whatever's already loaded; (2) a vertex weighted entirely to one bone skips the weighted
+   sum and loads that bone's own matrix directly, the same single load the rigid path would do; (3) see the per-term
+   comment below on replacing a 32-bit divide (ARM9 has no hardware divide; every one is tens of cycles through
+   libgcc) with a multiply and a shift. Only a vertex that's a genuine multi-bone blend, immediately after a
+   different one, pays the full per-vertex cost this function was written to afford in the first place. Each joint's
+   own world scale is folded in and used for *both* the position and the normal transform (unlike the rigid path's
+   own position-only scale, which keeps a uniformly-scaled mesh's lighting correct) -- an approximation that's exact
+   whenever a bone's own scale is 1, which every bone in a real character rig's skeleton normally is.
 
    Every glLoadMatrix4x4 below *replaces* MODELVIEW rather than building on it, so draw_mesh's own glPushMatrix (which
    saved the camera's view) never actually reaches the GPU for this mesh unless it's folded back in here by hand --
@@ -87,37 +114,83 @@ static void load_textures(void) {
 static void draw_skinned_mesh(const GsMesh *mesh, const GsPrimitive *primitive) {
 	int jointCount = mesh->skinJointCount;
 	if (jointCount > GS_MAX_SKIN_JOINTS_PER_MESH) jointCount = GS_MAX_SKIN_JOINTS_PER_MESH;
-	int32_t jointMatrix[GS_MAX_SKIN_JOINTS_PER_MESH][16];
+	/* Packed 4x3 (column-major, 3 rows per column -- the m4x3 layout glLoadMatrix4x3/MATRIX_LOAD4x3 expects,
+	   confirmed against a known-good render rather than guessed), not the full 4x4: every
+	   affine matrix's own implicit bottom row (0, 0, 0, 1) is the same for all of them, so there's no reason to
+	   store it, blend it, or send it to the GPU 16 words at a time when 12 will do -- a quarter less FIFO traffic
+	   for every matrix load below, and a quarter less per-vertex multiply-accumulate work in the blend loop. */
+	int32_t jointMatrix[GS_MAX_SKIN_JOINTS_PER_MESH][12];
 	for (int j = 0; j < jointCount; j++) {
 		int node = gs_scene.skinJoints[mesh->skinJointStart + j];
-		int32_t worldWithScale[16];
-		memcpy(worldWithScale, gs_world_matrix[node].m, sizeof(worldWithScale));
-		for (int col = 0; col < 3; col++) {
-			int32_t s = gs_world_scale[node][col];
-			for (int row = 0; row < 3; row++) worldWithScale[col * 4 + row] = gs_mulf(worldWithScale[col * 4 + row], s);
+		const int32_t *invBind = gs_scene.skinInverseBindMatrices[mesh->skinJointStart + j].m;
+		/* A cache hit needs both this frame's number AND this exact invBindMatrix (see gs_skin_blend_source's own
+		   comment) -- the node index alone isn't enough to trust a value another mesh computed earlier this frame. */
+		if (gs_skin_blend_frame[node] != gs_frame_number || memcmp(gs_skin_blend_source[node], invBind, sizeof(int32_t[16])) != 0) {
+			int32_t worldWithScale[16];
+			memcpy(worldWithScale, gs_world_matrix[node].m, sizeof(worldWithScale));
+			for (int col = 0; col < 3; col++) {
+				int32_t s = gs_world_scale[node][col];
+				for (int row = 0; row < 3; row++) worldWithScale[col * 4 + row] = gs_mulf(worldWithScale[col * 4 + row], s);
+			}
+			int32_t boneWithBind[16];
+			mat4_multiply(worldWithScale, invBind, boneWithBind);
+			int32_t full[16];
+			mat4_multiply(gs_current_view.m, boneWithBind, full);
+			for (int col = 0; col < 4; col++)
+				for (int row = 0; row < 3; row++) gs_skin_blend_cache[node][col * 3 + row] = full[col * 4 + row];
+			memcpy(gs_skin_blend_source[node], invBind, sizeof(int32_t[16]));
+			gs_skin_blend_frame[node] = gs_frame_number;
 		}
-		int32_t boneWithBind[16];
-		mat4_multiply(worldWithScale, gs_scene.skinInverseBindMatrices[mesh->skinJointStart + j].m, boneWithBind);
-		mat4_multiply(gs_current_view.m, boneWithBind, jointMatrix[j]);
+		memcpy(jointMatrix[j], gs_skin_blend_cache[node], sizeof(jointMatrix[j]));
 	}
 
 	const int16_t *p = primitive->positions;
 	const uint32_t *n = primitive->normals;
 	const int16_t *uv = mesh->texture ? primitive->texcoords : 0;
+	const uint8_t *vj = primitive->skinJoints;
+	const uint8_t *vw = primitive->skinWeights;
 	int vertexCount = primitive->triangleCount * 3;
 
 	glMatrixMode(GL_MODELVIEW);
 	glBegin(GL_TRIANGLES);
+	/* An impossible joint/weight signature, so the very first vertex always computes and loads its own matrix. */
+	int lastJ[4] = { -1, -1, -1, -1 };
+	int lastW[4] = { -1, -1, -1, -1 };
 	for (int i = 0; i < vertexCount; i++) {
-		int32_t blended[16] = { 0 };
-		for (int k = 0; k < 4; k++) {
-			int w = primitive->skinWeights[i * 4 + k];
-			if (w == 0) continue;
-			int j = primitive->skinJoints[i * 4 + k];
-			if (j >= jointCount) continue;
-			for (int e = 0; e < 16; e++) blended[e] += (jointMatrix[j][e] * w) / 255;
+		const uint8_t *j4 = &vj[i * 4];
+		const uint8_t *w4 = &vw[i * 4];
+		/* ARM9 has no hardware divide (every `/` or `%` on it is a software call, tens of cycles vs. one or two for a
+		   multiply), and a real mesh reuses the same handful of joint/weight combinations across most of its
+		   vertices (an entire flat region away from a joint seam is typically one bone at full weight, repeated).
+		   Skipping both the blend math and the matrix reload whenever this vertex's signature matches the previous
+		   one's turns most meshes' per-vertex cost into a handful of reads and a compare, not 4 joints' worth of
+		   multiply-accumulate plus a GX FIFO matrix load every time. */
+		if (j4[0] != lastJ[0] || j4[1] != lastJ[1] || j4[2] != lastJ[2] || j4[3] != lastJ[3] ||
+			w4[0] != lastW[0] || w4[1] != lastW[1] || w4[2] != lastW[2] || w4[3] != lastW[3]) {
+			if (w4[0] == 255 && w4[1] == 0 && w4[2] == 0 && w4[3] == 0 && j4[0] < jointCount) {
+				/* The common case away from a joint seam: one bone at full weight, same as the rigid path would draw
+				   it -- no blend to compute at all, just load that bone's own already-blended (view * world *
+				   invBind) matrix. */
+				glLoadMatrix4x3((const m4x3 *)jointMatrix[j4[0]]);
+			} else {
+				int32_t blended[12] = { 0 };
+				for (int k = 0; k < 4; k++) {
+					int w = w4[k];
+					if (w == 0) continue;
+					int jt = j4[k];
+					if (jt >= jointCount) continue;
+					/* `x / 255` as `(x * 257) >> 16` -- 257/65536 is within 1 part in 65536 of 1/255, far finer than
+					   this 20.12 fixed point already resolves, and replaces a 32-bit divide with a multiply and a
+					   shift. The int64_t keeps a large translation component times 255*257 from overflowing. */
+					int w257 = w * 257;
+					const int32_t *jm = jointMatrix[jt];
+					for (int e = 0; e < 12; e++) blended[e] += (int32_t)(((int64_t)jm[e] * w257) >> 16);
+				}
+				glLoadMatrix4x3((const m4x3 *)blended);
+			}
+			lastJ[0] = j4[0]; lastJ[1] = j4[1]; lastJ[2] = j4[2]; lastJ[3] = j4[3];
+			lastW[0] = w4[0]; lastW[1] = w4[1]; lastW[2] = w4[2]; lastW[3] = w4[3];
 		}
-		glLoadMatrix4x4((const m4x4 *)blended);
 		if (uv) glTexCoord2t16(uv[i * 2], uv[i * 2 + 1]);
 		glNormal(n[i]);
 		glVertex3v16(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
@@ -240,6 +313,13 @@ static void enter_scene(int index, int first) {
 	glMatrixMode(GL_MODELVIEW);
 
 	gs_init_nodes();
+	free(gs_skin_blend_cache);
+	free(gs_skin_blend_frame);
+	free(gs_skin_blend_source);
+	gs_skin_blend_cache = malloc(sizeof(int32_t[12]) * gs_scene.nodeCount);
+	gs_skin_blend_frame = calloc(gs_scene.nodeCount, sizeof(uint16_t));
+	gs_skin_blend_source = malloc(sizeof(int32_t[16]) * gs_scene.nodeCount);
+	gs_frame_number = 0;
 	gs_init_mesh_anim();
 	gs_init_touch();
 	gs_init_sprites();
@@ -267,6 +347,7 @@ int main(void) {
 	const int32_t delta = gs_scene.fps == 30 ? 137 : 68;
 
 	while (pmMainLoop()) {
+		gs_frame_number++; /* 0 is "never computed" (gs_skin_blend_frame starts calloc'd to it), so this must run before any draw_skinned_mesh call. */
 		gs_read_input();
 		gs_update_touch(); /* before the scripts, which ask the touch areas */
 		for (int i = 0; i < scriptCount; i++) {

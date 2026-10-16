@@ -1,8 +1,8 @@
-import { buildArm, expandSceneInstances, flattenSceneTree, importGltf, type ProjectSnapshot, type RiggedModel } from "@goodstuff/core";
+import { buildArm, expandSceneInstances, flattenSceneTree, importGltf, type PrimitiveGeometry, type ProjectSnapshot, type RiggedModel } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { primitivesProject } from "./fixtures";
-import { translateScene3D } from "./translate-scene-3d";
+import { limitToTwoStrongestInfluences, reorderSkinnedTrianglesByBlendSignature, translateScene3D } from "./translate-scene-3d";
 
 /** STORY.smooth-vertex-skinning.md: an opt-in weighted blend of every bone a mesh's real skin data weighs it to, instead of just the strongest one. */
 
@@ -97,5 +97,119 @@ describe("smooth skinning in a compiled scene", () => {
     expect(diagnostics.some((d) => d.code === "smooth-skinning-missing-bone" && d.severity === "warning")).toBe(true);
     const dsMesh = scene!.meshes.find((m) => scene!.nodes[m.node].name === "Hip_mesh")!;
     expect(dsMesh.skinJointCount).toBe(0);
+  });
+});
+
+describe("reorderSkinnedTrianglesByBlendSignature (performance: STORY.smooth-vertex-skinning.md note 8)", () => {
+  /** Builds a triangle whose 3 vertices all share one blend signature, so the triangle itself is "pure" (the usual
+   * case away from a joint seam) -- `x` tags which source triangle this is, so a test can tell where it landed after
+   * reordering. */
+  function pureTriangle(x: number, joint: number): { positions: number[]; normals: number[]; skinJoints: number[]; skinWeights: number[] } {
+    return {
+      positions: [x, 0, 0, x, 1, 0, x, 0, 1],
+      normals: [0, 1, 0, 0, 1, 0, 0, 1, 0],
+      skinJoints: [joint, 0, 0, 0, joint, 0, 0, 0, joint, 0, 0, 0],
+      skinWeights: [255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0]
+    };
+  }
+
+  function concatTriangles(triangles: ReturnType<typeof pureTriangle>[]): PrimitiveGeometry {
+    return {
+      triangleCount: triangles.length,
+      positions: triangles.flatMap((t) => t.positions),
+      normals: triangles.flatMap((t) => t.normals),
+      skinJoints: triangles.flatMap((t) => t.skinJoints),
+      skinWeights: triangles.flatMap((t) => t.skinWeights)
+    };
+  }
+
+  /** Which source triangle (by its `x` tag) each output triangle came from, in output order. */
+  function triangleOrigins(geometry: PrimitiveGeometry): number[] {
+    const origins: number[] = [];
+    for (let t = 0; t < geometry.triangleCount; t++) origins.push(geometry.positions[t * 9]); // vertex 0's x
+    return origins;
+  }
+
+  it("groups triangles that share a bone together, even when the source interleaves them with a different bone's", () => {
+    // Joint 0, joint 1, joint 0, joint 1 in the source -- 3 signature changes between consecutive triangles.
+    const geometry = concatTriangles([pureTriangle(0, 0), pureTriangle(10, 1), pureTriangle(20, 0), pureTriangle(30, 1)]);
+    const reordered = reorderSkinnedTrianglesByBlendSignature(geometry);
+    expect(reordered.triangleCount).toBe(4);
+    const origins = triangleOrigins(reordered);
+    expect([...origins].sort((a, b) => a - b)).toEqual([0, 10, 20, 30]); // every source triangle survives, none duplicated or dropped (sorts a copy: .sort() mutates in place)
+    // Only one joint-boundary crossing now (the two joint-0 triangles grouped, the two joint-1 triangles grouped),
+    // down from three in the source order -- this is the whole point: draw_skinned_mesh's own runtime dedup only
+    // helps when matching vertices are actually adjacent in the compiled stream.
+    const jointOf = (origin: number) => (origin === 0 || origin === 20 ? 0 : 1);
+    let transitions = 0;
+    for (let i = 1; i < 4; i++) if (jointOf(origins[i]) !== jointOf(origins[i - 1])) transitions++;
+    expect(transitions).toBe(1);
+  });
+
+  it("keeps each triangle's own 3 vertices together, in their original relative order (winding untouched)", () => {
+    const geometry = concatTriangles([pureTriangle(0, 1), pureTriangle(10, 0)]);
+    const reordered = reorderSkinnedTrianglesByBlendSignature(geometry);
+    for (let t = 0; t < reordered.triangleCount; t++) {
+      const x = reordered.positions[t * 9];
+      // The 3 vertices' own y/z pattern (0,0 / 1,0 / 0,1) is pureTriangle's fixed shape: if winding had been
+      // scrambled this wouldn't match for at least one of the two triangles.
+      expect(reordered.positions.slice(t * 9, t * 9 + 9)).toEqual([x, 0, 0, x, 1, 0, x, 0, 1]);
+      expect(reordered.skinJoints!.slice(t * 12, t * 12 + 12)).toEqual(x === 0 ? [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+  });
+
+  it("leaves a mesh with no skin data untouched -- the very same object, not even a copy", () => {
+    const geometry: PrimitiveGeometry = { triangleCount: 1, positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 1, 0, 0, 1, 0, 0, 1, 0] };
+    expect(reorderSkinnedTrianglesByBlendSignature(geometry)).toBe(geometry);
+  });
+
+  it("carries UVs along in lockstep when the mesh has them", () => {
+    const geometry: PrimitiveGeometry = {
+      ...concatTriangles([pureTriangle(0, 1), pureTriangle(10, 0)]),
+      uvs: [0, 0, 0, 1, 1, 0, /* triangle 1 */ 1, 1, 1, 0, 0, 1]
+    };
+    const reordered = reorderSkinnedTrianglesByBlendSignature(geometry);
+    // Joint-0 triangle (source index 1, x=10) sorts before joint-1 (source index 0, x=0): its own UVs (the second
+    // trio in the source) must be the ones that moved to the front, not the first trio's.
+    expect(reordered.uvs!.slice(0, 6)).toEqual([1, 1, 1, 0, 0, 1]);
+  });
+});
+
+describe("limitToTwoStrongestInfluences (performance: STORY.smooth-vertex-skinning.md note 10)", () => {
+  function oneVertexGeometry(joints: number[], weights: number[]): PrimitiveGeometry {
+    return { triangleCount: 0, positions: [], normals: [], skinJoints: joints, skinWeights: weights };
+  }
+
+  it("drops the 2 weakest of 4 influences and renormalizes the 2 kept so they still sum to 1", () => {
+    // Joint 2 (0.1) and joint 3 (0.05) are the weakest; joint 0 (0.6) and joint 1 (0.25) survive, renormalized
+    // 0.6/0.85 and 0.25/0.85.
+    const geometry = oneVertexGeometry([0, 1, 2, 3], [0.6, 0.25, 0.1, 0.05]);
+    const limited = limitToTwoStrongestInfluences(geometry);
+    expect(limited.skinJoints).toEqual([0, 1, 0, 0]);
+    expect(limited.skinWeights![0]).toBeCloseTo(0.6 / 0.85, 10);
+    expect(limited.skinWeights![1]).toBeCloseTo(0.25 / 0.85, 10);
+    expect(limited.skinWeights![2]).toBe(0);
+    expect(limited.skinWeights![3]).toBe(0);
+  });
+
+  it("leaves an already-2-bone (or fewer) vertex's weights numerically unchanged", () => {
+    const geometry = oneVertexGeometry([4, 5, 0, 0], [0.5, 0.5, 0, 0]);
+    const limited = limitToTwoStrongestInfluences(geometry);
+    expect(limited.skinJoints).toEqual([4, 5, 0, 0]);
+    expect(limited.skinWeights).toEqual([0.5, 0.5, 0, 0]);
+  });
+
+  it("finds the top 2 regardless of which of the 4 slots they start in", () => {
+    // The two strongest (0.4 at slot 3, 0.35 at slot 0) are not adjacent and not in slots 0-1.
+    const geometry = oneVertexGeometry([10, 11, 12, 13], [0.35, 0.1, 0.15, 0.4]);
+    const limited = limitToTwoStrongestInfluences(geometry);
+    expect(limited.skinJoints).toEqual([10, 0, 0, 13]);
+    expect(limited.skinWeights![0]).toBeCloseTo(0.35 / 0.75, 10);
+    expect(limited.skinWeights![3]).toBeCloseTo(0.4 / 0.75, 10);
+  });
+
+  it("leaves a mesh with no skin data untouched -- the very same object, not even a copy", () => {
+    const geometry: PrimitiveGeometry = { triangleCount: 1, positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 1, 0, 0, 1, 0, 0, 1, 0] };
+    expect(limitToTwoStrongestInfluences(geometry)).toBe(geometry);
   });
 });

@@ -38,6 +38,7 @@ import {
   DS_MIN_PLAYBACK_HZ,
   type FpsTarget,
   type ImportedSound,
+  type PrimitiveGeometry,
   type ProjectScript,
   type ProjectSnapshot,
   type SceneNode,
@@ -103,6 +104,102 @@ export interface TranslateResult {
  */
 export function orderGlobalsForRuntime(globals: readonly ProjectGlobal[]): ProjectGlobal[] {
   return [...globals].sort((a, b) => Number(a.type === "string") - Number(b.type === "string"));
+}
+
+/**
+ * A smooth-skinned primitive's own vertices, reordered triangle by triangle so ones sharing a vertex 0 blend
+ * signature (its 4 joints + 4 weights) end up next to each other in the compiled vertex stream. `draw_skinned_mesh`
+ * (main.c) skips recomputing a vertex's blended matrix, and skips reloading it onto the GPU, whenever a vertex's own
+ * signature matches the previous one's -- a real win for a mesh with large uniform regions away from any joint
+ * seam, but only if those vertices actually end up adjacent in the stream it draws. A source file's own triangle
+ * order has no reason to group them that way (an ordinary export walks faces in whatever order the authoring tool
+ * used, not by which bone they're closest to), and real, continuously-painted weights (a typical Mixamo-style
+ * rig, unlike this codebase's own simple hand-built test fixtures) rarely happen to repeat an identical quantized
+ * signature between consecutive source-order vertices by luck. Sorting so matching triangles cluster regardless of
+ * where they fell in the original mesh turns that "rarely" into "almost always" for any triangle entirely within
+ * one bone's region, which is most of a real character away from its joints.
+ *
+ * Only ever reorders *whole* triangles (the 3 vertices of one triangle always move together, same relative order,
+ * so winding and the face's own normal direction are untouched) and only when the mesh actually carries skin data;
+ * a plain mesh's geometry is returned as-is, the same object, not a copy. Safe for a shared primitive's rigid
+ * instances too: a rigid draw transforms the whole primitive by one matrix regardless of triangle order, and
+ * main.c's own translucent-blending comment already notes triangles sharing one mesh's poly ID don't depth-test
+ * against each other, so intra-mesh order was never meaningful there either.
+ */
+/**
+ * Keeps only each vertex's 2 strongest bone influences, zeroing and renormalizing the rest (so the kept 2 still
+ * sum to 1), before a smooth-skinned mesh's geometry is quantized or reordered. Real-time skinning -- and any real
+ * DS game -- blends 2 bones, not 4: a vertex near a joint is overwhelmingly dominated by the two segments meeting
+ * there (the parent and the child), and a 3rd or 4th influence most import pipelines (Mixamo, Blender's auto
+ * weights) produce is a small, often barely visible refinement. `draw_skinned_mesh`'s own per-vertex blend
+ * (main.c) scans up to 4 joint slots for a vertex that's a genuine multi-bone blend -- the one per-vertex cost
+ * this engine can't dedup or fast-path away, since that vertex really does need its own fresh matrix. Halving how
+ * many of those slots actually carry weight halves that one remaining irreducible cost, the same tradeoff
+ * real-time graphics has used for decades to afford skinning at all on constrained hardware. A side benefit:
+ * fewer distinct weight combinations overall also means `reorderSkinnedTrianglesByBlendSignature` (below) finds
+ * more exact matches to group, since two vertices that only differed in a dropped 3rd/4th influence now carry
+ * the identical 2-bone signature.
+ */
+export function limitToTwoStrongestInfluences(geometry: PrimitiveGeometry): PrimitiveGeometry {
+  const { skinJoints, skinWeights } = geometry;
+  if (!skinJoints || !skinWeights) return geometry;
+  const newJoints = skinJoints.slice();
+  const newWeights = skinWeights.slice();
+  for (let i = 0; i < skinWeights.length; i += 4) {
+    let a = 0;
+    let b = 1;
+    if (skinWeights[i + b] > skinWeights[i + a]) [a, b] = [b, a];
+    for (let k = 2; k < 4; k++) {
+      const w = skinWeights[i + k];
+      if (w > skinWeights[i + a]) {
+        b = a;
+        a = k;
+      } else if (w > skinWeights[i + b]) {
+        b = k;
+      }
+    }
+    const sum = skinWeights[i + a] + skinWeights[i + b];
+    if (sum === 0) continue; // every slot already 0 -- not a real skinned vertex; leave it alone rather than divide by zero
+    for (let k = 0; k < 4; k++) {
+      if (k === a) newWeights[i + k] = skinWeights[i + a] / sum;
+      else if (k === b) newWeights[i + k] = skinWeights[i + b] / sum;
+      else {
+        newWeights[i + k] = 0;
+        newJoints[i + k] = 0;
+      }
+    }
+  }
+  return { ...geometry, skinJoints: newJoints, skinWeights: newWeights };
+}
+
+export function reorderSkinnedTrianglesByBlendSignature(geometry: PrimitiveGeometry): PrimitiveGeometry {
+  const { skinJoints, skinWeights } = geometry;
+  if (!skinJoints || !skinWeights) return geometry;
+  const vertexKey = (v: number): string => {
+    const si = v * 4;
+    return `${skinJoints[si]},${skinJoints[si + 1]},${skinJoints[si + 2]},${skinJoints[si + 3]}:${skinWeights[si]},${skinWeights[si + 1]},${skinWeights[si + 2]},${skinWeights[si + 3]}`;
+  };
+  const triangleKey = (t: number): string => `${vertexKey(t * 3)}|${vertexKey(t * 3 + 1)}|${vertexKey(t * 3 + 2)}`;
+  const order = Array.from({ length: geometry.triangleCount }, (_, t) => t);
+  const keys = order.map(triangleKey);
+  order.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : a - b));
+  const pick = (src: readonly number[], stride: number): number[] => {
+    const out: number[] = new Array(src.length);
+    for (let newT = 0; newT < order.length; newT++) {
+      const from = order[newT] * 3 * stride;
+      const to = newT * 3 * stride;
+      for (let k = 0; k < 3 * stride; k++) out[to + k] = src[from + k];
+    }
+    return out;
+  };
+  return {
+    ...geometry,
+    positions: pick(geometry.positions, 3),
+    normals: pick(geometry.normals, 3),
+    ...(geometry.uvs ? { uvs: pick(geometry.uvs, 2) } : {}),
+    skinJoints: pick(skinJoints, 4),
+    skinWeights: pick(skinWeights, 4)
+  };
 }
 
 interface Collected {
@@ -548,7 +645,9 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     const key = (texture ? `${meshSourceKey(mesh)}|texture:${texture.id}` : meshSourceKey(mesh)) + (frame > 0 ? `#frame${frame}` : "");
     const existing = primitiveIndex.get(key);
     if (existing !== undefined) return existing;
-    const geometry = (frame > 0 ? resolveMeshFrameGeometry(mesh, project.meshes, frame) : resolveMeshGeometry(mesh, project.meshes))!;
+    const geometry = reorderSkinnedTrianglesByBlendSignature(
+      limitToTwoStrongestInfluences((frame > 0 ? resolveMeshFrameGeometry(mesh, project.meshes, frame) : resolveMeshGeometry(mesh, project.meshes))!)
+    );
     const normals: number[] = [];
     for (let i = 0; i < geometry.normals.length; i += 3) {
       normals.push(packNormal(geometry.normals[i], geometry.normals[i + 1], geometry.normals[i + 2]));

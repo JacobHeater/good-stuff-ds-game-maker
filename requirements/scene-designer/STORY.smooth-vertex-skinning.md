@@ -216,6 +216,106 @@ correction: "it should ask if you want skin on import, it is not a toggle actual
      per-vertex cost. Verified with a new `smooth-vertex-skinning.rom.test.ts` case that toggles every mesh of the
      fixture's rigged model at once (not just one) and asserts the model still draws something; confirmed this fails
      (nothing but backdrop) with the fix reverted and passes restored.
+  8. **Performance pass, once correctness was confirmed**: `draw_skinned_mesh`'s own correctness fix above (bug 7)
+     didn't touch its cost -- still a full blend and a full matrix load for every single vertex, which doesn't scale
+     to a real game's several skinned, animated characters on screen together. Four changes, all internal to
+     `draw_skinned_mesh` and `enter_scene`/the main loop, no data-format or compiler changes, so nothing else could
+     regress:
+     - **No more per-component divide.** ARM9 has no hardware divide (`/255` was a software libgcc call, tens of
+       cycles, up to 64 times a vertex); replaced with `(x * 257) >> 16`, a multiply and a shift accurate to 1 part
+       in 65536 -- finer than this engine's own 20.12 fixed point already resolves.
+     - **A vertex weighted entirely to one bone** (the common case away from a joint seam -- most of any real mesh)
+       skips the weighted-sum math and loads that bone's own matrix directly, same as the rigid path would.
+     - **Consecutive vertices sharing one joint/weight signature** skip the blend *and* the matrix reload entirely,
+       reusing whatever's already loaded -- grouping by blend signature is exactly what nsbmd_docs.txt's own
+       "Calculate Skinning Equation" describes, and how MKDS itself affords this at 60 fps.
+     - **Packed 4x3 matrices (`glLoadMatrix4x3`), not 4x4.** Every affine matrix's own bottom row is always the
+       constant `(0, 0, 0, 1)`; there's no reason to blend it or send it to the GPU. A quarter less per-vertex
+       multiply-accumulate work and a quarter less GX FIFO traffic on every matrix load. **The exact element order
+       `m4x3.m[]` expects is not documented anywhere findable in this session (GBATEK's relevant section couldn't be
+       located; libnds's own header gives no usable example)** -- so it was determined empirically: render a known
+       rotated (not just translated -- an identity rotation's transpose is still the identity, so a rest pose can't
+       tell column-major from row-major apart) pose through the old, verified-correct `glLoadMatrix4x4` path and
+       through each 4x3 candidate, same camera, same ROM harness, and compare by eye (the harness's own frame-to-frame
+       pixel noise -- confirmed by rebuilding the *same* source twice and diffing, ~7% of pixels differ either way,
+       likely renderer dither/edge jitter -- ruled out an exact byte-diff as a verification method). A row-major guess
+       produced an obviously sheared, wrong silhouette; column-major (3 rows per column, same column order as the
+       4x4 version, just the constant 4th row dropped) matched exactly. If `videoGL.h` or GBATEK's matrix-command
+       section is ever easy to consult directly, it would be worth confirming this against the primary source rather
+       than this empirical derivation.
+     - **One blended (view * world * invBind) matrix per bone, cached for the rest of the current frame**, not
+       recomputed from scratch by every mesh that references it. A rigged character is normally several meshes (head,
+       torso, arms, legs, ...) skinned to one shared skeleton, so the same bone is very often a joint of more than one
+       of them -- exactly gs_runtime.c's own `ComposeMemo` rationale ("a move cost 7ms in a 30-block tower... now it
+       costs what the blocks that actually moved cost"), applied to skin blending instead of node composition. A
+       cache "hit" is only trusted once the triggering mesh's own `invBindMatrix` is confirmed byte-identical to
+       whatever computed the cached entry (not just assumed from the node index matching) -- the compiler currently
+       writes each mesh's own copy into `skinInverseBindMatrices` rather than one shared entry per bone, so two
+       meshes referencing the same bone are not guaranteed (by the data format, even though every real rig in
+       practice satisfies it) to carry pointer-identical or even value-identical copies, and this check is what keeps
+       the cache correct either way, never just fast.
+     - **Verified**: the three skinning ROM tests still pass (`smooth-vertex-skinning`, `rigged-models`,
+       `animated-meshes`), full `vitest run` (1343 tests) and `tsc --noEmit` clean, and the 4x3 matrix order was
+       independently confirmed against a known-good render as described above, not just by the tests passing (the
+       existing ROM tests' own pixel-bucket assertions are too coarse to catch a subtly wrong matrix layout on their
+       own). **Not measured**: an actual frames-per-second number, on hardware or in a cycle-accurate profiler --
+       this session had no profiler available, so the case for this pass rests on removing real, identifiable
+       per-vertex costs (a software divide, redundant matrix loads, redundant per-mesh joint setup), not a
+       before/after timing number.
+  9. **The gap in note 8's own pass, found from a real-hardware report of ~12-15 fps with just two skinned
+     characters**: every runtime optimization above that depends on "consecutive vertices sharing one signature"
+     (the dedup, and the single-bone fast path riding on it) only helps if those vertices are actually adjacent in
+     the compiled vertex stream -- and a source file's own triangle order has no reason to put them there. This
+     codebase's own test fixtures (`buildArm`) happen to have simple, chunky weight assignments where nearby source
+     triangles often do already share a signature, which is exactly why note 8's ROM tests kept passing without
+     exposing this: a real character rig, smoothly weight-painted in Blender or Mixamo, has a near-unique signature
+     per vertex, so two consecutive vertices sharing one by luck of the source file's own face order is rare, not
+     common -- the dedup this story built to make smooth skinning affordable essentially never fired on content
+     shaped like that, leaving the *original*, un-amortized per-vertex cost (note 8 was solving a problem this
+     codebase's own fixtures couldn't actually exhibit). Fixed in `translate-scene-3d.ts`'s new
+     `reorderSkinnedTrianglesByBlendSignature`: a compiled, smooth-skin-carrying primitive's triangles (whole
+     triangles, never splitting one across the reorder -- winding and face direction untouched) are sorted by their
+     own vertices' blend signature before being written out, so triangles sharing a bone cluster together in the
+     stream `draw_skinned_mesh` actually walks, regardless of where they fell in the source mesh. This runs once at
+     compile time in Node, not on the DS, so its own cost is irrelevant next to what it saves every single frame on
+     hardware. Only applied to meshes that carry skin data at all (a plain mesh's geometry object is returned
+     unchanged, not even copied); safe for a primitive's *rigid* instances too, since a rigid draw already doesn't
+     care about triangle order (one matrix for the whole primitive) and main.c's own translucent-blending comment
+     already established that triangles sharing one mesh's poly ID don't depth-test against each other, so order
+     was never meaningful there either. Verified with new `smooth-vertex-skinning.test.ts` cases exercising the
+     reorder function directly (not just end-to-end): a 4-triangle case alternating two bones' worth of triangles
+     goes from 3 signature-boundary crossings to 1 after reordering, every source triangle survives exactly once,
+     each triangle's own 3 vertices (and its UVs, when present) stay together in their original relative order, and
+     a mesh with no skin data comes back as the exact same object. Full `vitest run` (1347 tests) and the three
+     skinning ROM tests still pass. **Still not measured on real hardware** -- this is the change most likely to
+     matter for a real, continuously-weight-painted character rig, since it's the one that makes note 8's dedup
+     actually apply to that kind of content instead of only to this codebase's own simple test fixtures, but
+     confirming that needs the on-hardware retest this story keeps not having access to.
+  10. **Real hardware confirmed note 9 helped but was still not enough (~12-15 fps with two skinned, animated
+      characters)**. One more lever, this time trading a little blend quality for the one remaining cost that
+      genuinely can't be dedup'd or fast-pathed away: a vertex that is actually a multi-bone blend (at a joint
+      seam, immediately after a differently-blended vertex) still pays `draw_skinned_mesh`'s full per-vertex cost,
+      and that cost scales with how many of the 4 weight slots a vertex actually uses. Real-time skinning --
+      including any real DS-era game -- blends 2 bones, not 4: a vertex is overwhelmingly dominated by the two
+      segments meeting at its nearest joint, and a 3rd or 4th influence most import pipelines (Mixamo, Blender's
+      auto weights) attach is a small, often barely visible refinement. `translate-scene-3d.ts`'s new
+      `limitToTwoStrongestInfluences` keeps each vertex's 2 largest weights and renormalizes them to still sum to
+      1, zeroing the rest, before the geometry is quantized or reordered (note 9's own reordering runs on the
+      *result*, so fewer distinct signatures overall also means more vertices now match exactly where they
+      previously differed only by a dropped weak 3rd/4th influence -- the two optimizations compound). This halves
+      the worst-case per-vertex multiply-accumulate work for any vertex that previously used 3 or 4 slots; it is a
+      pure no-op (byte-identical weights) for the overwhelming majority of real vertices, which are already single-
+      or double-influenced. Verified with new `limitToTwoStrongestInfluences` unit tests (drops the correct 2 of 4
+      and renormalizes exactly; leaves an already-≤2-bone vertex numerically unchanged; finds the top 2 regardless
+      of which slots they start in; a mesh with no skin data is returned as the same object, untouched) and the
+      three skinning ROM tests, plus the full `vitest run` (1351 tests) and `tsc --noEmit`, all still passing.
+      **Still not verified on real hardware** -- same limitation as note 9: this session has no profiler or DS unit
+      to confirm the magnitude, only the reasoning for why this specific, previously-irreducible cost should now
+      be smaller. If a real rig's characters are still too slow after this, the next things worth checking are
+      outside what more C or compiler cleverness can fix: how many triangles each character actually has against
+      the DS's own ~2048-triangles-a-frame hardware ceiling (mentioned in `primitive-geometry.ts`'s own doc
+      comment), and whether smooth skinning is turned on for every mesh of a character or could be limited to just
+      the joints that visibly need it (an elbow or knee), leaving the rest on the already-cheap rigid path.
 - **Unit tests**: `gltf-import.test.ts` (a vertex split 50/50 between two bones round-trips its joints/weights/
   inverse-bind-matrices exactly, verified by reconstructing the vertex's real rest-pose world position from the
   stored data by hand, per the documented blend formula -- not just checking the data's shape; a further case inflates
