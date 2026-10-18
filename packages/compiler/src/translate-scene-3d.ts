@@ -8,9 +8,11 @@ import {
   dsVolume,
   getAnimationPlayer,
   getAudioPlayer,
+  getCameraFarPlane,
   getCollisionShape,
   getLightIntensity,
   getSkyBox,
+  isCurrentSkyBox,
   parseMeshColor,
   getSoundByteSize,
   getSpriteTransform,
@@ -542,17 +544,6 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     });
   }
 
-  // Sky box: only one makes sense (it fills the whole screen behind everything), so extras are left out, same as an
-  // extra camera.
-  if (skyBoxes.length > 1) {
-    diagnostics.push({
-      severity: "warning",
-      code: "multiple-sky-boxes",
-      nodeName: skyBoxes[0].node.name,
-      message: `The scene has ${skyBoxes.length} sky boxes; only the first one in the tree is used.`
-    });
-  }
-
   // Triangle budget, from the same geometry that is emitted. Targeting 30fps gives the GPU twice as long per frame, so
   // it doubles how many triangles fit (triangleBudgetFor).
   const triangles = drawableMeshes.reduce((sum, { node }) => sum + resolveMeshGeometry(node.mesh!, project.meshes)!.triangleCount, 0);
@@ -945,16 +936,21 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     dsLights.push({ node: index, color: rgb15(level, level, level), direction: [toV10(-x), toV10(-y), toV10(-z)] });
   }
 
-  // Sky box: at most one (the warning above already covers more than one); the DS has no hardware gradient clear,
-  // so this is drawn as a full-screen two-triangle polygon instead (STORY.sky-box.md) -- the runtime just needs its
-  // two colors, not a node reference (its own position/rotation/scale are unused, the whole point of it).
-  let dsSkyBox: DsScene3D["skyBox"] = null;
-  if (skyBoxes.length > 0) {
-    const sky = getSkyBox(skyBoxes[0].node);
+  // Sky box (STORY.sky-box.md): every SkyBox3D in the scene compiles in (day/night and similar cycles are built
+  // from several, switched at runtime by each one's own ordinary node visibility -- see draw_sky_box's own comment
+  // in main.c -- not a dedicated runtime switch), ordered with the one marked current (or, with none marked, the
+  // first in the tree -- the same fallback Camera3D's own `current` uses) first, so a scene that happens to have
+  // more than one visible at once draws that one. The DS has no hardware gradient clear, so each compiles to a
+  // full-screen two-triangle polygon instead; the runtime needs its own node (to read that visibility) and its two
+  // colors -- its position/rotation/scale stay unused, the whole point of it.
+  const currentSkyBox = skyBoxes.find((entry) => isCurrentSkyBox(entry.node, skyBoxes.map((e) => e.node))) ?? null;
+  const orderedSkyBoxes = currentSkyBox ? [currentSkyBox, ...skyBoxes.filter((entry) => entry !== currentSkyBox)] : skyBoxes;
+  const dsSkyBoxes: DsScene3D["skyBoxes"] = orderedSkyBoxes.map(({ node, index }) => {
+    const sky = getSkyBox(node);
     const top = parseMeshColor(sky.topColor) ?? [0, 0, 0];
     const horizon = parseMeshColor(sky.horizonColor) ?? [0, 0, 0];
-    dsSkyBox = { topColor: rgb15(top[0], top[1], top[2]), horizonColor: rgb15(horizon[0], horizon[1], horizon[2]), distance: sky.distance };
-  }
+    return { node: index, topColor: rgb15(top[0], top[1], top[2]), horizonColor: rgb15(horizon[0], horizon[1], horizon[2]) };
+  });
 
   const { tileMaps: dsTileMaps3D, paletteEntries: tileMap3DPaletteEntries, chunkFiles: tileMap3DChunkFiles } = compileTileMap3D(
     tileMaps3D,
@@ -972,7 +968,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     fovDegrees: DEFAULTS.fovDegrees,
     tanHalfFov: Math.tan((DEFAULTS.fovDegrees * Math.PI) / 360),
     nearPlane: DEFAULTS.nearPlane,
-    farPlane: DEFAULTS.farPlane,
+    farPlane: getCameraFarPlane(cameraEntry.node),
     view: matrixF32(invertAffine(withoutScale(cameraEntry.world)))
   }));
 
@@ -1209,7 +1205,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       fps: options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget,
       camera: dsCamera,
       lights: dsLights,
-      skyBox: dsSkyBox,
+      skyBoxes: dsSkyBoxes,
       tileMaps3D: dsTileMaps3D,
       tileMap3DPaletteEntries,
       tileMap3DChunkFiles,

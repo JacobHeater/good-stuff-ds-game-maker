@@ -1,6 +1,6 @@
 import { listScenes, MESH_CULL_MODES, withSceneTree } from "@goodstuff/core";
 import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshCullMode, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type SkyBoxData, type Vector3 } from "@goodstuff/core";
-import { findSceneNode, flattenSceneTree, flattenSceneTreeInOrder, getImportedTriangleCount, getLightIntensity, getSkyBox, isCurrentCamera, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry, alphaLevelFromOpacity, getMeshOpacity, SKY_BOX_DISTANCE_MIN, SKY_BOX_DISTANCE_MAX } from "@goodstuff/core";
+import { findSceneNode, flattenSceneTree, flattenSceneTreeInOrder, getImportedTriangleCount, getLightIntensity, getSkyBox, isCurrentCamera, isCurrentSkyBox, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry, alphaLevelFromOpacity, getMeshOpacity, getCameraFarPlane, CAMERA_FAR_PLANE_MIN, CAMERA_FAR_PLANE_MAX } from "@goodstuff/core";
 import { useEditorStore, type Transform3DField } from "../state/editor-store";
 import { AnimationPlayerField } from "./AnimationPlayerField";
 import { AudioPlayerField } from "./AudioPlayerField";
@@ -94,15 +94,17 @@ function IntensityField({
 /** A SkyBox3D's own two colors: a screen-space gradient, top color blending down into the horizon color (STORY.sky-box.md). */
 function SkyBoxField({
   node,
+  skyBoxesInScene,
   onChange,
-  onGestureBoundary
+  onChangeCurrent
 }: {
   node: SceneNode;
+  /** Every SkyBox3D in the same scene, in tree order -- for `isCurrentSkyBox`; see the "Current" checkbox below. */
+  skyBoxesInScene: readonly SceneNode[];
   onChange: (change: Partial<SkyBoxData>) => void;
-  onGestureBoundary: () => void;
+  onChangeCurrent: (current: boolean) => void;
 }): JSX.Element {
   const sky = getSkyBox(node);
-  const distancePercent = Math.round(((sky.distance - SKY_BOX_DISTANCE_MIN) / (SKY_BOX_DISTANCE_MAX - SKY_BOX_DISTANCE_MIN)) * 100);
   return (
     <>
       <Field label="Top color">
@@ -123,26 +125,18 @@ function SkyBoxField({
           className="h-6 w-10 cursor-pointer rounded border border-editor-border bg-editor-panel-alt"
         />
       </Field>
-      <Field label="Distance">
-        <div className="flex items-center gap-2">
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={distancePercent}
-            aria-label="Distance"
-            onChange={(event) => onChange({ distance: SKY_BOX_DISTANCE_MIN + (Number(event.target.value) / 100) * (SKY_BOX_DISTANCE_MAX - SKY_BOX_DISTANCE_MIN) })}
-            onPointerDown={onGestureBoundary}
-            onPointerUp={onGestureBoundary}
-            onBlur={onGestureBoundary}
-            className="flex-1"
-          />
-          <span className="w-14 text-right tabular-nums text-editor-text-muted">{sky.distance.toFixed(1)}u</span>
-        </div>
-      </Field>
+      <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="sky-box-current">
+        <input
+          type="checkbox"
+          checked={isCurrentSkyBox(node, skyBoxesInScene)}
+          onChange={(event) => onChangeCurrent(event.target.checked)}
+          aria-label="Default sky box"
+        />
+        Default sky box (which one shows before a script changes any visibility)
+      </label>
       <div className="text-[10px] text-editor-text-muted">
-        Fills the screen behind everything else, top color at the top edge blending into horizon color at the bottom. Fixed on the screen -- it doesn't turn with the camera. Its own size always fills the screen regardless of distance; moving it closer or farther mostly matters for how it sits relative to nearby geometry.
+        Fills the screen behind everything else, top color at the top edge blending into horizon color at the bottom. Fixed on the screen -- it doesn't turn with the camera, and it's always placed just inside the scene's own camera far plane, so real geometry at any distance within it draws correctly in front.
+        For a day/night (or similar) cycle, add more than one SkyBox3D and toggle each one's own Visible checkbox from a script -- the runtime draws whichever is visible.
       </div>
     </>
   );
@@ -308,7 +302,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setSkyBoxCurrent, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush, setCameraFarPlane } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -460,7 +454,13 @@ export function InspectorPanel(): JSX.Element {
               />
             )}
             {node.kind === "SkyBox3D" && (
-              <SkyBoxField key={node.id} node={node} onChange={(change) => setSkyBox(node.id, change)} onGestureBoundary={endEditGesture} />
+              <SkyBoxField
+                key={node.id}
+                node={node}
+                skyBoxesInScene={flattenSceneTreeInOrder(state.sceneRoot).filter((n) => n.kind === "SkyBox3D")}
+                onChange={(change) => setSkyBox(node.id, change)}
+                onChangeCurrent={(current) => setSkyBoxCurrent(node.id, current)}
+              />
             )}
             {node.kind === "Camera3D" && (
               <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="camera-current">
@@ -472,6 +472,22 @@ export function InspectorPanel(): JSX.Element {
                 />
                 Current camera (the one this scene's ROM sees through)
               </label>
+            )}
+            {node.kind === "Camera3D" && (
+              <Field label="Far plane">
+                <input
+                  type="number"
+                  min={CAMERA_FAR_PLANE_MIN}
+                  max={CAMERA_FAR_PLANE_MAX}
+                  value={getCameraFarPlane(node)}
+                  onChange={(event) => setCameraFarPlane(node.id, Number(event.target.value))}
+                  className={inputClasses}
+                  aria-label="Far plane"
+                />
+                <span className="text-[10px] text-editor-text-muted">
+                  How far this camera can see, in scene units ({CAMERA_FAR_PLANE_MIN}..{CAMERA_FAR_PLANE_MAX}).
+                </span>
+              </Field>
             )}
             {node.mesh && (
               <TextureField

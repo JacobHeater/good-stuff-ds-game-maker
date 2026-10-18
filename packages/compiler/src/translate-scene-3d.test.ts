@@ -44,6 +44,18 @@ describe("translating a valid 3D project", () => {
     expect(translateScene3D(cubeProject(), { fpsTarget: 30 }).scene!.fps).toBe(30);
   });
 
+  it("defaults the camera's far plane to 100, and uses the active camera's own value, clamped, when it has one", () => {
+    expect(scene!.camera.farPlane).toBe(100);
+    const project = cubeProject();
+    const camera = project.scene.children.find((n) => n.kind === "Camera3D")!;
+    camera.camera = { farPlane: 300 };
+    expect(translateScene3D(project).scene!.camera.farPlane).toBe(300);
+    camera.camera = { farPlane: 1 }; // below CAMERA_FAR_PLANE_MIN
+    expect(translateScene3D(project).scene!.camera.farPlane).toBe(5);
+    camera.camera = { farPlane: 99999 }; // above CAMERA_FAR_PLANE_MAX
+    expect(translateScene3D(project).scene!.camera.farPlane).toBe(1000);
+  });
+
   it("emits each used primitive once, and only the used ones", () => {
     expect(scene!.primitives.map((p) => p.label)).toEqual(["cube"]);
     const all = translateScene3D(primitivesProject()).scene!;

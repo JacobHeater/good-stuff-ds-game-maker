@@ -1,4 +1,4 @@
-import { createBlankSceneTree, createProjectSnapshot, DEFAULT_SKY_BOX, findSceneNode, getSkyBox, withUpdatedScene } from "@goodstuff/core";
+import { createBlankSceneTree, createProjectSnapshot, DEFAULT_SKY_BOX, findSceneNode, getSkyBox, isCurrentSkyBox, withUpdatedScene } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { createInitialState, editorReducer, hasUnsavedChanges, type Action, type EditorState } from "./editor-store";
@@ -68,5 +68,72 @@ describe("sky box color edits", () => {
     const { state, id } = withSkyBox();
     const changed = run(state, set(id, { topColor: "#ff0000", horizonColor: "#0000ff", distance: 2 }, 0));
     expect(findSceneNode(withUpdatedScene(changed.project!, changed.sceneRoot).scene, id)!.skyBox).toEqual({ topColor: "#ff0000", horizonColor: "#0000ff", distance: 2 });
+  });
+});
+
+/** requirements/scene-designer/STORY.sky-box.md: a scene's own default sky box, for a day/night (or similar) cycle built from more than one. */
+describe("a scene's default sky box", () => {
+  function withTwoSkyBoxes(): { state: EditorState; first: string; second: string } {
+    const withFirst = run(openProject(), { type: "ADD_NODE", kind: "SkyBox3D" });
+    const first = withFirst.selectedNodeId!;
+    const reselected = run(withFirst, { type: "SELECT_NODE", id: withFirst.sceneRoot.id });
+    const withSecond = run(reselected, { type: "ADD_NODE", kind: "SkyBox3D" });
+    const second = withSecond.selectedNodeId!;
+    return { state: withSecond, first, second };
+  }
+
+  it("defaults to the first SkyBox3D added, and marking another current switches it, and undoes", () => {
+    const { state, first, second } = withTwoSkyBoxes();
+    const skiesOf = (s: EditorState) => [findSceneNode(s.sceneRoot, first)!, findSceneNode(s.sceneRoot, second)!];
+    expect(isCurrentSkyBox(skiesOf(state)[0], skiesOf(state))).toBe(true);
+    expect(isCurrentSkyBox(skiesOf(state)[1], skiesOf(state))).toBe(false);
+
+    const switched = run(state, { type: "SET_SKY_BOX_CURRENT", id: second, current: true });
+    expect(isCurrentSkyBox(skiesOf(switched)[0], skiesOf(switched))).toBe(false);
+    expect(isCurrentSkyBox(skiesOf(switched)[1], skiesOf(switched))).toBe(true);
+    expect(switched.history.past.at(-1)!.label).toBe("Make SkyBox3D2 the default sky box"); // the second one added, named uniquely
+
+    const undone = run(switched, { type: "UNDO" });
+    expect(isCurrentSkyBox(skiesOf(undone)[0], skiesOf(undone))).toBe(true);
+  });
+
+  it("unmarking the explicitly current one falls back to the first in the tree", () => {
+    const { state, first, second } = withTwoSkyBoxes();
+    const switched = run(state, { type: "SET_SKY_BOX_CURRENT", id: second, current: true });
+    const unmarked = run(switched, { type: "SET_SKY_BOX_CURRENT", id: second, current: false });
+    const skies = [findSceneNode(unmarked.sceneRoot, first)!, findSceneNode(unmarked.sceneRoot, second)!];
+    expect(isCurrentSkyBox(skies[0], skies)).toBe(true);
+    expect(isCurrentSkyBox(skies[1], skies)).toBe(false);
+    expect(findSceneNode(unmarked.sceneRoot, second)!.skyBox).toBeUndefined();
+  });
+
+  it("ignores setting what it already is, and a node that isn't a SkyBox3D", () => {
+    const { state, first, second } = withTwoSkyBoxes();
+    expect(run(state, { type: "SET_SKY_BOX_CURRENT", id: first, current: true })).toBe(state);
+    expect(run(state, { type: "SET_SKY_BOX_CURRENT", id: second, current: false })).toBe(state);
+    const other = run(state, { type: "ADD_NODE", kind: "Node3D" });
+    expect(run(other, { type: "SET_SKY_BOX_CURRENT", id: other.selectedNodeId!, current: true })).toBe(other);
+  });
+
+  it("marking current and changing colors never clobber each other's own field, either order", () => {
+    // A second sky box (first is already "current" by isCurrentSkyBox's own fallback -- marking it again would be a
+    // no-op, see the "ignores setting what it already is" test above -- so this uses the second one instead, where
+    // marking it current is a real edit).
+    const { state, second } = withTwoSkyBoxes();
+    const id = second;
+    const coloredThenCurrent = run(state, set(id, { topColor: "#ff0000" }, 0), { type: "SET_SKY_BOX_CURRENT", id, current: true });
+    expect(skyOf(coloredThenCurrent, id).topColor).toBe("#ff0000");
+    expect(findSceneNode(coloredThenCurrent.sceneRoot, id)!.skyBox?.current).toBe(true);
+
+    const currentThenColored = run(state, { type: "SET_SKY_BOX_CURRENT", id, current: true }, set(id, { topColor: "#00ff00" }, 0));
+    expect(skyOf(currentThenColored, id).topColor).toBe("#00ff00");
+    expect(findSceneNode(currentThenColored.sceneRoot, id)!.skyBox?.current).toBe(true);
+  });
+
+  it("is saved with the project", () => {
+    const { state, second } = withTwoSkyBoxes();
+    const switched = run(state, { type: "SET_SKY_BOX_CURRENT", id: second, current: true });
+    const saved = withUpdatedScene(switched.project!, switched.sceneRoot);
+    expect(findSceneNode(saved.scene, second)!.skyBox?.current).toBe(true);
   });
 });

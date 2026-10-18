@@ -254,49 +254,83 @@ static void load_view(void) {
 	glLoadMatrix4x4((const m4x4 *)&gs_current_view);
 }
 
-/* Draws the scene's SkyBox3D, if it has one, as a full-screen two-triangle gradient (STORY.sky-box.md) -- the DS has
-   no hardware gradient clear, so this takes glClearColor's own place for a scene that has one: skyBoxTopColor at the
-   top edge of the screen, blending down into skyBoxHorizonColor at the bottom (the geometry engine interpolates a
-   triangle's own per-vertex color across it for free; no texture or lighting needed). Identity modelview (it never
-   turns with the camera, same as a fixed screen backdrop) but the scene's own real projection, so it fills the
-   screen exactly like any mesh at that same distance would. Drawn with alpha one step under fully opaque so the DS
-   skips writing its own depth entirely (the same rule a translucent mesh already relies on -- see draw_mesh's own
-   comment on GsMesh.alpha): every real polygon drawn after it this frame still depth-tests against the untouched,
-   just-cleared depth buffer, so it draws over the sky box correctly regardless of where in the world it actually
-   is. That means this has to run before any real geometry this frame, and it has to be a drawn polygon redone every
-   single frame, not a one-time setup: the framebuffer isn't preserved from one frame to the next on the DS. */
+/* Draws whichever of the scene's SkyBox3D nodes is currently visible, as a full-screen two-triangle gradient
+   (STORY.sky-box.md) -- the DS has no hardware gradient clear, so this takes glClearColor's own place for a scene
+   that has one: that sky box's own topColor at the top edge of the screen, blending down into its own horizonColor
+   at the bottom (the geometry engine interpolates a triangle's own per-vertex color across it for free; no texture
+   or lighting needed). A scene can have more than one SkyBox3D -- a day/night or similar cycle's own usual shape,
+   built from several, each with its own colors, switched by a script toggling each one's own ordinary node
+   visibility (`$Night.visible = true`, exactly like any other node) rather than through a dedicated runtime switch
+   -- so this draws the *first* one (GsScene.skyBoxes's own order; the compiler puts the scene's own default sky box
+   first, see translate-scene-3d.ts) whose own node is visible this frame, and draws nothing at all (the runtime's
+   own flat default backdrop instead) when none are. Identity modelview to start (it never turns with the camera,
+   same as a fixed screen backdrop) -- but see below for why that alone isn't the whole story any more.
+
+   This function used to rely on alpha < 31 skipping the depth write entirely (the same rule a translucent mesh
+   already relies on -- see draw_mesh's own comment on GsMesh.alpha), drawing a small, fixed-distance quad (a literal
+   v16 vertex z, +-8 units at the outside) on the theory that an untouched, just-cleared depth buffer would then let
+   every real polygon drawn afterward win regardless of its own distance. A real ROM, captured in melonDS with a
+   tree 15-35 scene units from the camera and the sky box at its own default few-unit placement, proved that wrong:
+   the tree vanished behind the sky box entirely, at every distance tried, while a tree genuinely nearer than the
+   sky box's own literal placement stayed visible -- exactly the outcome of an ordinary "nearer wins" depth test the
+   sky legitimately wins against anything placed past its own few-unit distance, not of skipped depth writing.
+
+   The fix places the sky quad at (just inside) the scene's own real far plane instead -- genuinely beyond anything
+   the camera can actually see, so it loses a perfectly ordinary depth test to every real polygon, the same way any
+   two ordinary opaque meshes already sort correctly against each other. The only obstacle is that a v16 vertex
+   cannot reach anywhere near a Camera3D's own far plane (up to CAMERA_FAR_PLANE_MAX, 1000 units, scene-node.ts) --
+   but neither can an ordinary mesh's own vertices, and an ordinary mesh still ends up arbitrarily far from the
+   origin, because its *vertex data* stays small (local to the model) while its *world position* comes from the
+   modelview matrix's own translation, computed in full 20.12 fixed point, not the vertex format's own narrower
+   range. This draws the sky the same way: a small, fixed unit quad (v16, comfortably inside its own range) scaled
+   and pushed out to the far plane by the modelview matrix below, so the distance itself is never encoded as a raw
+   vertex coordinate at all. Must still run before any real geometry this frame, and still has to be a drawn polygon
+   redone every single frame: the framebuffer isn't preserved from one frame to the next on the DS. */
 static void draw_sky_box(void) {
-	if (!gs_scene.hasSkyBox) return;
+	const GsSkyBox *sky = 0;
+	for (int i = 0; i < gs_scene.skyBoxCount; i++) {
+		if (gs_world_visible[gs_scene.skyBoxes[i].node]) {
+			sky = &gs_scene.skyBoxes[i];
+			break;
+		}
+	}
+	if (!sky) return;
+
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 	glBindTexture(0, 0);
 	glPolyFmt(POLY_ALPHA(30) | POLY_CULL_NONE);
 
-	/* gs_scene.skyBoxDistance (set from SkyBox3D's own Inspector slider, STORY.sky-box.md) is clamped at compile
-	   time to stay comfortably inside a vertex's own v16 (4.12 fixed point) +-8 unit range -- how far away it
-	   actually sits doesn't matter for draw order (see above) or for how much of the screen it fills (halfHeight/
-	   halfWidth below scale with it), only that it's further than any sane near plane. */
-	const float z = -gs_scene.skyBoxDistance;
-	const float halfHeight = gs_scene.tanHalfFov * -z;
+	/* 1% inside the real far plane: genuinely beyond anything the camera can draw (nothing past the far plane is
+	   ever submitted), with a small margin so it never itself gets clipped exactly at the far plane's own edge.
+	   halfHeight/halfWidth (screen-filling size, FOV-scaled the same way for any distance) use this same distance,
+	   so the quad's local extent (a unit square times these half-sizes) plus this translation together place its
+	   world-space corners exactly where a full-screen quad at this distance belongs. */
+	const float distance = gs_scene.farPlane * 0.99f;
+	const float halfHeight = gs_scene.tanHalfFov * distance;
 	const float halfWidth = halfHeight * (256.0f / 192.0f);
-	const int16_t zv = (int16_t)(z * 4096.0f);
-	const int16_t top = (int16_t)(halfHeight * 4096.0f);
-	const int16_t bottom = (int16_t)(-halfHeight * 4096.0f);
-	const int16_t left = (int16_t)(-halfWidth * 4096.0f);
-	const int16_t right = (int16_t)(halfWidth * 4096.0f);
+	int32_t m[16] = {
+		(int32_t)(halfWidth * 4096.0f), 0, 0, 0,
+		0, (int32_t)(halfHeight * 4096.0f), 0, 0,
+		0, 0, GS_ONE, 0,
+		0, 0, (int32_t)(-distance * 4096.0f), GS_ONE
+	};
+	glMultMatrix4x4((const m4x4 *)m);
 
+	/* A unit quad in the matrix's own local space (-1..1), scaled and placed by `m` above -- comfortably inside
+	   v16's own +-8 range regardless of how far `distance` itself reaches. */
 	glBegin(GL_TRIANGLES);
-	glColor(gs_scene.skyBoxTopColor);
-	glVertex3v16(left, top, zv);
-	glColor(gs_scene.skyBoxHorizonColor);
-	glVertex3v16(left, bottom, zv);
-	glVertex3v16(right, bottom, zv);
-	glColor(gs_scene.skyBoxTopColor);
-	glVertex3v16(left, top, zv);
-	glColor(gs_scene.skyBoxHorizonColor);
-	glVertex3v16(right, bottom, zv);
-	glColor(gs_scene.skyBoxTopColor);
-	glVertex3v16(right, top, zv);
+	glColor(sky->topColor);
+	glVertex3v16(-4096, 4096, 0);
+	glColor(sky->horizonColor);
+	glVertex3v16(-4096, -4096, 0);
+	glVertex3v16(4096, -4096, 0);
+	glColor(sky->topColor);
+	glVertex3v16(-4096, 4096, 0);
+	glColor(sky->horizonColor);
+	glVertex3v16(4096, -4096, 0);
+	glColor(sky->topColor);
+	glVertex3v16(4096, 4096, 0);
 	glEnd();
 }
 
@@ -563,10 +597,12 @@ static void enter_scene(int index, int first) {
 	/* GL_BLEND (DISP3DCNT bit 3) is a global geometry-engine switch, not a per-polygon one: without it the engine
 	   stores a polygon's alpha but never blends with it, so every mesh draws fully opaque regardless of
 	   GsMesh.alpha. It's only turned on for a scene that actually has a translucent mesh (alpha < 31) or a sky box
-	   (draw_sky_box's own polygon is drawn just under fully opaque on purpose, so blending has to be on for that too),
+	   (draw_sky_box's own polygon is drawn just under fully opaque on purpose, so blending has to be on for that too)
+	   -- any one of the scene's own sky boxes, whether or not it's the one actually visible this particular frame,
+	   since a script can toggle which is visible at any time and this check only runs once, on entering the scene --
 	   not left on for every scene regardless -- a plain, fully-opaque scene has no reason to pay whatever extra
 	   per-polygon work the geometry engine does with it on, and each scene is re-checked here since scenes can differ. */
-	int translucent = gs_scene.hasSkyBox != 0;
+	int translucent = gs_scene.skyBoxCount > 0;
 	for (int i = 0; i < gs_scene.meshCount && !translucent; i++) translucent = gs_scene.meshes[i].alpha < 31;
 	if (translucent) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 	free(textureNames);

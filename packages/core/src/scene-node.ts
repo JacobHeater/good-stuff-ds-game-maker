@@ -122,13 +122,26 @@ export interface SkyBoxData {
   /** "#rrggbb": the color at the bottom of the screen (the "horizon"), where normal geometry usually covers it anyway. */
   horizonColor: string;
   /**
-   * How far from the camera the gradient's own polygon sits, `SKY_BOX_DISTANCE_MIN`..`SKY_BOX_DISTANCE_MAX` scene
-   * units. It's still drawn to exactly fill the screen at any distance (its own size is computed from the camera's
-   * FOV at that distance, the same way a real object's apparent size shrinks with distance -- STORY.sky-box.md), so
-   * this mostly matters for how it sits relative to nearby geometry that's meant to read as "close to the sky"
-   * (distant mountains, clouds) rather than changing how much of the screen the gradient itself covers.
+   * Vestigial: kept only so a project file saved before this changed still validates and round-trips. The runtime
+   * (`draw_sky_box` in main.c) no longer reads this at all -- it originally placed the gradient's own literal
+   * polygon this many scene units from the camera, but that let any real geometry farther away than the polygon's
+   * own placement draw *behind* the sky box instead of in front of it (a real bug a hardware capture caught: a
+   * tree 15-35 units away vanished entirely). The runtime now always places the polygon just inside the camera's
+   * own far plane instead, which real geometry at any distance within it correctly draws in front of, so there is
+   * nothing left for this field to usefully control; the Inspector no longer shows it.
    */
   distance: number;
+  /**
+   * Whether this is the scene's *default* sky box when it has more than one -- the common pattern for a day/night
+   * (or similar) cycle: several SkyBox3D nodes, each with its own colors, switched at runtime by toggling each
+   * one's own ordinary `visible` (a script sets it directly, e.g. `$Night.visible = true`, exactly like any other
+   * node -- no dedicated runtime switch exists or is needed). `current` only decides which one the compiler puts
+   * first (so a scene that happens to have more than one visible at once draws that one) and which one a brand new
+   * SkyBox3D effectively is before a script has touched any visibility; it plays no part once the game is running.
+   * Absent on every SkyBox3D in a scene (a project saved before this existed, or a scene with only one) means the
+   * first SkyBox3D found in the scene's own tree, the same fallback `isCurrentCamera` uses for Camera3D.
+   */
+  current?: boolean;
 }
 
 export const SKY_BOX_DISTANCE_MIN = 0.5;
@@ -138,14 +151,29 @@ export const SKY_BOX_DISTANCE_MAX = 7.5;
 /** A sensible default sky (a plain daytime blue, about as far as the hardware lets it sit) for a SkyBox3D with nothing saved yet. */
 export const DEFAULT_SKY_BOX: SkyBoxData = { topColor: "#2f6fb0", horizonColor: "#cfe9ff", distance: SKY_BOX_DISTANCE_MAX };
 
-/** A SkyBox3D's own colors and distance, defaulted and clamped. */
+/** A SkyBox3D's own colors and distance, defaulted and clamped. Its own `current` isn't resolved/defaulted here (there's
+ * nothing to clamp a boolean to) -- see `isCurrentSkyBox` for that, the same split `getCameraFarPlane`/`isCurrentCamera`
+ * already draw for Camera3D. */
 export function getSkyBox(node: { skyBox?: Partial<SkyBoxData> }): SkyBoxData {
   const distance = node.skyBox?.distance;
   return {
     topColor: node.skyBox?.topColor ?? DEFAULT_SKY_BOX.topColor,
     horizonColor: node.skyBox?.horizonColor ?? DEFAULT_SKY_BOX.horizonColor,
-    distance: distance !== undefined && Number.isFinite(distance) ? Math.min(SKY_BOX_DISTANCE_MAX, Math.max(SKY_BOX_DISTANCE_MIN, distance)) : DEFAULT_SKY_BOX.distance
+    distance: distance !== undefined && Number.isFinite(distance) ? Math.min(SKY_BOX_DISTANCE_MAX, Math.max(SKY_BOX_DISTANCE_MIN, distance)) : DEFAULT_SKY_BOX.distance,
+    current: node.skyBox?.current
   };
+}
+
+/**
+ * Whether `node` is its scene's *default* SkyBox3D: explicitly marked so, or -- when none of `skyBoxesInScene` is --
+ * the first one in tree order. Mirrors `isCurrentCamera` exactly; see `SkyBoxData.current`'s own doc comment for
+ * what this does (and, just as importantly, does not) control. `skyBoxesInScene` is every SkyBox3D node in the same
+ * scene, in tree order (`flattenSceneTreeInOrder`, filtered).
+ */
+export function isCurrentSkyBox(node: { id: string; skyBox?: Partial<SkyBoxData> }, skyBoxesInScene: readonly { id: string; skyBox?: Partial<SkyBoxData> }[]): boolean {
+  if (node.skyBox?.current === true) return true;
+  if (skyBoxesInScene.some((sky) => sky.skyBox?.current === true)) return false;
+  return skyBoxesInScene[0]?.id === node.id;
 }
 
 /**
@@ -156,6 +184,8 @@ export function getSkyBox(node: { skyBox?: Partial<SkyBoxData> }): SkyBoxData {
  */
 export interface CameraData {
   current?: boolean;
+  /** How far this camera can see, in scene units; absent means `CAMERA_FAR_PLANE_DEFAULT` (see `getCameraFarPlane`). */
+  farPlane?: number;
 }
 
 /**
@@ -167,6 +197,21 @@ export function isCurrentCamera(node: { id: string; camera?: CameraData }, camer
   if (node.camera?.current === true) return true;
   if (camerasInScene.some((camera) => camera.camera?.current === true)) return false;
   return camerasInScene[0]?.id === node.id;
+}
+
+export const CAMERA_FAR_PLANE_MIN = 5;
+/** Generous headroom for a DS game's own world scale; unlike SkyBox3D's own distance, a camera's far plane is just
+ * a projection-matrix parameter (`gluPerspective`, 20.12 fixed point), not a literal vertex coordinate pinned to the
+ * v16 format's own +-8 unit range, so there's no comparable hardware ceiling here. */
+export const CAMERA_FAR_PLANE_MAX = 1000;
+/** Matches the compiler's own longstanding default (`translate-scene-3d.ts`'s `DEFAULTS.farPlane`), so a project
+ * saved before this was adjustable renders exactly as it always did. */
+export const CAMERA_FAR_PLANE_DEFAULT = 100;
+
+/** A Camera3D's own far clip plane, defaulted and clamped `CAMERA_FAR_PLANE_MIN`..`CAMERA_FAR_PLANE_MAX`. */
+export function getCameraFarPlane(node: { camera?: CameraData }): number {
+  const far = node.camera?.farPlane;
+  return far !== undefined && Number.isFinite(far) ? Math.min(CAMERA_FAR_PLANE_MAX, Math.max(CAMERA_FAR_PLANE_MIN, far)) : CAMERA_FAR_PLANE_DEFAULT;
 }
 
 /**

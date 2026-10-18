@@ -58,6 +58,10 @@ import {
   flattenSceneTree,
   flattenSceneTreeInOrder,
   isCurrentCamera,
+  getCameraFarPlane,
+  CAMERA_FAR_PLANE_MIN,
+  CAMERA_FAR_PLANE_MAX,
+  isCurrentSkyBox,
   formatSoundTime,
   getAudioPlayer,
   MAX_EXTRA_AUDIO_CLIPS,
@@ -416,7 +420,9 @@ export type Action =
   | { type: "SET_MESH_ALPHA"; id: string; alpha: number; at: number }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
   | { type: "SET_SKY_BOX"; id: string; change: Partial<SkyBoxData>; at: number }
+  | { type: "SET_SKY_BOX_CURRENT"; id: string; current: boolean }
   | { type: "SET_CAMERA_CURRENT"; id: string; current: boolean }
+  | { type: "SET_CAMERA_FAR_PLANE"; id: string; farPlane: number; at: number }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
   | { type: "ANIM_RENAME"; playerId: string; animationId: string; name: string; at: number }
@@ -532,6 +538,30 @@ function loadProject(state: EditorState, project: ProjectSnapshot, filePath: str
     activeBottomTab: state.activeBottomTab === "Animation" ? "Output" : state.activeBottomTab,
     outputLog: [...state.outputLog, logMessage]
   };
+}
+
+/** `node`'s own `camera.current`, set or cleared, with every other field of `camera` (its own `farPlane`, say) left
+ * exactly as it was; drops the whole `camera` key only when nothing is left in it. */
+function withCameraCurrent(node: SceneNode, current: boolean): SceneNode {
+  const { current: _old, ...rest } = node.camera ?? {};
+  const nextCamera = current ? { ...rest, current: true } : rest;
+  if (Object.keys(nextCamera).length === 0) {
+    const { camera: _dropped, ...withoutCamera } = node;
+    return withoutCamera;
+  }
+  return { ...node, camera: nextCamera };
+}
+
+/** `node`'s own `skyBox.current`, set or cleared, with every other field of `skyBox` (its own colors) left exactly
+ * as it was; drops the whole `skyBox` key only when nothing is left in it. Mirrors `withCameraCurrent` exactly. */
+function withSkyBoxCurrent(node: SceneNode, current: boolean): SceneNode {
+  const { current: _old, ...rest } = node.skyBox ?? {};
+  const nextSkyBox = current ? { ...rest, current: true } : rest;
+  if (Object.keys(nextSkyBox).length === 0) {
+    const { skyBox: _dropped, ...withoutSkyBox } = node;
+    return withoutSkyBox;
+  }
+  return { ...node, skyBox: nextSkyBox };
 }
 
 function applyAction(state: EditorState, action: Action): EditorState {
@@ -814,7 +844,34 @@ function applyAction(state: EditorState, action: Action): EditorState {
         }
       });
       if (skyBox.topColor === current.topColor && skyBox.horizonColor === current.horizonColor && skyBox.distance === current.distance) return state;
-      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, skyBox })) };
+      // current isn't one of this action's own fields -- keep whatever the node already had, the same reason
+      // SET_CAMERA_FAR_PLANE spreads node.camera instead of replacing it outright.
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, skyBox: { ...skyBox, current: node.skyBox?.current } })) };
+    }
+    case "SET_SKY_BOX_CURRENT": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.kind !== "SkyBox3D") return state;
+      if (!action.current) {
+        // Unchecking just clears this sky box's own explicit mark; it falls back to "current" again only if it's
+        // the first SkyBox3D left in the scene's tree (isCurrentSkyBox). One that was never explicitly marked (only
+        // current by that fallback) has nothing to clear. Nothing else in the scene changes -- in particular, which
+        // sky box actually draws right now is each one's own ordinary visibility, untouched by this.
+        if (target.skyBox?.current !== true) return state;
+        return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => withSkyBoxCurrent(node, false)) };
+      }
+      // Already current, explicitly or by the same fallback: checking it again is a no-op.
+      const skyBoxesInScene = flattenSceneTreeInOrder(state.sceneRoot).filter((node) => node.kind === "SkyBox3D");
+      if (isCurrentSkyBox(target, skyBoxesInScene)) return state;
+      // Checking it marks the target current and unmarks whichever other SkyBox3D in this scene had it (keeping
+      // each one's own colors untouched either way). A sky box in another scene is untouched -- each scene picks
+      // its own default sky box independently.
+      const setCurrent = (node: SceneNode): SceneNode => {
+        const children = node.children.map(setCurrent);
+        if (node.id === action.id) return withSkyBoxCurrent({ ...node, children }, true);
+        if (node.kind === "SkyBox3D" && node.skyBox?.current === true) return withSkyBoxCurrent({ ...node, children }, false);
+        return { ...node, children };
+      };
+      return { ...state, sceneRoot: setCurrent(state.sceneRoot) };
     }
     case "SET_CAMERA_CURRENT": {
       const target = findSceneNode(state.sceneRoot, action.id);
@@ -824,24 +881,28 @@ function applyAction(state: EditorState, action: Action): EditorState {
         // the first Camera3D left in the scene's tree (isCurrentCamera). A camera that was never explicitly
         // marked (only current by that fallback) has nothing to clear. Nothing else in the scene changes.
         if (target.camera?.current !== true) return state;
-        const { camera: _cleared, ...rest } = target;
-        return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, () => rest) };
+        return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => withCameraCurrent(node, false)) };
       }
       // Already current, explicitly or by the same fallback: checking it again is a no-op.
       const camerasInScene = flattenSceneTreeInOrder(state.sceneRoot).filter((node) => node.kind === "Camera3D");
       if (isCurrentCamera(target, camerasInScene)) return state;
-      // Checking it marks the target current and unmarks whichever other Camera3D in this scene had it. A
-      // camera in another scene is untouched -- each scene picks its own active camera independently.
+      // Checking it marks the target current and unmarks whichever other Camera3D in this scene had it (keeping
+      // each camera's own farPlane, or any other future camera.*, untouched either way). A camera in another scene
+      // is untouched -- each scene picks its own active camera independently.
       const setCurrent = (node: SceneNode): SceneNode => {
         const children = node.children.map(setCurrent);
-        if (node.id === action.id) return { ...node, children, camera: { current: true } };
-        if (node.kind === "Camera3D" && node.camera?.current === true) {
-          const { camera: _cleared, ...rest } = node;
-          return { ...rest, children };
-        }
+        if (node.id === action.id) return withCameraCurrent({ ...node, children }, true);
+        if (node.kind === "Camera3D" && node.camera?.current === true) return withCameraCurrent({ ...node, children }, false);
         return { ...node, children };
       };
       return { ...state, sceneRoot: setCurrent(state.sceneRoot) };
+    }
+    case "SET_CAMERA_FAR_PLANE": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.kind !== "Camera3D") return state;
+      const farPlane = Math.min(CAMERA_FAR_PLANE_MAX, Math.max(CAMERA_FAR_PLANE_MIN, action.farPlane));
+      if (farPlane === getCameraFarPlane(target)) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, camera: { ...node.camera, farPlane } })) };
     }
     case "SET_MESH_COLOR": {
       const target = findSceneNode(state.sceneRoot, action.id);
@@ -1698,12 +1759,20 @@ interface EditorStoreValue {
   /** Sets a SkyBox3D's top and/or horizon color ("#rrggbb"). No-op for other nodes. */
   setSkyBox: (id: string, change: Partial<SkyBoxData>) => void;
   /**
+   * Marks or unmarks a SkyBox3D as the scene's own default when it has more than one (a day/night cycle's own
+   * usual shape); see `SkyBoxData.current`'s own doc comment for what this does and does not control. No-op for a
+   * node that isn't a SkyBox3D, or setting what it already explicitly is.
+   */
+  setSkyBoxCurrent: (id: string, current: boolean) => void;
+  /**
    * Marks or unmarks a Camera3D as the scene's active camera. Marking it unmarks whichever other Camera3D in
    * the same scene had it; unmarking it just clears its own mark (it falls back to "current" again only if it's
    * the first Camera3D left in the scene's tree). No-op for a node that isn't a Camera3D, or setting what it
    * already explicitly is.
    */
   setCameraCurrent: (id: string, current: boolean) => void;
+  /** Sets a Camera3D's own far clip plane, CAMERA_FAR_PLANE_MIN..CAMERA_FAR_PLANE_MAX scene units. Typing in the field is one undo step per pause. No-op for other nodes. */
+  setCameraFarPlane: (id: string, farPlane: number) => void;
   /** Undoes the last scene edit (Ctrl+Z). Does nothing when there's nothing to undo. */
   undo: () => void;
   /** Redoes the last undone edit (Ctrl+Shift+Z). */
@@ -1937,8 +2006,12 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       const field = action.change.topColor !== undefined ? "top color" : action.change.horizonColor !== undefined ? "horizon color" : "distance";
       return { label: `Change ${field} of ${nameOf(action.id)}`, mergeKey: `sky-box:${action.id}:${field}`, at: action.at };
     }
+    case "SET_SKY_BOX_CURRENT":
+      return { label: action.current ? `Make ${nameOf(action.id)} the default sky box` : `Unmark ${nameOf(action.id)} as the default sky box` };
     case "SET_CAMERA_CURRENT":
       return { label: action.current ? `Make ${nameOf(action.id)} the active camera` : `Unmark ${nameOf(action.id)} as the active camera` };
+    case "SET_CAMERA_FAR_PLANE":
+      return { label: `Change far plane of ${nameOf(action.id)}`, mergeKey: `camera-far:${action.id}`, at: action.at };
     case "IMPORT_TEXTURE":
       return { label: `Import texture ${action.texture.name}` };
     case "SET_NODE_SCREEN":
@@ -2283,7 +2356,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     []
   );
   const setSkyBox = useCallback((id: string, change: Partial<SkyBoxData>) => dispatch({ type: "SET_SKY_BOX", id, change, at: Date.now() }), []);
+  const setSkyBoxCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_SKY_BOX_CURRENT", id, current }), []);
   const setCameraCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_CAMERA_CURRENT", id, current }), []);
+  const setCameraFarPlane = useCallback((id: string, farPlane: number) => dispatch({ type: "SET_CAMERA_FAR_PLANE", id, farPlane, at: Date.now() }), []);
   const setActiveTool = useCallback((tool: EditorTool) => dispatch({ type: "SET_TOOL", tool }), []);
   const toggleBoxSelect = useCallback(() => dispatch({ type: "TOGGLE_BOX_SELECT" }), []);
   const moveNode = useCallback((id: string, x: number, y: number) => dispatch({ type: "MOVE_NODE", id, x, y, at: Date.now() }), []);
@@ -2757,7 +2832,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       toggleBoxSelect,
       setLightIntensity,
       setSkyBox,
+      setSkyBoxCurrent,
       setCameraCurrent,
+      setCameraFarPlane,
       undo,
       redo,
       endEditGesture,
@@ -2852,7 +2929,9 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       toggleBoxSelect,
       setLightIntensity,
       setSkyBox,
+      setSkyBoxCurrent,
       setCameraCurrent,
+      setCameraFarPlane,
       undo,
       redo,
       endEditGesture,

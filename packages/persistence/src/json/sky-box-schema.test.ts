@@ -42,4 +42,11 @@ describe("sky box colors in the project file", () => {
     expect(validator.validate(projectWithSkyBox({ distance: 0.4 })).valid).toBe(false);
     expect(validator.validate(projectWithSkyBox({ distance: 7.6 })).valid).toBe(false);
   });
+
+  it("accepts and round-trips current, alongside colors, and rejects a non-boolean", () => {
+    const reopened = validator.assertValid(serializer.deserialize(JSON.stringify(projectWithSkyBox({ topColor: "#2f6fb0", current: true }))));
+    expect(reopened.scene.children[0].skyBox).toEqual({ topColor: "#2f6fb0", current: true });
+    expect(validator.validate(projectWithSkyBox({ current: false })).valid).toBe(true);
+    expect(validator.validate(projectWithSkyBox({ current: "yes" })).valid).toBe(false);
+  });
 });

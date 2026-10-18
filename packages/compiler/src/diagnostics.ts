@@ -27,7 +27,6 @@ export type DiagnosticCode =
   | "multiple-cameras"
   | "too-many-lights"
   | "omni-light-skipped"
-  | "multiple-sky-boxes"
   | "tile-map-3d-missing-model"
   | "over-triangle-budget"
   | "two-d-node-not-built"

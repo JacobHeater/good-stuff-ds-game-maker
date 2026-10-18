@@ -250,6 +250,14 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
 
+  out.push("static const GsSkyBox sky_boxes[] = {");
+  if (scene.skyBoxes.length === 0) out.push("  { 0, 0, 0 }");
+  scene.skyBoxes.forEach((s, i) => {
+    out.push(`  { ${s.node}, ${s.topColor}, ${s.horizonColor} }${i < scene.skyBoxes.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
   out.push("static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {");
   if (scene.tileMap3DPaletteEntries.length === 0) out.push("  { 0, 0, 0 }");
   scene.tileMap3DPaletteEntries.forEach((p, i) => {
@@ -273,11 +281,6 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${float(scene.camera.fovDegrees)}, ${float(scene.camera.nearPlane)}, ${float(scene.camera.farPlane)}, ${float(scene.camera.tanHalfFov)}, /* fov, near, far, tan(fov / 2) */`);
   out.push(`  ${matrix(scene.camera.view)}, /* view */`);
   out.push(`  ${scene.camera.node}, /* camera node */`);
-  out.push(
-    scene.skyBox
-      ? `  1, ${scene.skyBox.topColor}, ${scene.skyBox.horizonColor}, ${float(scene.skyBox.distance)}, /* has sky box, top color, horizon color, distance */`
-      : `  0, 0, 0, ${float(0)}, /* no sky box */`
-  );
   out.push(`  ${scene.nodes.length}, /* node count */`);
   out.push(`  ${scene.primitives.length}, ${scene.meshes.length}, ${scene.lights.length}, ${scene.textures.length}, /* primitive, mesh, light, texture counts */`);
   out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.audioClips.length}, ${scene.colliders.length}, ${hullPoints.length / 3}, /* sound, audio player, audio clip, collider, hull point counts */`);
@@ -285,8 +288,9 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${scene.touchAreas.length}, /* touch area count */`);
   out.push(`  ${scene.skinJoints.length}, /* skin joint count */`);
   out.push(`  ${scene.tileMaps3D.length}, ${scene.tileMap3DPaletteEntries.length}, /* TileMap3D node, palette entry counts */`);
+  out.push(`  ${scene.skyBoxes.length}, /* sky box count */`);
   out.push(
-    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
+    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
   );
   out.push("};");
   out.push("");

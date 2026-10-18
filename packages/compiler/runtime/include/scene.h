@@ -250,6 +250,17 @@ typedef struct {
 	uint16_t node;       /* index into GsScene.nodes: a moving light points along its node's -Z axis */
 } GsLight;
 
+/* One SkyBox3D's own screen-space gradient (STORY.sky-box.md): topColor at the top of the screen, horizonColor at
+   the bottom. A scene can have more than one (a day/night or similar cycle's own usual shape): the runtime draws
+   whichever one's own `node` is visible (GsScene.skyBoxes's own order -- the scene's default sky box first, so a
+   moment where more than one happens to be visible still draws a consistent one), and draws nothing (the runtime's
+   own flat default backdrop instead) when none are -- see draw_sky_box's own comment in main.c. */
+typedef struct {
+	uint16_t node; /* index into GsScene.nodes: this sky box draws only while this node (and its ancestors) are visible */
+	uint16_t topColor;     /* RGB15 */
+	uint16_t horizonColor; /* RGB15 */
+} GsSkyBox;
+
 /* One TileMap3D palette entry, the same shape a plain GsMesh's own primitive/texture/diffuse already is (STORY.tile-map-3d.md). */
 typedef struct {
 	uint16_t primitive;
@@ -276,12 +287,6 @@ typedef struct {
 	float tanHalfFov; /* tan(fovDegrees / 2), for turning a touched point into a ray */
 	GsMatrix view; /* world -> camera, as the scene starts */
 	uint16_t cameraNode; /* index into nodes: a moving camera's view is the inverse of its node's world transform */
-	/* A SkyBox3D's own two colors (STORY.sky-box.md): hasSkyBox 0 means the scene has none, and the runtime's own
-	   flat default backdrop is drawn instead -- skyBoxTopColor/skyBoxHorizonColor are then meaningless. */
-	uint8_t hasSkyBox;
-	uint16_t skyBoxTopColor;     /* RGB15 */
-	uint16_t skyBoxHorizonColor; /* RGB15 */
-	float skyBoxDistance;        /* scene units from the camera -- see draw_sky_box's own comment in main.c */
 	uint16_t nodeCount;
 	uint16_t primitiveCount;
 	uint16_t meshCount;
@@ -300,12 +305,14 @@ typedef struct {
 	uint16_t skinJointCount; /* total, across every smooth-skinned mesh instance */
 	uint16_t tileMap3DCount;
 	uint16_t tileMap3DPaletteEntryCount;
+	uint16_t skyBoxCount;
 	const GsNode *nodes;
 	const GsPrimitive *primitives;
 	const GsMesh *meshes;
 	const GsLight *lights;
 	const GsTileMap3D *tileMaps3D;
 	const GsTileMap3DPaletteEntry *tileMap3DPaletteEntries;
+	const GsSkyBox *skyBoxes;
 	const GsTexture *textures;
 	const GsSound *sounds;
 	const GsAudioPlayer *audioPlayers;

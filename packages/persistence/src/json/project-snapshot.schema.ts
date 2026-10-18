@@ -95,22 +95,26 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         intensity: { type: "number", minimum: 0, maximum: 1 }
       }
     },
-    // A SkyBox3D's own screen-space gradient: topColor at the top of the screen, horizonColor at the bottom.
+    // A SkyBox3D's own screen-space gradient: topColor at the top of the screen, horizonColor at the bottom; current
+    // is which one is the scene's own default when it has more than one (a day/night cycle's own usual shape).
     skyBoxData: {
       type: "object",
       additionalProperties: false,
       properties: {
         topColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
         horizonColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
-        distance: { type: "number", minimum: 0.5, maximum: 7.5 }
+        distance: { type: "number", minimum: 0.5, maximum: 7.5 },
+        current: { type: "boolean" }
       }
     },
-    // Whether a Camera3D is its scene's active camera; absent defers to the first Camera3D in tree order.
+    // Whether a Camera3D is its scene's active camera (absent defers to the first Camera3D in tree order), and how
+    // far it can see (absent means CAMERA_FAR_PLANE_DEFAULT).
     cameraData: {
       type: "object",
       additionalProperties: false,
       properties: {
-        current: { type: "boolean" }
+        current: { type: "boolean" },
+        farPlane: { type: "number", minimum: 5, maximum: 1000 }
       }
     },
     // A mesh uses a built-in primitive OR an imported model, never both and never neither.

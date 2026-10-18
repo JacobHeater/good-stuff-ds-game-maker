@@ -232,17 +232,20 @@ export interface DsLight {
 }
 
 /**
- * The screen-space gradient a SkyBox3D draws behind everything else (STORY.sky-box.md): `topColor` at the top edge
- * of the screen, blending down into `horizonColor` at the bottom. `null` (no SkyBox3D in the scene) means the
- * runtime's own flat default backdrop instead.
+ * The screen-space gradient one SkyBox3D draws behind everything else (STORY.sky-box.md): `topColor` at the top
+ * edge of the screen, blending down into `horizonColor` at the bottom. Every SkyBox3D in the scene compiles to one
+ * of these (an empty `DsScene3D.skyBoxes` means the runtime's own flat default backdrop instead); the runtime draws
+ * whichever one's own `node` is visible each frame (the first, in this array's own order, when more than one is --
+ * day/night and similar cycles toggle a sky box's own ordinary node visibility, exactly like any other node, rather
+ * than needing a dedicated runtime switch).
  */
 export interface DsSkyBox {
+  /** Index into `DsScene3D.nodes`: this sky box draws only while this node (and its ancestors) are visible. */
+  node: number;
   /** RGB15. */
   topColor: number;
   /** RGB15. */
   horizonColor: number;
-  /** Scene units from the camera, `SKY_BOX_DISTANCE_MIN`..`SKY_BOX_DISTANCE_MAX` (core's scene-node.ts). */
-  distance: number;
 }
 
 /** One TileMap3D palette entry, compiled exactly like a plain MeshInstance3D's own primitive/texture/color (STORY.tile-map-3d.md). */
@@ -289,8 +292,8 @@ export interface DsScene3D {
   camera: DsCamera;
   /** At most `MAX_DS_LIGHTS`. */
   lights: DsLight[];
-  /** The scene's SkyBox3D, if it has one (at most one is ever used -- see `multiple-sky-boxes`). */
-  skyBox: DsSkyBox | null;
+  /** Every SkyBox3D in the scene (commonly more than one, for a day/night or similar cycle -- see `DsSkyBox`'s own comment); empty for a scene with none. */
+  skyBoxes: DsSkyBox[];
   /** Every TileMap3D node's own metadata (STORY.tile-map-3d.md); its palette is a run of `tileMap3DPaletteEntries`, its cells are in `tileMap3DChunkFiles` instead. */
   tileMaps3D: DsTileMap3D[];
   tileMap3DPaletteEntries: DsTileMap3DPaletteEntry[];
