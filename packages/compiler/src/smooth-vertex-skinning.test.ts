@@ -1,4 +1,4 @@
-import { buildArm, expandSceneInstances, flattenSceneTree, importGltf, type PrimitiveGeometry, type ProjectSnapshot, type RiggedModel } from "@goodstuff/core";
+import { buildArm, createSceneNode, expandSceneInstances, flattenSceneTree, importGltf, type PrimitiveGeometry, type ProjectSnapshot, type RiggedModel } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { primitivesProject } from "./fixtures";
@@ -97,6 +97,55 @@ describe("smooth skinning in a compiled scene", () => {
     expect(diagnostics.some((d) => d.code === "smooth-skinning-missing-bone" && d.severity === "warning")).toBe(true);
     const dsMesh = scene!.meshes.find((m) => scene!.nodes[m.node].name === "Hip_mesh")!;
     expect(dsMesh.skinJointCount).toBe(0);
+  });
+});
+
+describe("a mesh referencing more distinct bones than the DS runtime can blend at once (a real bug: a whole-character unifiedSkinning mesh silently lost everything from the knee down on a real file, with no warning anywhere, because nothing checked this)", () => {
+  /** `count` placeholder bones and a mesh (one triangle, every vertex rigged to bone 0) whose skin references all of them. */
+  function manyBonesProject(count: number): ProjectSnapshot {
+    const bones = Array.from({ length: count }, (_, i) => createSceneNode({ name: `Bone${i}`, kind: "Node3D" }));
+    const importedMesh = {
+      id: "mesh-1",
+      name: "ManyBones",
+      positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+      normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+      indices: [0, 1, 2],
+      skin: {
+        jointNodeIds: bones.map((b) => b.id),
+        inverseBindMatrices: bones.flatMap(() => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+        joints: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        weights: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+      }
+    };
+    const meshNode = createSceneNode({ name: "ManyBonesMesh", kind: "MeshInstance3D" });
+    meshNode.mesh = { importedMeshId: importedMesh.id, triangleCount: 1, smoothSkinning: true };
+    const base = primitivesProject();
+    return {
+      ...base,
+      meshes: [...(base.meshes ?? []), importedMesh],
+      scene: { ...base.scene, children: [...base.scene.children.filter((n) => n.kind !== "MeshInstance3D"), ...bones, meshNode] }
+    };
+  }
+
+  it("warns, naming how many bones and the limit, once a mesh exceeds it", () => {
+    const { diagnostics } = translateScene3D(manyBonesProject(40));
+    const warning = diagnostics.find((d) => d.code === "smooth-skinning-too-many-joints");
+    expect(warning).toBeDefined();
+    expect(warning!.severity).toBe("warning");
+    expect(warning!.nodeName).toBe("ManyBonesMesh");
+    expect(warning!.message).toMatch(/40 distinct bones/);
+  });
+
+  it("still compiles and draws the mesh (the DS runtime truncates, it doesn't fail) -- the dropped joints are a quality issue, not a build error", () => {
+    const { scene, diagnostics } = translateScene3D(manyBonesProject(40));
+    expect(diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    const mesh = scene!.meshes.find((m) => scene!.nodes[m.node].name === "ManyBonesMesh")!;
+    expect(mesh.skinJointCount).toBe(40); // the full, un-truncated count still reaches the runtime, which does its own capping
+  });
+
+  it("doesn't warn for a mesh within the limit", () => {
+    const { diagnostics } = translateScene3D(manyBonesProject(32));
+    expect(diagnostics.some((d) => d.code === "smooth-skinning-too-many-joints")).toBe(false);
   });
 });
 

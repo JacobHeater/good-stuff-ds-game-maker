@@ -105,17 +105,36 @@ export function pruneUnusedAssets(snapshot: ProjectSnapshot): ProjectSnapshot {
   // What is kept is what any scene uses, so an asset a scene other than the one being edited needs isn't lost.
   const nodes = [...flattenSceneTree(snapshot.scene), ...(snapshot.scenes ?? []).flatMap((entry) => flattenSceneTree(entry.scene))];
   if (meshes && meshes.length > 0) {
-    const used = new Set(nodes.flatMap((node) => (node.mesh?.importedMeshId ? [node.mesh.importedMeshId] : [])));
+    // A TileMap3D's own palette (STORY.tile-map-3d.md) resolves its models exactly like a plain MeshInstance3D's
+    // own importedMeshId -- a mesh only a palette (never a plain mesh node) uses is still in use.
+    const used = new Set(
+      nodes.flatMap((node) => [
+        ...(node.mesh?.importedMeshId ? [node.mesh.importedMeshId] : []),
+        ...(node.tileMap3D?.palette?.map((entry) => entry.importedMeshId) ?? [])
+      ])
+    );
     const kept = meshes.filter((mesh) => used.has(mesh.id));
     if (kept.length > 0) updated.meshes = kept;
   }
   if (textures && textures.length > 0) {
-    const used = new Set(nodes.flatMap((node) => (node.mesh?.textureId ? [node.mesh.textureId] : [])));
+    const used = new Set(
+      nodes.flatMap((node) => [
+        ...(node.mesh?.textureId ? [node.mesh.textureId] : []),
+        ...(node.tileMap3D?.palette?.flatMap((entry) => (entry.textureId ? [entry.textureId] : [])) ?? [])
+      ])
+    );
     const kept = textures.filter((texture) => used.has(texture.id));
     if (kept.length > 0) updated.textures = kept;
   }
   if (sounds && sounds.length > 0) {
-    const used = new Set(nodes.flatMap((node) => (node.audio?.soundId ? [node.audio.soundId] : [])));
+    // A player's own sound and every one of its named clips' sounds (STORY.named-audio-clips.md) each keep their
+    // own sound alive -- a sound only ever used by a clip, never the player's own, is still in use.
+    const used = new Set(
+      nodes.flatMap((node) => [
+        ...(node.audio?.soundId ? [node.audio.soundId] : []),
+        ...(node.audio?.clips ?? []).flatMap((clip) => (clip.soundId ? [clip.soundId] : []))
+      ])
+    );
     const kept = sounds.filter((sound) => used.has(sound.id));
     if (kept.length > 0) updated.sounds = kept;
   }

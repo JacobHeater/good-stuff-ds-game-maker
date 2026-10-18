@@ -10,6 +10,8 @@ import {
   getAudioPlayer,
   getCollisionShape,
   getLightIntensity,
+  getSkyBox,
+  parseMeshColor,
   getSoundByteSize,
   getSpriteTransform,
   getThreeDScreen,
@@ -52,6 +54,7 @@ import {
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
 import { collectSprites } from "./translate-scene-2d";
+import { compileTileMap3D } from "./translate-tile-map-3d";
 import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioClip, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
 import { FixedPointRangeError, packNormal, rgb15, toF32, toT16, toV10, toV16 } from "./fixed-point";
 import { fontSafeText } from "./label-text";
@@ -60,6 +63,19 @@ import { generateScriptCode, type CompiledScript } from "./script-codegen";
 
 /** The DS's geometry engine has four hardware lights (defined once in core, with the rest of the DS lighting model). */
 export const MAX_DS_LIGHTS = DS_MAX_LIGHTS;
+
+/**
+ * How many distinct bones one smooth-skinned mesh instance can blend, mirroring the runtime's own
+ * `GS_MAX_SKIN_JOINTS_PER_MESH` (`main.c`) exactly -- keep the two in sync if either changes. A joint past this is
+ * silently dropped at runtime (its weight simply isn't applied), which is a real, confirmed failure mode: a
+ * `unifiedSkinning` mesh (one mesh for a whole character, by that path's own design) referenced 22 distinct bones on
+ * a real file, and this limit's old, smaller value (16) silently dropped everything from the knee down on both
+ * legs -- visibly short legs, with nothing anywhere saying why. `limitBlendGroups`'s own 12-pair cap (above) bounds
+ * how many distinct *(jointA, jointB) pairs* a mesh blends across, which does not bound the *total number of
+ * distinct joints* a mesh references at all (a mesh with 12 pairs can easily reference far more than 12 joints), so
+ * it does nothing to prevent this.
+ */
+const MAX_SKIN_JOINTS_PER_MESH = 32;
 
 /**
  * Values used where the scene model doesn't say. Until cameras, lights and meshes have properties
@@ -357,6 +373,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   const meshes: Collected[] = [];
   const cameras: Collected[] = [];
   const directionalLights: Collected[] = [];
+  const skyBoxes: Collected[] = [];
+  const tileMaps3D: Collected[] = [];
   const audioNodes: Collected[] = [];
   const shapeNodes: Collected[] = [];
   const animationNodes: Collected[] = [];
@@ -411,6 +429,12 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         break;
       case "DirectionalLight3D":
         directionalLights.push({ node, world, index });
+        break;
+      case "SkyBox3D":
+        skyBoxes.push({ node, world, index });
+        break;
+      case "TileMap3D":
+        tileMaps3D.push({ node, world, index });
         break;
       case "OmniLight3D":
         diagnostics.push({
@@ -515,6 +539,17 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       severity: "error",
       code: "too-many-lights",
       message: `The DS supports ${MAX_DS_LIGHTS} lights and the scene has ${directionalLights.length}.`
+    });
+  }
+
+  // Sky box: only one makes sense (it fills the whole screen behind everything), so extras are left out, same as an
+  // extra camera.
+  if (skyBoxes.length > 1) {
+    diagnostics.push({
+      severity: "warning",
+      code: "multiple-sky-boxes",
+      nodeName: skyBoxes[0].node.name,
+      message: `The scene has ${skyBoxes.length} sky boxes; only the first one in the tree is used.`
     });
   }
 
@@ -820,6 +855,14 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
           const instancePrefix = node.id.includes("/") ? node.id.slice(0, node.id.lastIndexOf("/") + 1) : "";
           const resolvedJoints = skin.jointNodeIds.map((id) => keptIndexOf.get(id) ?? (instancePrefix ? keptIndexOf.get(instancePrefix + id) : undefined));
           if (resolvedJoints.every((j): j is number => j !== undefined)) {
+            if (resolvedJoints.length > MAX_SKIN_JOINTS_PER_MESH) {
+              diagnostics.push({
+                severity: "warning",
+                code: "smooth-skinning-too-many-joints",
+                nodeName: node.name,
+                message: `This mesh's smooth skinning references ${resolvedJoints.length} distinct bones, more than the DS runtime can blend at once (${MAX_SKIN_JOINTS_PER_MESH}); the extra ${resolvedJoints.length - MAX_SKIN_JOINTS_PER_MESH} bone(s) are silently dropped (no weight applied), which can visibly shorten or collapse whatever part of the mesh they control. Split this mesh (fewer bones each) or remove bones it doesn't need.`
+              });
+            }
             skinJointStart = skinJoints.length;
             skinJointCount = resolvedJoints.length;
             skinJoints.push(...resolvedJoints);
@@ -901,6 +944,26 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     const level = lightLevelFromIntensity(getLightIntensity(node));
     dsLights.push({ node: index, color: rgb15(level, level, level), direction: [toV10(-x), toV10(-y), toV10(-z)] });
   }
+
+  // Sky box: at most one (the warning above already covers more than one); the DS has no hardware gradient clear,
+  // so this is drawn as a full-screen two-triangle polygon instead (STORY.sky-box.md) -- the runtime just needs its
+  // two colors, not a node reference (its own position/rotation/scale are unused, the whole point of it).
+  let dsSkyBox: DsScene3D["skyBox"] = null;
+  if (skyBoxes.length > 0) {
+    const sky = getSkyBox(skyBoxes[0].node);
+    const top = parseMeshColor(sky.topColor) ?? [0, 0, 0];
+    const horizon = parseMeshColor(sky.horizonColor) ?? [0, 0, 0];
+    dsSkyBox = { topColor: rgb15(top[0], top[1], top[2]), horizonColor: rgb15(horizon[0], horizon[1], horizon[2]), distance: sky.distance };
+  }
+
+  const { tileMaps: dsTileMaps3D, paletteEntries: tileMap3DPaletteEntries, chunkFiles: tileMap3DChunkFiles } = compileTileMap3D(
+    tileMaps3D,
+    project,
+    options.sceneIndex ?? 0,
+    diagnostics,
+    (mesh) => indexOfPrimitive(mesh),
+    (texture) => indexOfTexture(texture)
+  );
 
   let dsCamera: DsCamera | null = null;
   const cameraEntry = markedCurrent ?? cameras.find((c) => kept[c.index].effectivelyVisible) ?? cameras[0];
@@ -1146,6 +1209,10 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       fps: options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget,
       camera: dsCamera,
       lights: dsLights,
+      skyBox: dsSkyBox,
+      tileMaps3D: dsTileMaps3D,
+      tileMap3DPaletteEntries,
+      tileMap3DChunkFiles,
       meshes: dsMeshes,
       primitives,
       textures,

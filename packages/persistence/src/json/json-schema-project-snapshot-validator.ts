@@ -4,6 +4,8 @@ import {
   isValueForProperty,
   allSceneTrees,
   getSpriteByteSize,
+  getTileMap3D,
+  listCells3D,
   listScenes,
   getSpriteFrames,
   getSpritePixels,
@@ -213,6 +215,11 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     if (soundId !== undefined && !soundIds.has(soundId)) {
       issues.push(`Audio player "${node.name}" uses the sound "${soundId}", which isn't in the project file`);
     }
+    for (const clip of node.audio?.clips ?? []) {
+      if (clip.soundId !== undefined && !soundIds.has(clip.soundId)) {
+        issues.push(`Audio player "${node.name}"'s named sound "${clip.name}" uses the sound "${clip.soundId}", which isn't in the project file`);
+      }
+    }
     if (node.spriteId !== undefined && !spriteIds.has(node.spriteId)) {
       issues.push(`Sprite "${node.name}" uses the image "${node.spriteId}", which isn't in the project file`);
     }
@@ -234,6 +241,25 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     const textureId = node.mesh?.textureId;
     if (textureId !== undefined && !textureIds.has(textureId)) {
       issues.push(`Mesh "${node.name}" uses the texture "${textureId}", which isn't in the project file`);
+    }
+    if (node.kind === "TileMap3D") {
+      const data = getTileMap3D(node);
+      const paletteIds = new Set<string>();
+      data.palette.forEach((entry, i) => {
+        if (paletteIds.has(entry.id)) issues.push(`TileMap3D "${node.name}"'s palette has two entries with the id "${entry.id}"`);
+        paletteIds.add(entry.id);
+        if (!ids.has(entry.importedMeshId)) {
+          issues.push(`TileMap3D "${node.name}"'s palette entry ${i} uses the imported model "${entry.importedMeshId}", which isn't in the project file`);
+        }
+        if (entry.textureId !== undefined && !textureIds.has(entry.textureId)) {
+          issues.push(`TileMap3D "${node.name}"'s palette entry ${i} uses the texture "${entry.textureId}", which isn't in the project file`);
+        }
+      });
+      for (const { x, y, z, cell } of listCells3D(data)) {
+        if (!paletteIds.has(cell.paletteId)) {
+          issues.push(`TileMap3D "${node.name}" paints (${x}, ${y}, ${z}) with the palette entry "${cell.paletteId}", which isn't in its own palette`);
+        }
+      }
     }
   };
   for (const tree of allSceneTrees(project)) {

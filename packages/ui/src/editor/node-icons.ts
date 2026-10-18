@@ -32,6 +32,8 @@ export const NODE_KIND_ICON: Record<SceneNodeKind, string> = {
   Camera3D: "🎥",
   DirectionalLight3D: "☀",
   OmniLight3D: "💡",
+  SkyBox3D: "🌅",
+  TileMap3D: "🏗",
   CollisionShape3D: "🛡",
   TouchArea3D: "👆"
 };

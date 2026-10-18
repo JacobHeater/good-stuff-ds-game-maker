@@ -26,6 +26,9 @@ class FakeFs implements BuildFileSystem {
   async writeText(path: string, contents: string): Promise<void> {
     this.files.set(path, contents);
   }
+  async writeBytes(path: string, contents: Uint8Array): Promise<void> {
+    this.files.set(path, Buffer.from(contents).toString("latin1"));
+  }
   async copyFile(from: string, to: string): Promise<void> {
     if (this.failOn === "copyFile") throw new Error("disk full");
     this.files.set(to, this.files.get(from) ?? "");

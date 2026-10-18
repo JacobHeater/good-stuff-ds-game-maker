@@ -1,4 +1,5 @@
 import { dialog, ipcMain } from "electron";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DS_HARDWARE_PROFILE, type ExportRomResult, type FpsTarget, type ProjectSnapshot } from "@goodstuff/core";
 import { checkProject, compileProject, describeCompileResult, hasErrors } from "@goodstuff/compiler";
@@ -47,10 +48,23 @@ export function registerExportRomIpcHandler(): void {
         if (choice.canceled || !choice.filePath) return { outcome: "canceled", lines: [] };
 
         const result = await compileProject(snapshot, choice.filePath, builder, options);
+        const lines = describeCompileResult(result);
+        // The Output log only ever gets the toolchain's single most useful line (compile-report.ts says why); the
+        // full output -- everything else ld or gcc printed, which is often the only place a region overflow or a
+        // second, unrelated error shows up -- is written next to the chosen ROM path so it's never just lost.
+        if (!result.ok && result.reason === "build-failed") {
+          const logPath = `${choice.filePath}.build-log.txt`;
+          try {
+            writeFileSync(logPath, result.output);
+            lines.push(`The full build output was saved to "${logPath}".`);
+          } catch {
+            /* the short message above still gets through; losing the log file isn't worth failing the export over */
+          }
+        }
         return {
           outcome: result.ok ? "ok" : "error",
           romPath: result.ok ? result.romPath : undefined,
-          lines: describeCompileResult(result)
+          lines
         };
       } catch (error) {
         return { outcome: "error", lines: [`Export failed: ${error instanceof Error ? error.message : String(error)}`] };

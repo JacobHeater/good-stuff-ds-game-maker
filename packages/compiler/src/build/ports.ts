@@ -47,6 +47,8 @@ export interface BuildFileSystem {
   makeTempDir(prefix: string): Promise<string>;
   copyDir(from: string, to: string): Promise<void>;
   writeText(path: string, contents: string): Promise<void>;
+  /** Like `writeText`, for a NitroFS chunk file (STORY.tile-map-3d.md) or any other binary build output. */
+  writeBytes(path: string, contents: Uint8Array): Promise<void>;
   copyFile(from: string, to: string): Promise<void>;
   ensureDir(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;

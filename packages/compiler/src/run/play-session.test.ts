@@ -41,6 +41,7 @@ class FakeFs implements BuildFileSystem {
   }
   async copyDir(): Promise<void> {}
   async writeText(): Promise<void> {}
+  async writeBytes(): Promise<void> {}
   async copyFile(): Promise<void> {}
   async ensureDir(path: string): Promise<void> {
     this.dirs.push(path);

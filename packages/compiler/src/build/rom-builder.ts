@@ -29,6 +29,13 @@ export interface BuildOptions {
   onOutput?: (chunk: string) => void;
   /** Leave the temp build directory in place, for debugging. */
   keepBuildDir?: boolean;
+  /**
+   * Files packed into the ROM's own NitroFS region (`nitrofs/`, keyed by their path under it -- e.g. a TileMap3D
+   * chunk at `tile3d/0/chunks/1_0_-1.bin`, STORY.tile-map-3d.md) instead of compiled in: the runtime reads them
+   * back at its own choosing with plain `fopen`/`fread` ("nitro:/..."), so nothing here has to be resident in RAM
+   * until something actually opens it.
+   */
+  nitroFiles?: Record<string, Uint8Array>;
 }
 
 /** `C:\a\b` -> `/c/a/b`, the form MSYS2 understands. Throws for a path that can't be quoted safely. */
@@ -87,7 +94,13 @@ export class RomBuilder {
     scenes.forEach((scene, index) => {
       files[index === 0 ? "scene_data.c" : `scene_data_${index}.c`] = writeSceneDataC(scene, index);
     });
-    return this.buildFrom(this.deps.runtimeDir, files, outputPath, options);
+    // Each scene's own TileMap3D chunk files (STORY.tile-map-3d.md) are already keyed by a path with that scene's
+    // own index baked in (translate-tile-map-3d.ts's chunkPathPrefix), so merging every scene's own map together
+    // can never collide -- NitroFS is one flat filesystem for the whole ROM, shared by every scene, unlike the C
+    // source files above (which are already one set per scene by file name).
+    const nitroFiles: Record<string, Uint8Array> = { ...options.nitroFiles };
+    for (const scene of scenes) Object.assign(nitroFiles, scene.tileMap3DChunkFiles);
+    return this.buildFrom(this.deps.runtimeDir, files, outputPath, { ...options, nitroFiles });
   }
 
   /** Builds a translated 2D scene (the 2D runtime and `scene2d_data.c`). */
@@ -110,6 +123,10 @@ export class RomBuilder {
       buildDir = await fs.makeTempDir("gsds-build-");
       await fs.copyDir(runtimeDir, buildDir);
       for (const [name, contents] of Object.entries(sourceFiles)) await fs.writeText(join(buildDir, "source", name), contents);
+      // Always present, even empty (most scenes have no NitroFS files at all): NITRO_FILES is unconditionally set in
+      // the Makefile now, so ndstool always expects this directory to exist.
+      await fs.ensureDir(join(buildDir, "nitrofs"));
+      for (const [name, contents] of Object.entries(options.nitroFiles ?? {})) await fs.writeBytes(join(buildDir, "nitrofs", name), contents);
 
       const result = await runner.run(
         { executable: lookup.toolchain.bashPath, args: ["-l", "-c", makeScript(toMsysPath(buildDir))] },

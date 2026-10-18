@@ -11,8 +11,9 @@ import { createSceneNode, type SceneNode, type Vector3 } from "./scene-node";
  * a `MeshInstance3D` under that bone, its vertices in the bone's own space. Nothing new is needed to draw or animate it: the bones are ordinary nodes, so an AnimationPlayer (or a script) moves
  * them, and the file's animation clips arrive as an AnimationPlayer's animations, sampled at a fixed rate and thinned to the keys that matter.
  *
- * Supported: triangle meshes, skins (up to four bones a vertex; the strongest wins), node hierarchy with translation/rotation/scale or a matrix, animation clips of translation, rotation and scale
- * (linear, step and cubic spline), material base colors. Not supported: textures, morph targets, cameras and lights, sparse accessors, and animations of anything but bones' and nodes' transforms.
+ * Supported: triangle meshes, UV coordinates (TEXCOORD_0 -- a texture itself isn't read from the file, but an imported mesh with UVs can have one assigned afterward, the same way an OBJ import's can),
+ * skins (up to four bones a vertex; the strongest wins), node hierarchy with translation/rotation/scale or a matrix, animation clips of translation, rotation and scale (linear, step and cubic spline),
+ * material base colors. Not supported: embedded texture images, morph targets, cameras and lights, sparse accessors, and animations of anything but bones' and nodes' transforms.
  */
 
 /** How many keys a second a clip is sampled at before thinning (the DS plays its animations at the game's frame rate; this is plenty for a walk cycle). */
@@ -283,6 +284,7 @@ interface BuiltMesh {
   normals: number[];
   indices: number[];
   material: number;
+  uvs?: number[];
   skin?: ImportedMeshSkin;
   smoothSkinning?: boolean;
 }
@@ -368,6 +370,7 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
       positions: built.positions,
       normals: built.normals,
       indices: built.indices,
+      ...(built.uvs ? { uvs: built.uvs } : {}),
       ...(built.skin ? { skin: built.skin } : {})
     };
     meshes.push(mesh);
@@ -390,10 +393,13 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
     }
     const positions = readAccessor(input, attributes.POSITION);
     const normals = attributes.NORMAL !== undefined ? readAccessor(input, attributes.NORMAL) : null;
+    // glTF's own UV origin is already top-left (unlike an OBJ file's bottom-left one, which obj-import.ts flips to
+    // match), so this engine's own image-space convention needs no flip here.
+    const uv = attributes.TEXCOORD_0 !== undefined ? readAccessor(input, attributes.TEXCOORD_0) : null;
     const joints = attributes.JOINTS_0 !== undefined ? readAccessor(input, attributes.JOINTS_0) : null;
     const weights = attributes.WEIGHTS_0 !== undefined ? readAccessor(input, attributes.WEIGHTS_0) : null;
     const indices = primitive.indices !== undefined ? readAccessor(input, num(primitive.indices, 0)).data : Array.from({ length: positions.count }, (_, i) => i);
-    return { positions, normals, joints, weights, indices, material: num(primitive.material, -1) };
+    return { positions, normals, uv, joints, weights, indices, material: num(primitive.material, -1) };
   };
 
   // 1. The node tree (bones and everything else), meshes that aren't skinned drawn where they are.
@@ -418,8 +424,9 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
         if (!read) return;
         const positions = Array.from(read.positions.data);
         const normals = read.normals ? Array.from(read.normals.data) : faceNormals(positions, read.indices);
+        const uvs = read.uv ? Array.from(read.uv.data) : undefined;
         const partName = arr(gltfMesh?.primitives).length > 1 ? `${nodeName}_${p}` : `${nodeName}_mesh`;
-        addMesh(node, index, { name: partName, positions, normals, indices: read.indices, material: read.material });
+        addMesh(node, index, { name: partName, positions, normals, indices: read.indices, material: read.material, uvs });
       });
     }
     for (const child of (source.children as number[] | undefined) ?? []) node.children.push(buildNode(child, seen));
@@ -473,6 +480,7 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
         if (!read.joints || !read.weights) warnings.push(`"${label}" has a mesh with a skin but no bone weights; it is attached to the first bone.`);
         const positions = Array.from(read.positions.data);
         const normals = read.normals ? Array.from(read.normals.data) : faceNormals(positions, read.indices);
+        const uvs = read.uv ? Array.from(read.uv.data) : undefined;
         const vertexCount = positions.length / 3;
         // Every bone this primitive's vertices actually reference, gathered into a small per-mesh list -- same
         // jointNodeIds/localJointIndex/globalJointIndices bookkeeping the dominant-bone split path below uses,
@@ -509,7 +517,7 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
         const inverseBindMatrices = globalJointIndices.flatMap((g) => inverseBind[g] ?? IDENTITY);
         const skin: ImportedMeshSkin = { jointNodeIds, inverseBindMatrices, joints: skinJoints, weights: skinWeights };
         const partName = arr(gltfMesh?.primitives).length > 1 ? `${label}_${p}` : `${label}_mesh`;
-        addMesh(node, meshNode, { name: partName, positions, normals, indices: read.indices, material: read.material, skin, smoothSkinning: true });
+        addMesh(node, meshNode, { name: partName, positions, normals, indices: read.indices, material: read.material, uvs, skin, smoothSkinning: true });
       });
       continue;
     }
@@ -522,8 +530,10 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
         vertexMap: Map<number, number>;
         positions: number[];
         normals: number[];
+        uvs: number[];
         indices: number[];
         noNormals: boolean;
+        noUvs: boolean;
         /** The real, possibly-multi-bone weighting every vertex in this group actually has, for a later `smoothSkinning` toggle -- see `ImportedMeshSkin`'s own doc comment. `jointNodeIds`/`globalJointIndices` grow together as new bones are seen (same length, same order); `localJointIndex` is their reverse lookup; `skinJoints`/`skinWeights` are 4 entries per vertex, same order as `positions`. */
         jointNodeIds: string[];
         globalJointIndices: number[];
@@ -552,7 +562,7 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
         const key = `${best}|${read.material}`;
         let group = groups.get(key);
         if (!group) {
-          group = { joint: best, material: read.material, vertexMap: new Map(), positions: [], normals: [], indices: [], noNormals: !read.normals, jointNodeIds: [], globalJointIndices: [], localJointIndex: new Map(), skinJoints: [], skinWeights: [] };
+          group = { joint: best, material: read.material, vertexMap: new Map(), positions: [], normals: [], uvs: [], indices: [], noNormals: !read.normals, noUvs: !read.uv, jointNodeIds: [], globalJointIndices: [], localJointIndex: new Map(), skinJoints: [], skinWeights: [] };
           groups.set(key, group);
         }
         const ibm = inverseBind[best] ?? IDENTITY;
@@ -576,6 +586,8 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
             } else {
               group.normals.push(0, 0, 0);
             }
+            if (read.uv) group.uvs.push(read.uv.data[v * 2], read.uv.data[v * 2 + 1]);
+            else group.uvs.push(0, 0);
             // This vertex's real (up to 4-bone) weighting, normalized to sum to 1; no weight data at all falls back
             // to "fully on this group's own dominant bone" (same effective result as the rigid path).
             const raw =
@@ -618,7 +630,7 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
       const dominantBoneBindWorld = invertAffine(inverseBind[group.joint] ?? IDENTITY);
       const inverseBindMatrices = group.globalJointIndices.flatMap((g) => multiplyMat(inverseBind[g] ?? IDENTITY, dominantBoneBindWorld));
       const skin: ImportedMeshSkin = { jointNodeIds: group.jointNodeIds, inverseBindMatrices, joints: group.skinJoints, weights: group.skinWeights };
-      addMesh(bone, boneIndex, { name: partName, positions: group.positions, normals, indices: group.indices, material: group.material, skin });
+      addMesh(bone, boneIndex, { name: partName, positions: group.positions, normals, indices: group.indices, material: group.material, uvs: group.noUvs ? undefined : group.uvs, skin });
     }
   }
 
@@ -641,6 +653,46 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
   // bone/node's own rest position *and* mesh vertex data are divided by the same factor, uniformly, same as if the
   // whole rig had actually been scaled down in the source file before export; animation position keyframes get the
   // same treatment below, once they're built, so a moving bone still ends up in the right (now smaller) place.
+  // A skinned mesh's own `meshOwner` (above) is a real bone only for the dominant-bone-split path, which rebases
+  // `mesh.positions` into that bone's own local space specifically so `worldMatrix.get(meshOwner)` is the right
+  // frame to bring them back to true rest-pose world space. `unifiedSkinning`'s own meshes are owned by the mesh's
+  // *own* node instead (never rebased, per that path's own design -- see its own comment above), and per the glTF
+  // spec a skinned mesh's raw vertex positions live in whatever space its skin's `inverseBindMatrices` and joint
+  // hierarchy define, which is independent of the mesh node's own transform (the spec says to ignore it for a
+  // skinned mesh). Using `worldMatrix.get(meshOwner)` for those would silently put the extent measurement in the
+  // wrong space -- right only by coincidence, whenever the mesh node's own ancestor chain happens to carry the same
+  // scale the skeleton does (e.g. nested under the same "Armature" wrapper the bones are), and wrong by as much as
+  // the skeleton's own unit-conversion scale otherwise (confirmed: a mesh node left as its own separate, unscaled
+  // scene root -- a common, even this file's own fixture's default, shape -- measured 100x too big on a
+  // `buildArm({ armatureScale: 0.01 })`-shaped file, where the dominant-bone-split path measured correctly either
+  // way). So for a mesh that carries skin data, the true bind-pose world position of every vertex is computed the
+  // same way the runtime's own blend will reconstruct it at render time (`Σ weight_i * jointBindWorld_i *
+  // invBind_i * rawPosition`), from that mesh's own already-captured skin data -- correct for both paths (for the
+  // split path, this reduces to exactly the single-dominant-bone case `worldMatrix.get(meshOwner)` already computed,
+  // since that's precisely what that path's own skin data was built to satisfy, so this is a no-op there, not a
+  // second, different answer).
+  const nodeIndexById = new Map<string, number>();
+  for (const [index, node] of sceneNodes) nodeIndexById.set(node.id, index);
+  const skinnedBindWorldPosition = (mesh: ImportedMesh, v: number): [number, number, number] => {
+    const skin = mesh.skin!;
+    const jointWorld = skin.jointNodeIds.map((id) => worldMatrix.get(nodeIndexById.get(id)!) ?? IDENTITY);
+    const raw: [number, number, number] = [mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]];
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    for (let k = 0; k < 4; k++) {
+      const w = skin.weights[v * 4 + k];
+      if (w <= 0) continue;
+      const j = skin.joints[v * 4 + k];
+      const local = transformPoint(skin.inverseBindMatrices.slice(j * 16, j * 16 + 16), raw);
+      const world = transformPoint(jointWorld[j] ?? IDENTITY, local);
+      x += w * world[0];
+      y += w * world[1];
+      z += w * world[2];
+    }
+    return [x, y, z];
+  };
+
   let rescale = 1;
   let maxAbs = 0;
   for (const mesh of meshes) for (const c of mesh.positions) maxAbs = Math.max(maxAbs, Math.abs(c));
@@ -648,9 +700,10 @@ function build(input: GltfInput, modelName: string, options: ImportGltfOptions):
     const bboxMin = [Infinity, Infinity, Infinity];
     const bboxMax = [-Infinity, -Infinity, -Infinity];
     for (const mesh of meshes) {
-      const world = worldMatrix.get(meshOwner.get(mesh.id)!) ?? IDENTITY;
-      for (let i = 0; i < mesh.positions.length; i += 3) {
-        const p = transformPoint(world, [mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]]);
+      const world = mesh.skin ? null : (worldMatrix.get(meshOwner.get(mesh.id)!) ?? IDENTITY);
+      const vertexCount = mesh.positions.length / 3;
+      for (let v = 0; v < vertexCount; v++) {
+        const p = world ? transformPoint(world, [mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]]) : skinnedBindWorldPosition(mesh, v);
         for (let k = 0; k < 3; k++) {
           bboxMin[k] = Math.min(bboxMin[k], p[k]);
           bboxMax[k] = Math.max(bboxMax[k], p[k]);

@@ -1,76 +1,145 @@
-# Simple 8-way movement on the ground plane (X and Z) with gravity and a jump, for testing games.
+# 8-way ground movement, relative to the camera, with gravity -- the ground-walking half of flight-8way.gsscript's
+# movement style, with no flying and no jump.
 #
 # Set-up in the editor:
 #   1. A MeshInstance3D for the player, with a CollisionShape3D under it (the player's body).
 #   2. The ground, walls and platforms: CollisionShape3D nodes with Solid turned on (a box is easiest). Put the player above the ground to start.
-#   3. A Camera3D that looks down at the ground (for example above and behind it, tilted down).
+#   3. A Camera3D that looks down at the ground, as a CHILD of the player mesh, named "Camera3D" (its starting place
+#      in the editor doesn't matter -- the script places it every frame).
 #   4. Attach this script to the player mesh.
+#   5. An AnimationPlayer child (named "AnimationPlayer") with "Idle", "Walk" and "Run" animations.
 #
-#   D-pad  walk in 8 directions: Up = away from the camera (-Z), Down = toward it (+Z), Left = -X, Right = +X.
-#          Diagonals are no faster than straight lines.
+#   D-pad  walk in 8 directions relative to where the camera looks: Up = the way the camera faces, Right = to the camera's right.
+#          Diagonals are no faster than straight lines. The player speeds up and slows down smoothly (acceleration,
+#          ground_drag) instead of snapping to a speed, and turns to face the way it's actually moving.
 #   B      hold to run.
-#   A      jump (only from the ground: no double jump).
+#   L / R  orbit the camera around the player.
 # Gravity pulls the player down; solid shapes stop it: it lands on floors, is stopped by walls, and bumps its head on ceilings.
-# The player turns to face where it is walking. If your model faces the wrong way, change face_offset (degrees).
+# If your model faces the wrong way, change model_front_yaw (180 for a model that faces -Z, 0 for one that faces +Z).
 # Change the numbers below to change how it feels. Units are scene units and seconds.
 
-var speed = 3.0          # walking speed
-var run_speed = 6.0      # speed while B is held
-var gravity = -20.0      # downward pull (negative = down)
-var jump_speed = 9.0     # upward speed at the start of a jump: a jump is about jump_speed * jump_speed / (2 * -gravity) high (just under 2 units here)
-var velocity_y = 0.0     # how fast the player is moving up (negative: falling)
-var turn = true          # turn the player to face its walking direction (false: never rotate)
-var face_offset = 0.0    # added to the facing angle, in degrees (0 = the model's front points along -Z)
+var walk_speed = 4.0          # walking speed
+var run_speed = 7.0           # speed while B is held
+var acceleration = 10.0       # how fast it reaches the speed it's walking toward
+var ground_drag = 10.0        # how fast it stops when the D-pad is let go
+var gravity = -20.0           # downward pull (negative = down)
+var model_front_yaw = 180.0   # the turn that points the model's front along its travel: 180 for a model that faces -Z, 0 for one that faces +Z
+
+var camera_turn_speed = 90.0  # degrees a second the camera orbits while L or R is held
+var camera_dist = 3.0         # how far behind the player the camera sits
+var camera_height = 1.0       # how far above the player the camera sits
+var cam_angle = 0.0           # which way the camera is orbited to, in degrees (0 = starting behind the player)
+
+var vx = 0.0
+var vz = 0.0
+var velocity_y = 0.0          # how fast the player is moving up (negative: falling)
+var anim_state = -1           # which animation is playing: 0 Idle, 1 Walk, 2 Run (-1: none yet)
+
+func _ready():
+    update_camera()
+    update_animation(false, false)
+
+# Keeps an angle between -180 and 180.
+func wrap_angle(deg: float) -> float:
+    if deg > 180.0:
+        return deg - 360.0
+    if deg < -180.0:
+        return deg + 360.0
+    return deg
+
+# Puts the camera behind the player on its orbit, looking at the player.
+# sin() and cos() take degrees. The camera is a child, so it follows the player's own turn: its place and heading are worked out
+# in the player's space (the world offset turned back by the player's heading), the same technique flight-8way.gsscript uses.
+func update_camera():
+    var a = cam_angle
+    var yaw = rotation.y
+    var back_x = -sin(a) * camera_dist
+    var back_z = -cos(a) * camera_dist
+    $Camera3D.position.x = back_x * cos(yaw) - back_z * sin(yaw)
+    $Camera3D.position.y = camera_height
+    $Camera3D.position.z = back_x * sin(yaw) + back_z * cos(yaw)
+    # A camera looks along its own -Z, so it needs to be turned half way round to look toward the player.
+    $Camera3D.rotation.y = wrap_angle(a + 180.0 - yaw)
+
+# Plays "Idle" with no movement input, "Run" while moving with B held, otherwise "Walk". play() starts an
+# animation over from its first frame, so it's only called when the choice CHANGES (same as
+# flight-8way.gsscript's own update_animation()) -- calling it every frame, like calling it straight from the
+# D-pad checks, would hold the animation on its first frame instead of playing it.
+func update_animation(moving: bool, running: bool):
+    var want = 0
+    if moving:
+        if running:
+            want = 2
+        else:
+            want = 1
+    if want != anim_state:
+        anim_state = want
+        if want == 2:
+            $AnimationPlayer.play("Run")
+        elif want == 1:
+            $AnimationPlayer.play("Walk")
+        else:
+            $AnimationPlayer.play("Idle")
 
 func _process(delta):
-    # Which way is the D-pad pointing? dx: -1 left, +1 right. dz: -1 up (away from camera), +1 down.
-    var dx = 0.0
-    var dz = 0.0
-    if Input.is_button_down("left"):
-        dx -= 1.0
-    if Input.is_button_down("right"):
-        dx += 1.0
-    if Input.is_button_down("up"):
-        dz -= 1.0
-    if Input.is_button_down("down"):
-        dz += 1.0
+    # L and R orbit the camera.
+    if Input.is_button_down("l"):
+        cam_angle -= camera_turn_speed * delta
+    if Input.is_button_down("r"):
+        cam_angle += camera_turn_speed * delta
+    cam_angle = wrap_angle(cam_angle)
 
-    var s = speed
-    if Input.is_button_down("b"):
+    # The D-pad as a direction: up is the way the camera looks, right is to the camera's right.
+    var input_x = 0.0
+    var input_z = 0.0
+    if Input.is_button_down("up"):
+        input_z += 1.0
+    if Input.is_button_down("down"):
+        input_z -= 1.0
+    if Input.is_button_down("left"):
+        input_x -= 1.0
+    if Input.is_button_down("right"):
+        input_x += 1.0
+
+    # A diagonal is not faster (1 / sqrt(2) is about 0.7071).
+    var input_len_sq = input_x * input_x + input_z * input_z
+    if input_len_sq > 1.0:
+        input_x *= 0.7071
+        input_z *= 0.7071
+
+    var running = Input.is_button_down("b")
+    var s = walk_speed
+    if running:
         s = run_speed
 
-    # A diagonal has length 1.41, so scale it back to 1 (0.7071 = 1 / sqrt(2)).
-    if dx != 0.0 and dz != 0.0:
-        dx *= 0.7071
-        dz *= 0.7071
+    # That direction in the world. A camera that looks toward (sin a, cos a) has its right-hand side toward (-cos a, sin a).
+    var sin_a = sin(cam_angle)
+    var cos_a = cos(cam_angle)
+    var target_vx = (-input_x * cos_a + input_z * sin_a) * s
+    var target_vz = (input_x * sin_a + input_z * cos_a) * s
 
-    # Jump (is_on_floor() says what the last move ran into).
-    if is_on_floor() and Input.is_button_pressed("a"):
-        velocity_y = jump_speed
+    var moving = input_len_sq > 0.01
+    if moving:
+        vx += (target_vx - vx) * acceleration * delta
+        vz += (target_vz - vz) * acceleration * delta
+        # Face the way it is walking (atan2 gives degrees), same formula flight-8way.gsscript's own proven
+        # facing uses -- confirmed hardware-correct there (flight-8way.rom.test.ts: moving toward -X lands
+        # rotation.y at 90 degrees with model_front_yaw = 180). Flipping the sign here instead (as an earlier
+        # version of this file did, with model_front_yaw defaulting to 0) mirrors left and right, since atan2's
+        # sign doesn't just shift the facing by a constant, it reflects it -- no choice of model_front_yaw
+        # can undo a reflection, only a rotation, so the two files must share the same formula to both be right.
+        rotation.y = wrap_angle(atan2(vx, vz) + model_front_yaw)
+    else:
+        vx -= vx * ground_drag * delta
+        vz -= vz * ground_drag * delta
 
     # Gravity, then move on all three axes at once: solid shapes stop the move.
     velocity_y += gravity * delta
-    move_and_collide(dx * s * delta, velocity_y * delta, dz * s * delta)
+    move_and_collide(vx * delta, velocity_y * delta, vz * delta)
 
     # Landing or hitting a ceiling stops the fall or the rise.
     if is_on_floor() or is_on_ceiling():
         velocity_y = 0.0
 
-    # Face the walking direction (only while walking): 0 = toward -Z, 90 = toward +X, 180 = toward +Z, -90 = toward -X.
-    if turn and (dx != 0.0 or dz != 0.0):
-        var angle = 0.0
-        if dx > 0.0 and dz < 0.0:
-            angle = 45.0
-        elif dx > 0.0 and dz == 0.0:
-            angle = 90.0
-        elif dx > 0.0 and dz > 0.0:
-            angle = 135.0
-        elif dx == 0.0 and dz > 0.0:
-            angle = 180.0
-        elif dx < 0.0 and dz > 0.0:
-            angle = -135.0
-        elif dx < 0.0 and dz == 0.0:
-            angle = -90.0
-        elif dx < 0.0 and dz < 0.0:
-            angle = -45.0
-        rotation.y = angle + face_offset
+    update_camera()
+    update_animation(moving, running)

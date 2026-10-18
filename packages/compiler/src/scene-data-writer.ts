@@ -250,20 +250,43 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
 
+  out.push("static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {");
+  if (scene.tileMap3DPaletteEntries.length === 0) out.push("  { 0, 0, 0 }");
+  scene.tileMap3DPaletteEntries.forEach((p, i) => {
+    out.push(`  { ${p.primitive}, ${p.texture}, ${p.diffuse} }${i < scene.tileMap3DPaletteEntries.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
+  out.push("static const GsTileMap3D tile_maps_3d[] = {");
+  if (scene.tileMaps3D.length === 0) out.push('  { 0, 0, 0, "" }');
+  scene.tileMaps3D.forEach((t, i) => {
+    out.push(`  { ${t.node}, ${t.paletteStart}, ${t.paletteCount}, ${cString(t.chunkPathPrefix)} }${i < scene.tileMaps3D.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
   const twoD = writeScreen2DC(out, "two_d", scene.sprites2D, true);
   out.push(`const GsScene gs_scene_data_${index} = {`);
   out.push(`  ${scene.screen === "top" ? 0 : 1}, /* screen: 0 top, 1 bottom */`);
   out.push(`  ${scene.fps}, /* fps */`);
   out.push(`  ${float(scene.camera.fovDegrees)}, ${float(scene.camera.nearPlane)}, ${float(scene.camera.farPlane)}, ${float(scene.camera.tanHalfFov)}, /* fov, near, far, tan(fov / 2) */`);
   out.push(`  ${matrix(scene.camera.view)}, /* view */`);
-  out.push(`  ${scene.camera.node}, ${scene.nodes.length}, /* camera node, node count */`);
+  out.push(`  ${scene.camera.node}, /* camera node */`);
+  out.push(
+    scene.skyBox
+      ? `  1, ${scene.skyBox.topColor}, ${scene.skyBox.horizonColor}, ${float(scene.skyBox.distance)}, /* has sky box, top color, horizon color, distance */`
+      : `  0, 0, 0, ${float(0)}, /* no sky box */`
+  );
+  out.push(`  ${scene.nodes.length}, /* node count */`);
   out.push(`  ${scene.primitives.length}, ${scene.meshes.length}, ${scene.lights.length}, ${scene.textures.length}, /* primitive, mesh, light, texture counts */`);
   out.push(`  ${scene.sounds.length}, ${scene.audioPlayers.length}, ${scene.audioClips.length}, ${scene.colliders.length}, ${hullPoints.length / 3}, /* sound, audio player, audio clip, collider, hull point counts */`);
   out.push(`  ${scene.animationPlayers.length}, ${scene.animations.length}, ${scene.animationTracks.length}, ${scene.animationKeys.length}, /* animation player, animation, track, key counts */`);
   out.push(`  ${scene.touchAreas.length}, /* touch area count */`);
   out.push(`  ${scene.skinJoints.length}, /* skin joint count */`);
+  out.push(`  ${scene.tileMaps3D.length}, ${scene.tileMap3DPaletteEntries.length}, /* TileMap3D node, palette entry counts */`);
   out.push(
-    `  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
+    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
   );
   out.push("};");
   out.push("");

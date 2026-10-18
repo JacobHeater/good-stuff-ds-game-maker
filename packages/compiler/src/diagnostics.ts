@@ -27,6 +27,8 @@ export type DiagnosticCode =
   | "multiple-cameras"
   | "too-many-lights"
   | "omni-light-skipped"
+  | "multiple-sky-boxes"
+  | "tile-map-3d-missing-model"
   | "over-triangle-budget"
   | "two-d-node-not-built"
   | "out-of-range"
@@ -56,7 +58,8 @@ export type DiagnosticCode =
   | "tileset-too-many-colors"
   | "tileset-too-many-tiles"
   | "multiple-tilemaps"
-  | "smooth-skinning-missing-bone";
+  | "smooth-skinning-missing-bone"
+  | "smooth-skinning-too-many-joints";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;

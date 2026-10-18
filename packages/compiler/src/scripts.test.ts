@@ -281,7 +281,18 @@ describe("the example scripts kept in tests/prototypes/scripts", () => {
 
   it("move-8way compiles cleanly for a player with a shape under it and a solid floor, and moves and turns it", () => {
     const body = createSceneNode({ name: "PlayerShape", kind: "CollisionShape3D" });
-    const player = createSceneNode({ name: "Player", kind: "MeshInstance3D", mesh: "cube", children: [body] });
+    const camera = createSceneNode({ name: "Camera3D", kind: "Camera3D" });
+    camera.camera = { current: true };
+    const animationPlayer = createSceneNode({ name: "AnimationPlayer", kind: "AnimationPlayer" });
+    animationPlayer.animation = {
+      speed: 1,
+      animations: [
+        { id: "a1", name: "Idle", length: 1, loop: true, tracks: [] },
+        { id: "a2", name: "Walk", length: 1, loop: true, tracks: [] },
+        { id: "a3", name: "Run", length: 1, loop: true, tracks: [] }
+      ]
+    };
+    const player = createSceneNode({ name: "Player", kind: "MeshInstance3D", mesh: "cube", children: [body, camera, animationPlayer] });
     const floor = createSceneNode({ name: "Floor", kind: "CollisionShape3D" });
     floor.collision = { solid: true };
     const result = translate(scriptedProject([{ name: "Move8", source: example("move-8way.gsscript"), attachTo: ["Player"] }], [player, floor]));

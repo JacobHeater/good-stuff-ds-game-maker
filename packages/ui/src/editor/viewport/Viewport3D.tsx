@@ -10,8 +10,10 @@ import {
   getTouchArea3D,
   getLightIntensity,
   getTextureTexels,
+  getTileMap3D,
   is3DNodeKind,
   lightLevelFromIntensity,
+  listCells3D,
   resolveMeshGeometry,
   resolveMeshTexture,
   sampleAnimation,
@@ -35,14 +37,18 @@ import {
   Float32BufferAttribute,
   FrontSide,
   NearestFilter,
+  Quaternion,
+  Raycaster,
   RepeatWrapping,
   RGBAFormat,
+  Vector2,
   type Group,
+  type Intersection,
   type Object3D
 } from "three";
 import { SelectionBox } from "three-stdlib";
 
-import { useEditorStore, type EditorTool } from "../state/editor-store";
+import { useEditorStore, type EditorTool, type TileMap3DBrush } from "../state/editor-store";
 import { useShownSceneRoot } from "../state/shown-scene";
 import { collisionWireframe } from "./collision-wireframe";
 import { createDsMaterial, registerViewportLight, syncViewportLights, type ViewportLight } from "./ds-lighting-material";
@@ -323,6 +329,109 @@ function SmoothSkinnedMeshView({
   );
 }
 
+/** How far the Paint tool's own ground-plane fallback reaches from a TileMap3D's own origin, in grid-local units
+ * (STORY.tile-map-3d.md's Phase 4): generous enough to paint a good first stretch of a world without moving the
+ * node, not an attempt at an unbounded plane. */
+const TILE_MAP_3D_GROUND_SIZE = 64;
+/** A picking proxy's own minimum size on any axis, in grid-local units: a vanishingly thin or flat palette mesh
+ * (a single flat quad, say) still gets something clickable, rather than a sliver a ray almost never actually hits. */
+const TILE_MAP_3D_PICKER_MIN_SIZE = 0.2;
+
+/** The center and size of `positions`' own axis-aligned bounding box (flat x, y, z, x, y, z, ... triples, the shape
+ * `resolveMeshGeometry` returns) -- a 1x1x1 box centered at the origin for an empty or missing mesh, so a dangling
+ * palette entry still gets a sane, clickable picker instead of a degenerate one. */
+function boundsOf(positions: readonly number[] | undefined): { center: [number, number, number]; size: [number, number, number] } {
+  if (!positions || positions.length === 0) return { center: [0, 0, 0], size: [1, 1, 1] };
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < positions.length; i += 3) {
+    minX = Math.min(minX, positions[i]);
+    maxX = Math.max(maxX, positions[i]);
+    minY = Math.min(minY, positions[i + 1]);
+    maxY = Math.max(maxY, positions[i + 1]);
+    minZ = Math.min(minZ, positions[i + 2]);
+    maxZ = Math.max(maxZ, positions[i + 2]);
+  }
+  return {
+    center: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2],
+    size: [Math.max(maxX - minX, TILE_MAP_3D_PICKER_MIN_SIZE), Math.max(maxY - minY, TILE_MAP_3D_PICKER_MIN_SIZE), Math.max(maxZ - minZ, TILE_MAP_3D_PICKER_MIN_SIZE)]
+  };
+}
+
+/**
+ * A TileMap3D's painted cells (STORY.tile-map-3d.md), drawn the same way the compiler and the runtime do: each
+ * cell's own palette entry resolves through exactly the same mesh/texture pipeline a plain MeshInstance3D already
+ * goes through (`MeshView`, reused directly via a synthetic `MeshInstance3DData` -- the same trick
+ * `translate-tile-map-3d.ts` plays on the compiler side), translated to the cell's own integer grid position and
+ * turned by its yaw -- a cell's mesh-local origin sits exactly at its own (x, y, z), matching `main.c`'s own
+ * `tm3d_draw_node`, so an editor preview and the ROM place a tile identically.
+ *
+ * While the Paint tool has this node selected (`paintActive`), it also carries two kinds of invisible-but-
+ * raycastable pickers `TileMap3DPaintController` reads by `userData`, mounted as real scene-graph children of this
+ * node's own already-transformed group (so no manual world/local conversion is needed beyond `Object3D.worldToLocal`
+ * on a hit point): one box per painted cell, sized and centered to the palette entry's own actual geometry (`boundsOf`)
+ * rather than a fixed unit cube -- a palette tile is rarely modeled as an exact 1x1x1 box, and a picker smaller than
+ * what's actually drawn there would miss most clicks on the mesh's own visible surface, always falling through to
+ * whatever is behind it (click a face to place the brush beside it; Shift+click to erase that cell) -- and one
+ * large, faint plane at the grid's own y = 0, the fallback for painting into empty space, the same convention
+ * Godot's GridMap editor uses.
+ */
+function TileMap3DView({
+  node,
+  importedMeshes,
+  importedTextures,
+  paintActive
+}: {
+  node: SceneNode;
+  importedMeshes: readonly ImportedMesh[] | undefined;
+  importedTextures: readonly ImportedTexture[] | undefined;
+  paintActive: boolean;
+}): JSX.Element {
+  const data = getTileMap3D(node);
+  const cells = useMemo(() => listCells3D(data), [data]);
+  const paletteById = useMemo(() => new Map(data.palette.map((entry) => [entry.id, entry])), [data.palette]);
+
+  return (
+    <>
+      {cells.map(({ x, y, z, cell }) => {
+        const entry = paletteById.get(cell.paletteId);
+        if (!entry) return null; // a dangling reference (the schema validator normally catches this) -- draw nothing rather than crash
+        const mesh: MeshInstance3DData = { importedMeshId: entry.importedMeshId, textureId: entry.textureId, color: entry.color, triangleCount: 0 };
+        const picker = paintActive ? boundsOf(resolveMeshGeometry(mesh, importedMeshes)?.positions as number[] | undefined) : null;
+        return (
+          <group key={`${x},${y},${z}`} position={[x, y, z]} rotation={[0, cell.rotationY * 90 * DEG_TO_RAD, 0]}>
+            <MeshView mesh={mesh} importedMeshes={importedMeshes} importedTextures={importedTextures} selected={false} onSelect={() => {}} />
+            {picker && (
+              // onPointerDown here does nothing of its own -- TileMap3DPaintController reads this click from its
+              // own native listener, not R3F's synthetic one -- except stop it reaching Canvas's own onPointerMissed:
+              // without this, R3F sees no registered handler fire for the click (this mesh has none otherwise) and
+              // treats it as a miss, deselecting the TileMap3D right after the very first paint and leaving no
+              // selected node for the *next* click's own paintNode lookup to find.
+              <mesh
+                userData={{ tileMap3DNodeId: node.id, cell: { x, y, z } }}
+                position={picker.center}
+                onPointerDown={(event: ThreeEvent<MouseEvent>) => event.stopPropagation()}
+              >
+                <boxGeometry args={picker.size} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+            )}
+          </group>
+        );
+      })}
+      {paintActive && (
+        <mesh
+          userData={{ tileMap3DNodeId: node.id, groundPlane: true }}
+          rotation={[-Math.PI / 2, 0, 0]}
+          onPointerDown={(event: ThreeEvent<MouseEvent>) => event.stopPropagation()}
+        >
+          <planeGeometry args={[TILE_MAP_3D_GROUND_SIZE, TILE_MAP_3D_GROUND_SIZE]} />
+          <meshBasicMaterial color={EDITOR_ACCENT} transparent opacity={0.05} depthWrite={false} side={DoubleSide} />
+        </mesh>
+      )}
+    </>
+  );
+}
+
 /** A collision shape's wireframe color: distinct from a mesh, and the editor's accent when the node is selected. */
 const COLLISION_COLOR = "#4ecdc4";
 /** A solid shape (ground, a wall) is drawn in a warm color so it can be told from the others. */
@@ -568,7 +677,7 @@ function SelectionGizmo({
   onGestureEnd
 }: {
   nodeId: string;
-  tool: Exclude<EditorTool, "select">;
+  tool: Exclude<EditorTool, "select" | "paint3d">;
   objects: NodeObjects;
   onTransform: (id: string, field: "position" | "rotation" | "scale", value: Vector3) => void;
   /** The handle was released: whatever is dragged next is a new undo step. */
@@ -661,6 +770,7 @@ function SceneNodeView({
   node,
   activeScreen,
   selectedId,
+  activeTool,
   objects,
   onSelect,
   preview
@@ -670,6 +780,10 @@ function SceneNodeView({
   node: SceneNode;
   activeScreen: ScreenId;
   selectedId: string;
+  /** Just enough to know whether the Paint tool's own ground plane / cell pickers should be in the scene for a
+   * selected TileMap3D (TileMap3DView) -- not threaded further than that, everything else about the gizmo tools
+   * is handled above this tree, in Viewport3D itself. */
+  activeTool: EditorTool;
   objects: NodeObjects;
   onSelect: (id: string) => void;
   /** The animation preview, when one is showing. */
@@ -686,6 +800,7 @@ function SceneNodeView({
       importedTextures={importedTextures}
       activeScreen={activeScreen}
       selectedId={selectedId}
+      activeTool={activeTool}
       objects={objects}
       onSelect={onSelect}
       preview={preview}
@@ -697,7 +812,7 @@ function SceneNodeView({
   const select = (): void => onSelect(node.id);
   const drawn = node.screen === activeScreen;
   // Only meshes and grouping nodes are sized by their scale; a camera or light gizmo stays gizmo-sized.
-  const scaled = node.kind === "MeshInstance3D" || node.kind === "Node3D" || node.kind === "CollisionShape3D" || node.kind === "TouchArea3D";
+  const scaled = node.kind === "MeshInstance3D" || node.kind === "Node3D" || node.kind === "CollisionShape3D" || node.kind === "TouchArea3D" || node.kind === "TileMap3D";
 
   return (
     <group
@@ -715,6 +830,14 @@ function SceneNodeView({
     >
       {drawn && node.kind === "MeshInstance3D" && node.mesh && !isSmoothSkinned(node.mesh, importedMeshes) && (
         <MeshView mesh={node.mesh} importedMeshes={importedMeshes} importedTextures={importedTextures} selected={selected} onSelect={select} />
+      )}
+      {drawn && node.kind === "TileMap3D" && (
+        <TileMap3DView
+          node={node}
+          importedMeshes={importedMeshes}
+          importedTextures={importedTextures}
+          paintActive={selected && activeTool === "paint3d"}
+        />
       )}
       {drawn && node.kind === "CollisionShape3D" && <CollisionShapeView node={node} selected={selected} onSelect={select} />}
       {drawn && node.kind === "TouchArea3D" && <TouchAreaView node={node} selected={selected} onSelect={select} />}
@@ -859,6 +982,119 @@ function BoxSelectController({
 }
 
 /**
+ * Click-to-paint/erase in the 3D viewport, the Paint tool only, and only while a TileMap3D is selected
+ * (STORY.tile-map-3d.md's Phase 4). Listens on the canvas's own native pointer events rather than R3F's per-object
+ * synthetic ones, for the exact reason `BoxSelectController` does (its own doc comment): the pickers a click may
+ * land on (`TileMap3DView`'s own invisible cell cubes and ground plane) are plain `userData`-tagged meshes with no
+ * `onPointerDown` of their own, and `OrbitControls` still needs to own every other drag everywhere else. The same
+ * drag-vs-click threshold applies: only a press-and-release that never moved far enough to count as orbiting paints
+ * or erases anything.
+ *
+ * Clicking an existing cell's own face places the brush *beside* it (nudging the hit point half a grid-local unit
+ * along the face's own world normal, converted back to this node's local space, then rounding to the nearest
+ * integer cell -- robust to the node's own rotation and scale, since the nudge happens in local space before either
+ * applies); Shift+click erases that exact cell instead. Clicking the ground-plane fallback (nothing painted there
+ * yet) places the brush at that local (x, z), always at y = 0, the same convention Godot's GridMap editor uses.
+ */
+function TileMap3DPaintController({
+  activeTool,
+  node,
+  objects,
+  brush,
+  onPaint,
+  onErase
+}: {
+  activeTool: EditorTool;
+  /** The selected TileMap3D, when one is (null: the Paint tool has nothing to do). */
+  node: SceneNode | null;
+  objects: NodeObjects;
+  brush: TileMap3DBrush;
+  onPaint: (id: string, x: number, y: number, z: number, paletteId: string, rotationY: 0 | 1 | 2 | 3) => void;
+  onErase: (id: string, x: number, y: number, z: number) => void;
+}): null {
+  const { camera, scene, gl, controls } = useThree();
+
+  useEffect(() => {
+    if (activeTool !== "paint3d" || !node) return undefined;
+    const nodeId = node.id;
+    const element = gl.domElement;
+    const orbit = controls as { enabled: boolean } | null;
+    let start: { x: number; y: number; shiftKey: boolean } | null = null;
+    let dragging = false;
+
+    function pick(clientX: number, clientY: number): Intersection | null {
+      const pickable: Object3D[] = [];
+      scene.traverse((object) => {
+        if ((object.userData as { tileMap3DNodeId?: string }).tileMap3DNodeId === nodeId) pickable.push(object);
+      });
+      if (pickable.length === 0) return null;
+      const rect = element.getBoundingClientRect();
+      const ndc = new Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      const raycaster = new Raycaster();
+      raycaster.setFromCamera(ndc, camera);
+      return raycaster.intersectObjects(pickable, false)[0] ?? null;
+    }
+
+    function onPointerDown(event: PointerEvent): void {
+      if (event.button !== 0) return;
+      start = { x: event.clientX, y: event.clientY, shiftKey: event.shiftKey };
+      dragging = false;
+      if (orbit) orbit.enabled = false;
+    }
+
+    function onPointerMove(event: PointerEvent): void {
+      if (!start || dragging) return;
+      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) >= BOX_SELECT_DRAG_THRESHOLD) dragging = true;
+    }
+
+    function onPointerUp(event: PointerEvent): void {
+      if (!start) return;
+      const wasDragging = dragging;
+      const press = start;
+      start = null;
+      dragging = false;
+      if (orbit) orbit.enabled = true;
+      if (wasDragging) return; // an orbit drag, not a click: BoxSelectController's own onSelect/onPointerMissed handling (and nothing here) applies
+
+      const hit = pick(event.clientX, event.clientY);
+      const gridObject = hit && objects.get(nodeId);
+      if (!hit || !gridObject) return;
+      const tag = hit.object.userData as { cell?: { x: number; y: number; z: number }; groundPlane?: boolean };
+
+      if (tag.cell) {
+        if (press.shiftKey) {
+          onErase(nodeId, tag.cell.x, tag.cell.y, tag.cell.z);
+          return;
+        }
+        if (!brush.paletteId || !hit.face) return;
+        const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+        const localNormal = worldNormal.applyQuaternion(gridObject.getWorldQuaternion(new Quaternion()).invert());
+        const localPoint = gridObject.worldToLocal(hit.point.clone()).addScaledVector(localNormal, 0.5);
+        onPaint(nodeId, Math.round(localPoint.x), Math.round(localPoint.y), Math.round(localPoint.z), brush.paletteId, brush.rotationY);
+        return;
+      }
+
+      if (tag.groundPlane && brush.paletteId) {
+        const localPoint = gridObject.worldToLocal(hit.point.clone());
+        onPaint(nodeId, Math.round(localPoint.x), 0, Math.round(localPoint.z), brush.paletteId, brush.rotationY);
+      }
+    }
+
+    element.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      element.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      if (orbit) orbit.enabled = true;
+    };
+  }, [activeTool, node, objects, brush, onPaint, onErase, camera, scene, gl, controls]);
+
+  return null;
+}
+
+/**
  * The 3D scene viewport: the DS-specific equivalent of Godot's 3D editor,
  * showing whichever single screen currently owns the 3D engine (the DS can
  * only drive 3D output to one screen at a time). The working area always
@@ -872,7 +1108,7 @@ function BoxSelectController({
  */
 export function Viewport3D(): JSX.Element {
   const shownRoot = useShownSceneRoot();
-  const { state, selectNode, selectNodes, setTransform3D, endEditGesture } = useEditorStore();
+  const { state, selectNode, selectNodes, setTransform3D, endEditGesture, paintTile3D, eraseTile3D } = useEditorStore();
   const activeScreen: ScreenId = state.screenFilter === "both" ? "top" : state.screenFilter;
   const nodeObjects = useRef<NodeObjects>(new Map());
   // Every id a box-select drag may land on: the active screen's own drawn 3D nodes (what SceneNodeView actually
@@ -882,9 +1118,11 @@ export function Viewport3D(): JSX.Element {
     [shownRoot, activeScreen]
   );
   const selected = findSceneNode(state.sceneRoot, state.selectedNodeId);
-  // A gizmo needs something to manipulate: a drawn, non-root 3D node; and a camera or light is never scaled.
+  // A gizmo needs something to manipulate: a drawn, non-root 3D node; and a camera or light is never scaled. Paint
+  // isn't a gizmo tool at all (TileMap3DPaintController, not TransformControls, owns the viewport while it's active).
   const gizmoTool =
     state.activeTool !== "select" &&
+    state.activeTool !== "paint3d" &&
     selected &&
     selected.id !== state.sceneRoot.id &&
     selected.screen === activeScreen &&
@@ -892,6 +1130,8 @@ export function Viewport3D(): JSX.Element {
     (state.activeTool !== "scale" || selected.kind === "MeshInstance3D" || selected.kind === "Node3D" || selected.kind === "CollisionShape3D" || selected.kind === "TouchArea3D")
       ? state.activeTool
       : null;
+  // The Paint tool's own target: the selected node, only when it's actually a drawn TileMap3D.
+  const paintNode = state.activeTool === "paint3d" && selected?.kind === "TileMap3D" && selected.screen === activeScreen ? selected : null;
   // The animation preview: what the selected AnimationPlayer's animation gives each node at the playhead (null when no preview is showing).
   const previewTime = state.animationUi.previewTime;
   const previewOverrides = useMemo((): PreviewOverrides | null => {
@@ -948,6 +1188,7 @@ export function Viewport3D(): JSX.Element {
               node={shownRoot}
               activeScreen={activeScreen}
               selectedId={state.selectedNodeId}
+              activeTool={state.activeTool}
               objects={nodeObjects.current}
               onSelect={(id) => {
                 // A gizmo handle is under the pointer: this click manipulates it, not a reselection of whatever
@@ -988,6 +1229,14 @@ export function Viewport3D(): JSX.Element {
               boxSelectActive={state.boxSelectActive}
               selectableIds={boxSelectableIds}
               selectNodes={selectNodes}
+            />
+            <TileMap3DPaintController
+              activeTool={state.activeTool}
+              node={paintNode}
+              objects={nodeObjects.current}
+              brush={state.tileMap3DBrush}
+              onPaint={paintTile3D}
+              onErase={eraseTile3D}
             />
           </Canvas>
         </div>

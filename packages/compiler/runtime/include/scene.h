@@ -250,6 +250,23 @@ typedef struct {
 	uint16_t node;       /* index into GsScene.nodes: a moving light points along its node's -Z axis */
 } GsLight;
 
+/* One TileMap3D palette entry, the same shape a plain GsMesh's own primitive/texture/diffuse already is (STORY.tile-map-3d.md). */
+typedef struct {
+	uint16_t primitive;
+	uint16_t texture; /* 0 = none, else 1 + index into GsScene.textures */
+	uint16_t diffuse; /* RGB15 */
+} GsTileMap3DPaletteEntry;
+
+/* One TileMap3D node's own metadata -- its painted cells are never compiled in here (STORY.tile-map-3d.md): they
+   live as one file per non-empty chunk in the ROM's own NitroFS region, at chunkPathPrefix + "<cx>_<cy>_<cz>.bin",
+   streamed in by the runtime as the camera moves (gs_tile_map_3d.c). */
+typedef struct {
+	uint16_t node;         /* index into GsScene.nodes: this TileMap3D's own node, its world transform the grid's own origin/orientation */
+	uint16_t paletteStart; /* this node's own run of GsScene.tileMap3DPaletteEntries */
+	uint16_t paletteCount;
+	const char *chunkPathPrefix; /* e.g. "tile3d/0/0/" -- baked in at compile time, the runtime never reconstructs it */
+} GsTileMap3D;
+
 typedef struct {
 	uint8_t screen; /* 0 = top, 1 = bottom */
 	uint8_t fps;    /* 30 or 60 */
@@ -259,6 +276,12 @@ typedef struct {
 	float tanHalfFov; /* tan(fovDegrees / 2), for turning a touched point into a ray */
 	GsMatrix view; /* world -> camera, as the scene starts */
 	uint16_t cameraNode; /* index into nodes: a moving camera's view is the inverse of its node's world transform */
+	/* A SkyBox3D's own two colors (STORY.sky-box.md): hasSkyBox 0 means the scene has none, and the runtime's own
+	   flat default backdrop is drawn instead -- skyBoxTopColor/skyBoxHorizonColor are then meaningless. */
+	uint8_t hasSkyBox;
+	uint16_t skyBoxTopColor;     /* RGB15 */
+	uint16_t skyBoxHorizonColor; /* RGB15 */
+	float skyBoxDistance;        /* scene units from the camera -- see draw_sky_box's own comment in main.c */
 	uint16_t nodeCount;
 	uint16_t primitiveCount;
 	uint16_t meshCount;
@@ -275,10 +298,14 @@ typedef struct {
 	uint16_t animKeyCount;
 	uint16_t touchAreaCount;
 	uint16_t skinJointCount; /* total, across every smooth-skinned mesh instance */
+	uint16_t tileMap3DCount;
+	uint16_t tileMap3DPaletteEntryCount;
 	const GsNode *nodes;
 	const GsPrimitive *primitives;
 	const GsMesh *meshes;
 	const GsLight *lights;
+	const GsTileMap3D *tileMaps3D;
+	const GsTileMap3DPaletteEntry *tileMap3DPaletteEntries;
 	const GsTexture *textures;
 	const GsSound *sounds;
 	const GsAudioPlayer *audioPlayers;

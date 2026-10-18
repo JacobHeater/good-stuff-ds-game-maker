@@ -231,6 +231,44 @@ export interface DsLight {
   direction: [number, number, number];
 }
 
+/**
+ * The screen-space gradient a SkyBox3D draws behind everything else (STORY.sky-box.md): `topColor` at the top edge
+ * of the screen, blending down into `horizonColor` at the bottom. `null` (no SkyBox3D in the scene) means the
+ * runtime's own flat default backdrop instead.
+ */
+export interface DsSkyBox {
+  /** RGB15. */
+  topColor: number;
+  /** RGB15. */
+  horizonColor: number;
+  /** Scene units from the camera, `SKY_BOX_DISTANCE_MIN`..`SKY_BOX_DISTANCE_MAX` (core's scene-node.ts). */
+  distance: number;
+}
+
+/** One TileMap3D palette entry, compiled exactly like a plain MeshInstance3D's own primitive/texture/color (STORY.tile-map-3d.md). */
+export interface DsTileMap3DPaletteEntry {
+  primitive: number;
+  /** 0 = none, else 1 + index into `DsScene3D.textures` (the same convention `DsMesh.texture` already uses). */
+  texture: number;
+  /** RGB15. */
+  diffuse: number;
+}
+
+/**
+ * One TileMap3D node's own metadata (STORY.tile-map-3d.md): its painted cells are never compiled in here -- they
+ * live in the ROM's own NitroFS region as one file per non-empty chunk, streamed in by the runtime as the camera
+ * moves (`DsScene3D.tileMap3DChunkFiles`, keyed the same way `chunkPathPrefix` + a chunk's own file name resolves).
+ */
+export interface DsTileMap3D {
+  /** Index into `DsScene3D.nodes`: this TileMap3D's own node, whose world transform is the grid's own origin and orientation. */
+  node: number;
+  /** This node's own palette, a run of `DsScene3D.tileMap3DPaletteEntries`. */
+  paletteStart: number;
+  paletteCount: number;
+  /** The NitroFS path (ending in "/") this node's own chunk files live under, e.g. "tile3d/0/0/" (scene 0, this the 0th TileMap3D node in it) -- baked in at compile time so the runtime never has to reconstruct it. */
+  chunkPathPrefix: string;
+}
+
 export interface DsCamera {
   /** Index into `DsScene3D.nodes`. */
   node: number;
@@ -251,6 +289,18 @@ export interface DsScene3D {
   camera: DsCamera;
   /** At most `MAX_DS_LIGHTS`. */
   lights: DsLight[];
+  /** The scene's SkyBox3D, if it has one (at most one is ever used -- see `multiple-sky-boxes`). */
+  skyBox: DsSkyBox | null;
+  /** Every TileMap3D node's own metadata (STORY.tile-map-3d.md); its palette is a run of `tileMap3DPaletteEntries`, its cells are in `tileMap3DChunkFiles` instead. */
+  tileMaps3D: DsTileMap3D[];
+  tileMap3DPaletteEntries: DsTileMap3DPaletteEntry[];
+  /**
+   * One non-empty chunk's own dense cell data, keyed by its own path under whichever TileMap3D node's
+   * `chunkPathPrefix` it belongs to (so `chunkPathPrefix + key` is the file's full NitroFS path) -- written to the
+   * ROM's NitroFS region at build time (`RomBuilder`'s own `nitroFiles`), not compiled in as C data, so nothing
+   * here has to be resident in RAM until the runtime actually opens it (STORY.tile-map-3d.md's Phase 1/2).
+   */
+  tileMap3DChunkFiles: Record<string, Uint8Array>;
   meshes: DsMesh[];
   primitives: DsPrimitive[];
   textures: DsTexture[];

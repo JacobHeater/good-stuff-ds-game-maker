@@ -105,3 +105,27 @@ describe("assets used by other scenes are kept", () => {
     expect(pruneUnusedAssets(unused).sprites).toBeUndefined();
   });
 });
+
+describe("a TileMap3D's own palette keeps its models and textures, with no plain MeshInstance3D needed", () => {
+  const projectWithGrid = (palette: { id: string; importedMeshId: string; textureId?: string }[]): ProjectSnapshot => {
+    const grid = createSceneNode({ name: "Grid", kind: "TileMap3D" });
+    grid.tileMap3D = { palette, cells: {} };
+    return {
+      ...createProjectSnapshot({ name: "P", mode: "3D", scene: createSceneNode({ name: "Main", kind: "Node3D", children: [grid] }) }),
+      meshes: [{ id: "stone-mesh", name: "Stone", positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 0, 1, 0, 0, 1, 0, 0, 1], indices: [0, 1, 2] }],
+      textures: [{ id: "stone-tex", name: "Stone", width: 1, height: 1, texels: "AAA=" }]
+    };
+  };
+
+  it("keeps a model and texture a palette entry references, even though no MeshInstance3D uses them", () => {
+    const pruned = pruneUnusedAssets(projectWithGrid([{ id: "stone", importedMeshId: "stone-mesh", textureId: "stone-tex" }]));
+    expect(pruned.meshes).toHaveLength(1);
+    expect(pruned.textures).toHaveLength(1);
+  });
+
+  it("drops a model and texture no palette entry or MeshInstance3D references any more", () => {
+    const pruned = pruneUnusedAssets(projectWithGrid([]));
+    expect(pruned.meshes).toBeUndefined();
+    expect(pruned.textures).toBeUndefined();
+  });
+});

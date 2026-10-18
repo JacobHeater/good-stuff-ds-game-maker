@@ -20,7 +20,7 @@ function openProject(mode: "2D" | "3D" = "3D"): EditorState {
 }
 const sound = (id: string, samples = 8000): ImportedSound => ({ id, name: `beep-${id}`, sampleRate: 8000, samples: encodeSamples(new Int16Array(samples)) });
 const importNew = (state: EditorState, s: ImportedSound, warnings: string[] = []): EditorState =>
-  run(state, { type: "IMPORT_SOUND", nodeId: null, sound: s, warnings });
+  run(state, { type: "IMPORT_SOUND", nodeId: null, clipId: null, sound: s, warnings });
 const withPlayer = (): { state: EditorState; id: string } => {
   const state = run(openProject(), { type: "ADD_NODE", kind: "AudioStreamPlayer" });
   return { state, id: state.selectedNodeId };
@@ -54,7 +54,7 @@ describe("importing a sound as a new player", () => {
 
   it("does nothing with no project open", () => {
     const state = createInitialState();
-    expect(editorReducer(state, { type: "IMPORT_SOUND", nodeId: null, sound: sound("a"), warnings: [] })).toBe(state);
+    expect(editorReducer(state, { type: "IMPORT_SOUND", nodeId: null, clipId: null, sound: sound("a"), warnings: [] })).toBe(state);
   });
 
   it("undoes and redoes as one step: the sound and the player go and come back together", () => {
@@ -75,7 +75,7 @@ describe("importing a sound onto a player", () => {
   it("adds the sound and assigns it to that player, keeping its settings, without adding a node", () => {
     const { state, id } = withPlayer();
     const tuned = run(state, change(id, { volume: 0.4, pitch: 2, loop: true, autoplay: false }));
-    const imported = run(tuned, { type: "IMPORT_SOUND", nodeId: id, sound: sound("a"), warnings: [] });
+    const imported = run(tuned, { type: "IMPORT_SOUND", nodeId: id, clipId: null, sound: sound("a"), warnings: [] });
     expect(imported.sceneRoot.children).toHaveLength(1);
     expect(audioOf(imported, id)).toEqual({ soundId: "a", autoplay: false, volume: 0.4, pitch: 2, loop: true });
     expect(imported.outputLog.at(-1)).toContain('onto "AudioStreamPlayer"');
@@ -84,10 +84,39 @@ describe("importing a sound onto a player", () => {
 
   it("makes a new player instead when the node isn't an audio player", () => {
     const state = run(openProject(), { type: "ADD_NODE", kind: "Camera3D" });
-    const imported = run(state, { type: "IMPORT_SOUND", nodeId: state.selectedNodeId, sound: sound("a"), warnings: [] });
+    const imported = run(state, { type: "IMPORT_SOUND", nodeId: state.selectedNodeId, clipId: null, sound: sound("a"), warnings: [] });
     // Like an imported model, it goes under the selected node.
     expect(imported.sceneRoot.children.map((c) => c.kind)).toEqual(["Camera3D"]);
     expect(imported.sceneRoot.children[0].children.map((c) => c.kind)).toEqual(["AudioStreamPlayer"]);
+  });
+});
+
+describe("importing a sound onto a named clip", () => {
+  it("sets only that clip's own sound, leaving the player's own sound and its other clips alone -- the bug the owner hit, where every clip's Import button actually overwrote the player's own sound", () => {
+    const { state, id } = withPlayer();
+    const withOwnSound = run(state, { type: "IMPORT_SOUND", nodeId: id, clipId: null, sound: sound("own"), warnings: [] });
+    const clip1 = run(withOwnSound, { type: "AUDIO_CLIP_CREATE", playerId: id, id: "c1" });
+    const clip2 = run(clip1, { type: "AUDIO_CLIP_CREATE", playerId: id, id: "c2" });
+    const imported = run(clip2, { type: "IMPORT_SOUND", nodeId: id, clipId: "c1", sound: sound("clip-a"), warnings: [] });
+    expect(audioOf(imported, id).soundId).toBe("own");
+    expect(audioOf(imported, id).clips).toEqual([
+      { id: "c1", name: "Sound", volume: 1, pitch: 1, loop: false, soundId: "clip-a" },
+      { id: "c2", name: "Sound2", volume: 1, pitch: 1, loop: false }
+    ]);
+    expect(imported.project!.sounds!.map((s) => s.id)).toEqual(["own", "clip-a"]);
+    expect(imported.outputLog.at(-1)).toContain('onto "Sound" of "AudioStreamPlayer"');
+  });
+
+  it("imports a second, different sound onto the other clip without disturbing the first", () => {
+    const { state, id } = withPlayer();
+    const clip1 = run(state, { type: "AUDIO_CLIP_CREATE", playerId: id, id: "c1" });
+    const clip2 = run(clip1, { type: "AUDIO_CLIP_CREATE", playerId: id, id: "c2" });
+    const firstImported = run(clip2, { type: "IMPORT_SOUND", nodeId: id, clipId: "c1", sound: sound("a"), warnings: [] });
+    const secondImported = run(firstImported, { type: "IMPORT_SOUND", nodeId: id, clipId: "c2", sound: sound("b"), warnings: [] });
+    const clips = audioOf(secondImported, id).clips!;
+    expect(clips.find((c) => c.id === "c1")!.soundId).toBe("a");
+    expect(clips.find((c) => c.id === "c2")!.soundId).toBe("b");
+    expect(audioOf(secondImported, id).soundId).toBeUndefined();
   });
 });
 

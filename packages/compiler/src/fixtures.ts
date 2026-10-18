@@ -7,6 +7,7 @@ import {
   getAudioPlayer,
   parseObj,
   type AudioPlayerData,
+  type ImportedMesh,
   type ImportedSound,
   type ImportedSprite,
   type ImportedTexture,
@@ -338,6 +339,40 @@ export function scriptedProject(
     }
   });
   return built;
+}
+
+/**
+ * A TileMap3D with one cell exactly where the camera starts out looking (the grid's own origin) and another 45
+ * units further along that same line of sight, both painted with the same one-tile palette -- the same mesh
+ * dedup pipeline a plain MeshInstance3D already goes through (translate-tile-map-3d.ts). A script moves the
+ * camera along +X while Right is held, so holding it a few seconds crosses several of the grid's own 8-unit
+ * chunk boundaries (TILE_MAP_3D_CHUNK_SIZE in tile-map-3d.ts): at the camera's starting position only the near
+ * cell's own chunk is in the runtime's loaded window (STORY.tile-map-3d.md's Phase 3), so the far one must not
+ * draw; after moving 45 units it's the other way around. Used by the runtime's own streaming test.
+ */
+export function tileMap3DStreamProject(): ProjectSnapshot {
+  const tileMesh: ImportedMesh = {
+    id: "tile-mesh",
+    name: "Tile",
+    positions: [-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0],
+    normals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    indices: [0, 1, 2, 0, 2, 3]
+  };
+  const grid = createSceneNode({ name: "Grid", kind: "TileMap3D" });
+  grid.tileMap3D = {
+    palette: [{ id: "tile", importedMeshId: "tile-mesh" }],
+    cells: {
+      "0,0,0": { paletteId: "tile", rotationY: 0 },
+      "45,0,0": { paletteId: "tile", rotationY: 0 }
+    }
+  };
+  const cam = camera("Camera", { x: 2.5, y: 2, z: 3.5 });
+  cam.scriptId = "move-camera";
+  return {
+    ...project("TileStream", [cam, sun("Sun", { x: -2, y: 4, z: 3 }), grid]),
+    meshes: [tileMesh],
+    scripts: [{ id: "move-camera", name: "MoveCamera", source: 'func _process(delta):\n    if Input.is_button_down("right"):\n        position.x += 0.15\n' }]
+  };
 }
 
 // ---- 2D sprites ---------------------------------------------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import type { CollisionShape2DData } from "./collision-shape-2d";
 import type { LabelData } from "./label";
 import type { SpriteAnimationsData } from "./sprite-animation";
 import type { TileMapData } from "./tile-map";
+import type { TileMap3DData } from "./tile-map-3d";
 import type { TouchArea2DData, TouchArea3DData } from "./touch-area";
 import { getPrimitiveTriangleCount } from "./primitive-geometry";
 import type { ScreenId } from "./index";
@@ -35,7 +36,9 @@ export type SceneNodeKind3D =
   | "DirectionalLight3D"
   | "OmniLight3D"
   | "CollisionShape3D"
-  | "TouchArea3D";
+  | "TouchArea3D"
+  | "SkyBox3D"
+  | "TileMap3D";
 
 export type SceneNodeKind = SceneNodeKind2D | SceneNodeKind3D;
 
@@ -61,6 +64,8 @@ export const SCENE_NODE_KINDS_3D: SceneNodeKind3D[] = [
   "Camera3D",
   "DirectionalLight3D",
   "OmniLight3D",
+  "SkyBox3D",
+  "TileMap3D",
   "CollisionShape3D",
   "TouchArea3D"
 ];
@@ -101,6 +106,46 @@ export interface LightData {
 /** A light's intensity, 1 when it has none (every light in a project saved before intensity existed). */
 export function getLightIntensity(node: { light?: LightData }): number {
   return node.light?.intensity ?? 1;
+}
+
+/**
+ * What a SkyBox3D has beyond a transform (its own transform is unused -- it's a whole-scene backdrop, not a
+ * placed object). The DS has no hardware skybox and no per-pixel gradient clear, so this isn't a textured dome: it's
+ * drawn as a full-screen two-triangle gradient (the DS GPU interpolates a triangle's per-vertex color across it for
+ * free), `topColor` at the top edge of the screen blending down into `horizonColor` at the bottom, fixed in screen
+ * space (it doesn't turn with the camera -- see STORY.sky-box.md for why a screen-space gradient was chosen over a
+ * true camera-relative dome). Replaces the engine's own flat backdrop color for any scene that has one.
+ */
+export interface SkyBoxData {
+  /** "#rrggbb": the color at the top of the screen. */
+  topColor: string;
+  /** "#rrggbb": the color at the bottom of the screen (the "horizon"), where normal geometry usually covers it anyway. */
+  horizonColor: string;
+  /**
+   * How far from the camera the gradient's own polygon sits, `SKY_BOX_DISTANCE_MIN`..`SKY_BOX_DISTANCE_MAX` scene
+   * units. It's still drawn to exactly fill the screen at any distance (its own size is computed from the camera's
+   * FOV at that distance, the same way a real object's apparent size shrinks with distance -- STORY.sky-box.md), so
+   * this mostly matters for how it sits relative to nearby geometry that's meant to read as "close to the sky"
+   * (distant mountains, clouds) rather than changing how much of the screen the gradient itself covers.
+   */
+  distance: number;
+}
+
+export const SKY_BOX_DISTANCE_MIN = 0.5;
+/** A vertex's own v16 (4.12 fixed point) format can only reach about 8 units; this leaves it headroom. */
+export const SKY_BOX_DISTANCE_MAX = 7.5;
+
+/** A sensible default sky (a plain daytime blue, about as far as the hardware lets it sit) for a SkyBox3D with nothing saved yet. */
+export const DEFAULT_SKY_BOX: SkyBoxData = { topColor: "#2f6fb0", horizonColor: "#cfe9ff", distance: SKY_BOX_DISTANCE_MAX };
+
+/** A SkyBox3D's own colors and distance, defaulted and clamped. */
+export function getSkyBox(node: { skyBox?: Partial<SkyBoxData> }): SkyBoxData {
+  const distance = node.skyBox?.distance;
+  return {
+    topColor: node.skyBox?.topColor ?? DEFAULT_SKY_BOX.topColor,
+    horizonColor: node.skyBox?.horizonColor ?? DEFAULT_SKY_BOX.horizonColor,
+    distance: distance !== undefined && Number.isFinite(distance) ? Math.min(SKY_BOX_DISTANCE_MAX, Math.max(SKY_BOX_DISTANCE_MIN, distance)) : DEFAULT_SKY_BOX.distance
+  };
 }
 
 /**
@@ -200,6 +245,8 @@ export interface SceneNode {
   mesh?: MeshInstance3DData;
   /** Light properties; only meaningful on a DirectionalLight3D. Absent means the defaults (full intensity). */
   light?: LightData;
+  /** Gradient colors; only meaningful on a SkyBox3D. Absent means the defaults (see `getSkyBox`). */
+  skyBox?: Partial<SkyBoxData>;
   /** Whether this is the scene's active camera; only meaningful on a Camera3D. Absent means the default (see `isCurrentCamera`). */
   camera?: CameraData;
   /** Sound and playback settings; only meaningful on an AudioStreamPlayer. Absent means the defaults (see `getAudioPlayer`). */
@@ -210,6 +257,8 @@ export interface SceneNode {
   collision2D?: Partial<Omit<CollisionShape2DData, "size">> & { size?: Partial<Vector2> };
   /** The tile sheet and grid; only meaningful on a TileMap. Absent means an empty 32 x 24 grid with no sheet (see `getTileMap`). */
   tileMap?: Partial<TileMapData>;
+  /** The palette and painted cells; only meaningful on a TileMap3D. Absent means an empty grid with no palette (see `getTileMap3D`). */
+  tileMap3D?: Partial<TileMap3DData>;
   /** Size in pixels; only meaningful on a TouchArea2D. Absent means the defaults (see `getTouchArea2D`). */
   touchArea2D?: Partial<TouchArea2DData>;
   /** Shape and size; only meaningful on a TouchArea3D. Absent means the defaults (see `getTouchArea3D`). */

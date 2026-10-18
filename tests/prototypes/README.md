@@ -263,10 +263,14 @@ Needs the toolchain (about 45 s). The second command needs melonDS: with nothing
 Scripts in the project's own language, ready to paste into the Script tab and attach to a node. They compile in a test (`scripts.test.ts`) so they stay valid.
 
 - `dpad-rotate.gsscript`: the D-pad turns the model (Left/Right about the vertical axis, Up/Down tip it), A resets it.
-- `move-8way.gsscript`: simple 8-way movement with gravity and a jump for testing 3D games: the D-pad walks along X and Z (Up = -Z, away from the camera), diagonals are
-  normalized so they are no faster, B runs, A jumps (once, from the ground), and the player turns to face its walking direction (`turn`, `face_offset`). It moves with
-  `move_and_collide`, so like `player-jump.gsscript` it needs a collision shape under the player and solid shapes for the ground. **Its `move-8way.rom.test.ts` was written for
-  the earlier flat version (no gravity, no shapes) and has not been updated or rerun for this one.**
+- `move-8way.gsscript`: 8-way ground movement with gravity for testing 3D games -- the ground-walking half of `flight-8way.gsscript`'s own movement style (camera-relative
+  D-pad, acceleration/`ground_drag` instead of snapping to a speed, turning to face travel direction via `atan2`), with no flying and **no jump** (an earlier version of this
+  file snapped to a fixed speed on world-fixed axes and had a jump; replaced on request). B runs. L/R orbit a `Camera3D` child of the player named "Camera3D" around it
+  (`update_camera()`, the same technique `flight-8way.gsscript` uses). It moves with `move_and_collide`, so like `player-jump.gsscript` it needs a collision shape under the
+  player and solid shapes for the ground.
+  **Its `move-8way.rom.test.ts` was written for a much earlier, flat, world-fixed-axis, jumping version and has not been updated or rerun since** -- confirmed still true: it
+  fails at script-compile time (`is_on_floor`/`move_and_collide` need a collision shape under Player, which this fixture's `Player` node still doesn't have), and even once
+  that's added its per-axis/per-angle assertions no longer match this file's camera-relative movement at all.
 - `player-jump.gsscript`: a simple platformer player for testing games: Left/Right walk, A jumps (once, from the ground), gravity pulls it down, and **solid collision shapes are
   the ground** (`move_and_collide`: it lands on floors and steps, is stopped by walls, bumps its head). Set-up notes are at the top of the file. Its physics is checked frame by
   frame on the DS in `player-script.rom.test.ts` (walking speed, jump height and length, no double jump, landing on a step, walls, a low ceiling).

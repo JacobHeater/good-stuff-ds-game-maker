@@ -6,6 +6,8 @@
  * Requirements: requirements/compiler/TASK.ds-runtime-c-template.md, TASK.runtime-node-table-and-script-services.md
  */
 #include <nds.h>
+#include <filesystem.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,10 +18,16 @@
 /* Material colors shared by every mesh until the scene model has materials. */
 #define AMBIENT_COLOR RGB15(8, 8, 8)
 
-/* A smooth-skinned mesh instance blends up to this many distinct bones -- generous for any mesh that fits the DS's
-   own triangle budget. Extra joints past this are silently dropped (their weight is simply not applied); in
-   practice no real mesh group needs anywhere near this many. */
-#define GS_MAX_SKIN_JOINTS_PER_MESH 16
+/* A smooth-skinned mesh instance blends up to this many distinct bones. Extra joints past this are silently dropped
+   (their weight is simply not applied) -- a real, confirmed failure mode, not a hypothetical one: a whole-character
+   `unifiedSkinning` mesh (one mesh for the entire rig, by that path's own design -- see translate-scene-3d.ts's own
+   comment) referenced 22 distinct bones on a real file, and the 16-bone version of this limit silently dropped
+   everything from the knee down on both legs, rendering as visibly short legs with no error or warning anywhere.
+   `translate-scene-3d.ts`'s own `MAX_SKIN_JOINTS_PER_MESH` constant mirrors this value and warns at compile time
+   when a mesh would exceed it -- keep the two in sync if this is ever changed. 32 comfortably covers a normal
+   Mixamo-style body rig (spine, arms, legs, no separately-rigged fingers) with headroom; a richly-rigged mesh (full
+   finger bones, etc.) can still exceed it, which is exactly what the compiler warning is for. */
+#define GS_MAX_SKIN_JOINTS_PER_MESH 32
 
 /* `out = a * b`, both column-major 4x4 affine (20.12) matrices -- the one general 4x4 multiply this runtime needs
    (compose_node's own node-to-node composition keeps rotation and scale apart on purpose; see its own comment in
@@ -246,6 +254,259 @@ static void load_view(void) {
 	glLoadMatrix4x4((const m4x4 *)&gs_current_view);
 }
 
+/* Draws the scene's SkyBox3D, if it has one, as a full-screen two-triangle gradient (STORY.sky-box.md) -- the DS has
+   no hardware gradient clear, so this takes glClearColor's own place for a scene that has one: skyBoxTopColor at the
+   top edge of the screen, blending down into skyBoxHorizonColor at the bottom (the geometry engine interpolates a
+   triangle's own per-vertex color across it for free; no texture or lighting needed). Identity modelview (it never
+   turns with the camera, same as a fixed screen backdrop) but the scene's own real projection, so it fills the
+   screen exactly like any mesh at that same distance would. Drawn with alpha one step under fully opaque so the DS
+   skips writing its own depth entirely (the same rule a translucent mesh already relies on -- see draw_mesh's own
+   comment on GsMesh.alpha): every real polygon drawn after it this frame still depth-tests against the untouched,
+   just-cleared depth buffer, so it draws over the sky box correctly regardless of where in the world it actually
+   is. That means this has to run before any real geometry this frame, and it has to be a drawn polygon redone every
+   single frame, not a one-time setup: the framebuffer isn't preserved from one frame to the next on the DS. */
+static void draw_sky_box(void) {
+	if (!gs_scene.hasSkyBox) return;
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	glBindTexture(0, 0);
+	glPolyFmt(POLY_ALPHA(30) | POLY_CULL_NONE);
+
+	/* gs_scene.skyBoxDistance (set from SkyBox3D's own Inspector slider, STORY.sky-box.md) is clamped at compile
+	   time to stay comfortably inside a vertex's own v16 (4.12 fixed point) +-8 unit range -- how far away it
+	   actually sits doesn't matter for draw order (see above) or for how much of the screen it fills (halfHeight/
+	   halfWidth below scale with it), only that it's further than any sane near plane. */
+	const float z = -gs_scene.skyBoxDistance;
+	const float halfHeight = gs_scene.tanHalfFov * -z;
+	const float halfWidth = halfHeight * (256.0f / 192.0f);
+	const int16_t zv = (int16_t)(z * 4096.0f);
+	const int16_t top = (int16_t)(halfHeight * 4096.0f);
+	const int16_t bottom = (int16_t)(-halfHeight * 4096.0f);
+	const int16_t left = (int16_t)(-halfWidth * 4096.0f);
+	const int16_t right = (int16_t)(halfWidth * 4096.0f);
+
+	glBegin(GL_TRIANGLES);
+	glColor(gs_scene.skyBoxTopColor);
+	glVertex3v16(left, top, zv);
+	glColor(gs_scene.skyBoxHorizonColor);
+	glVertex3v16(left, bottom, zv);
+	glVertex3v16(right, bottom, zv);
+	glColor(gs_scene.skyBoxTopColor);
+	glVertex3v16(left, top, zv);
+	glColor(gs_scene.skyBoxHorizonColor);
+	glVertex3v16(right, bottom, zv);
+	glColor(gs_scene.skyBoxTopColor);
+	glVertex3v16(right, top, zv);
+	glEnd();
+}
+
+/* ---- TileMap3D: chunks streamed from the ROM's own NitroFS region, not resident all at once (STORY.tile-map-3d.md's Phase 3) -------- */
+
+/* Must match TILE_MAP_3D_CHUNK_SIZE (packages/core/src/tile-map-3d.ts) and translate-tile-map-3d.ts's own chunk file
+   format: CHUNK_SIZE^3 cells, 2 bytes each (palette index + 1, 0 = empty; then rotationY), indexed lx + ly*8 + lz*64. */
+#define TM3D_CHUNK_SIZE 8
+#define TM3D_CELLS_PER_CHUNK (TM3D_CHUNK_SIZE * TM3D_CHUNK_SIZE * TM3D_CHUNK_SIZE)
+#define TM3D_CHUNK_BYTES (TM3D_CELLS_PER_CHUNK * 2)
+/* A 3x3x3 window of loaded chunks around the camera (24 scene units to a side, at the default chunk size) --
+   proves the point of streaming (a painted world far larger than this is never resident at once) without needing
+   many chunks loaded just to avoid visible pop-in as the camera moves. */
+#define TM3D_WINDOW 3
+#define TM3D_SLOTS (TM3D_WINDOW * TM3D_WINDOW * TM3D_WINDOW)
+
+typedef struct {
+	int valid; /* this slot's (cx, cy, cz) is the most recent load attempt for that position, and `cells` reflects it exactly -- either real chunk data, or all zero (an empty chunk, same as one with no file: translate-tile-map-3d.ts never writes an empty chunk's file at all) */
+	int cx, cy, cz;
+	uint8_t cells[TM3D_CHUNK_BYTES];
+} Tm3dSlot;
+
+/* One fixed pool of TM3D_SLOTS slots per TileMap3D node in the scene, flat (tm3d_slots[tileMapIndex * TM3D_SLOTS + slot]) --
+   allocated in enter_scene alongside every other per-scene table, freed and rebuilt the same way. tm3d_center is the
+   chunk each pool was last centred on; tm3d_has_center says whether that's happened yet (so the very first frame
+   always loads, rather than comparing against a stale all-zero center that might legitimately be (0,0,0)). */
+static Tm3dSlot *tm3d_slots;
+static int *tm3d_center; /* 3 ints (cx, cy, cz) per TileMap3D node, flat */
+static uint8_t *tm3d_has_center;
+/* Reused scratch space for whichever TileMap3D tm3d_refresh is currently recentring (one at a time, never concurrently)
+   -- TM3D_SLOTS Tm3dSlot structures is tens of KB, too large to put on the ARM9's own small stack. */
+static Tm3dSlot *tm3d_scratch;
+
+static void tm3d_free_tables(void) {
+	free(tm3d_slots);
+	free(tm3d_center);
+	free(tm3d_has_center);
+	free(tm3d_scratch);
+	tm3d_slots = 0;
+	tm3d_center = 0;
+	tm3d_has_center = 0;
+	tm3d_scratch = 0;
+}
+
+static void tm3d_init(void) {
+	tm3d_free_tables();
+	if (gs_scene.tileMap3DCount == 0) return;
+	tm3d_slots = malloc(sizeof(Tm3dSlot) * TM3D_SLOTS * gs_scene.tileMap3DCount);
+	tm3d_center = malloc(sizeof(int) * 3 * gs_scene.tileMap3DCount);
+	tm3d_has_center = calloc(gs_scene.tileMap3DCount, 1);
+	tm3d_scratch = malloc(sizeof(Tm3dSlot) * TM3D_SLOTS);
+	for (int i = 0; i < TM3D_SLOTS * gs_scene.tileMap3DCount; i++) tm3d_slots[i].valid = 0;
+}
+
+/* `worldPos` (f32, world space) expressed in TileMap3D node `node`'s own local space: the inverse of compose_node's
+   own rotation + scale + translation (gs_runtime.c) -- the same way gs_compute_view inverts a camera's rotation and
+   translation, with scale (ignored for a camera, but not for a grid: scaling a TileMap3D scales its cell spacing
+   too) divided back out afterward. Used only to decide which chunk is nearest the camera, an occasional calculation,
+   not a per-vertex one. */
+static void tm3d_world_to_local(int node, const int32_t worldPos[3], int32_t out[3]) {
+	const int32_t *w = gs_world_matrix[node].m;
+	int32_t rel[3];
+	for (int row = 0; row < 3; row++) rel[row] = worldPos[row] - w[12 + row];
+	for (int row = 0; row < 3; row++) {
+		int64_t sum = 0;
+		for (int k = 0; k < 3; k++) sum += (int64_t)w[row * 4 + k] * rel[k]; /* row of R^T == row of R read across, not down -- see gs_compute_view's own comment */
+		out[row] = gs_divf((int32_t)(sum >> 12), gs_world_scale[node][row]);
+	}
+}
+
+/* Loads chunk (cx, cy, cz) of `tileMap` into `slot`, or leaves it all zero (an empty chunk) when that chunk has no
+   file at all -- translate-tile-map-3d.ts never writes one for a chunk with no painted cells, so a missing file is
+   the ordinary, expected case for most of a sparse world, not an error. */
+static void tm3d_load(const GsTileMap3D *tileMap, int cx, int cy, int cz, Tm3dSlot *slot) {
+	slot->valid = 1;
+	slot->cx = cx;
+	slot->cy = cy;
+	slot->cz = cz;
+	memset(slot->cells, 0, sizeof(slot->cells));
+	char path[96];
+	snprintf(path, sizeof(path), "nitro:/%s%d_%d_%d.bin", tileMap->chunkPathPrefix, cx, cy, cz);
+	FILE *f = fopen(path, "rb");
+	if (!f) return;
+	fread(slot->cells, 1, TM3D_CHUNK_BYTES, f);
+	fclose(f);
+}
+
+/* Recentres TileMap3D `t`'s own window of loaded chunks on wherever the camera now is, if it has crossed into a
+   different chunk since the last time this ran (the common case, most frames: nothing to do, one integer compare
+   per axis). A slot already holding the right chunk is kept as-is rather than reloaded -- sliding the window by one
+   chunk, the ordinary case of the camera walking through the world, reuses most of it. */
+static void tm3d_refresh(int t, const GsTileMap3D *tileMap, const int32_t cameraWorld[3]) {
+	int32_t local[3];
+	tm3d_world_to_local(tileMap->node, cameraWorld, local);
+	/* Floor to the containing cell (f32 -> int, arithmetic shift so a negative position floors correctly, same
+	   convention this runtime already relies on elsewhere -- see mat4_multiply's own `>> 12`), then floor-divide by
+	   TM3D_CHUNK_SIZE (a power of two: another arithmetic shift) to the chunk it's in -- chunkOf's own math in
+	   packages/core/src/tile-map-3d.ts, just done in fixed point instead of on a stored integer cell coordinate. */
+	int cx = (local[0] >> 12) >> 3, cy = (local[1] >> 12) >> 3, cz = (local[2] >> 12) >> 3;
+
+	int *center = &tm3d_center[t * 3];
+	if (tm3d_has_center[t] && center[0] == cx && center[1] == cy && center[2] == cz) return;
+
+	Tm3dSlot *slots = &tm3d_slots[t * TM3D_SLOTS];
+	const int half = TM3D_WINDOW / 2;
+	int n = 0;
+	for (int dz = -half; dz <= half; dz++) {
+		for (int dy = -half; dy <= half; dy++) {
+			for (int dx = -half; dx <= half; dx++) {
+				int wx = cx + dx, wy = cy + dy, wz = cz + dz;
+				int found = -1;
+				for (int i = 0; i < TM3D_SLOTS; i++) {
+					if (slots[i].valid && slots[i].cx == wx && slots[i].cy == wy && slots[i].cz == wz) {
+						found = i;
+						break;
+					}
+				}
+				if (found >= 0) tm3d_scratch[n] = slots[found];
+				else tm3d_load(tileMap, wx, wy, wz, &tm3d_scratch[n]);
+				n++;
+			}
+		}
+	}
+	memcpy(slots, tm3d_scratch, sizeof(Tm3dSlot) * TM3D_SLOTS);
+	center[0] = cx;
+	center[1] = cy;
+	center[2] = cz;
+	tm3d_has_center[t] = 1;
+}
+
+/* Draws every non-empty cell of TileMap3D `t`'s own currently-loaded window: the grid's own world transform once
+   (its node's rotation/translation via glMultMatrix4x4, same as draw_mesh's own rigid path, then its scale on the
+   position matrix alone, for the same lighting reason draw_mesh's own comment gives), then each painted cell's own
+   translation and Y-axis yaw on top of that, same convention compose_node itself uses for a pure-Y rotation. */
+static void tm3d_draw_node(int t, const GsTileMap3D *tileMap) {
+	glPushMatrix();
+	glMultMatrix4x4((const m4x4 *)&gs_world_matrix[tileMap->node]);
+	glMatrixMode(GL_POSITION);
+	glScalef32(gs_world_scale[tileMap->node][0], gs_world_scale[tileMap->node][1], gs_world_scale[tileMap->node][2]);
+	glMatrixMode(GL_MODELVIEW);
+
+	Tm3dSlot *slots = &tm3d_slots[t * TM3D_SLOTS];
+	for (int s = 0; s < TM3D_SLOTS; s++) {
+		const Tm3dSlot *slot = &slots[s];
+		if (!slot->valid) continue;
+		for (int cellIndex = 0; cellIndex < TM3D_CELLS_PER_CHUNK; cellIndex++) {
+			uint8_t raw = slot->cells[cellIndex * 2];
+			if (raw == 0) continue; /* unpainted */
+			int paletteLocal = raw - 1;
+			if (paletteLocal >= tileMap->paletteCount) continue; /* stale data naming a palette entry this scene no longer has -- never crash on it */
+			const GsTileMap3DPaletteEntry *entry = &gs_scene.tileMap3DPaletteEntries[tileMap->paletteStart + paletteLocal];
+			const GsPrimitive *primitive = &gs_scene.primitives[entry->primitive];
+			const uint8_t rotationY = slot->cells[cellIndex * 2 + 1];
+
+			const int lx = cellIndex % TM3D_CHUNK_SIZE;
+			const int ly = (cellIndex / TM3D_CHUNK_SIZE) % TM3D_CHUNK_SIZE;
+			const int lz = cellIndex / (TM3D_CHUNK_SIZE * TM3D_CHUNK_SIZE);
+			const int worldX = slot->cx * TM3D_CHUNK_SIZE + lx;
+			const int worldY = slot->cy * TM3D_CHUNK_SIZE + ly;
+			const int worldZ = slot->cz * TM3D_CHUNK_SIZE + lz;
+
+			glBindTexture(0, entry->texture ? textureNames[entry->texture - 1] : 0);
+			glMaterialf(GL_AMBIENT, AMBIENT_COLOR);
+			glMaterialf(GL_DIFFUSE, entry->diffuse);
+			glMaterialf(GL_SPECULAR, RGB15(0, 0, 0));
+			glMaterialf(GL_EMISSION, RGB15(0, 0, 0)); /* a tile is always lit -- the palette has no per-entry unlit flag (yet) */
+
+			const int32_t cb = gs_cos(gs_i2f(rotationY * 90)), sb = gs_sin(gs_i2f(rotationY * 90));
+			int32_t cellMatrix[16] = {
+				cb, 0, -sb, 0,
+				0, GS_ONE, 0, 0,
+				sb, 0, cb, 0,
+				gs_i2f(worldX), gs_i2f(worldY), gs_i2f(worldZ), GS_ONE
+			};
+			glPushMatrix();
+			glMultMatrix4x4((const m4x4 *)cellMatrix);
+
+			const int16_t *p = primitive->positions;
+			const uint32_t *n = primitive->normals;
+			const int16_t *uv = entry->texture ? primitive->texcoords : 0;
+			const int vertexCount = primitive->triangleCount * 3;
+			glBegin(GL_TRIANGLES);
+			for (int i = 0; i < vertexCount; i++) {
+				if (uv) glTexCoord2t16(uv[i * 2], uv[i * 2 + 1]);
+				glNormal(n[i]);
+				glVertex3v16(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+			}
+			glEnd();
+			glPopMatrix(1);
+		}
+	}
+	glPopMatrix(1);
+}
+
+/* Every TileMap3D in the scene: recentres each one's own streamed window on the camera, then draws whatever's
+   loaded. Always opaque (the palette has no per-entry alpha yet), so this runs once, before the mesh loop's own
+   opaque pass -- a translucent mesh drawn afterward then still sorts against it correctly. */
+static void draw_tile_maps_3d(uint32_t litBits) {
+	if (gs_scene.tileMap3DCount == 0) return;
+	const int32_t *cw = gs_world_matrix[gs_scene.cameraNode].m;
+	const int32_t cameraWorld[3] = { cw[12], cw[13], cw[14] };
+	glPolyFmt(POLY_ALPHA(31) | POLY_ID(0) | POLY_CULL_NONE | litBits);
+	for (int t = 0; t < gs_scene.tileMap3DCount; t++) {
+		const GsTileMap3D *tileMap = &gs_scene.tileMaps3D[t];
+		if (!gs_world_visible[tileMap->node]) continue;
+		tm3d_refresh(t, tileMap, cameraWorld);
+		tm3d_draw_node(t, tileMap);
+	}
+}
+
 /* The scripts of the scene being shown. */
 static const GsScriptInstance *scriptInstances;
 static uint16_t scriptCount;
@@ -288,6 +549,10 @@ static void enter_scene(int index, int first) {
 	if (gs_scene.sprites2D.labelCount > 0) vramSetBankH(VRAM_H_SUB_BG);
 
 	if (first) {
+		/* Mounts the ROM's own NitroFS region (STORY.tile-map-3d.md) -- always, even for a project with none of its
+		   own files in it, so "nitro:/..." paths just fail an fopen() harmlessly instead of needing a feature flag.
+		   Standard devkitPro stdio (fopen/fread/fclose) works on it unchanged once this has run. */
+		nitroFSInit(NULL);
 		glInit();
 		glEnable(GL_TEXTURE_2D);
 		glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 31); /* opaque: a visible backdrop, so a picture of the screen shows where its edges are */
@@ -297,10 +562,11 @@ static void enter_scene(int index, int first) {
 	}
 	/* GL_BLEND (DISP3DCNT bit 3) is a global geometry-engine switch, not a per-polygon one: without it the engine
 	   stores a polygon's alpha but never blends with it, so every mesh draws fully opaque regardless of
-	   GsMesh.alpha. It's only turned on for a scene that actually has a translucent mesh (alpha < 31), not left on
-	   for every scene regardless -- a plain, fully-opaque scene has no reason to pay whatever extra per-polygon
-	   work the geometry engine does with it on, and each scene is re-checked here since scenes can differ. */
-	int translucent = 0;
+	   GsMesh.alpha. It's only turned on for a scene that actually has a translucent mesh (alpha < 31) or a sky box
+	   (draw_sky_box's own polygon is drawn just under fully opaque on purpose, so blending has to be on for that too),
+	   not left on for every scene regardless -- a plain, fully-opaque scene has no reason to pay whatever extra
+	   per-polygon work the geometry engine does with it on, and each scene is re-checked here since scenes can differ. */
+	int translucent = gs_scene.hasSkyBox != 0;
 	for (int i = 0; i < gs_scene.meshCount && !translucent; i++) translucent = gs_scene.meshes[i].alpha < 31;
 	if (translucent) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 	free(textureNames);
@@ -320,6 +586,7 @@ static void enter_scene(int index, int first) {
 	gs_skin_blend_frame = calloc(gs_scene.nodeCount, sizeof(uint16_t));
 	gs_skin_blend_source = malloc(sizeof(int32_t[16]) * gs_scene.nodeCount);
 	gs_frame_number = 0;
+	tm3d_init();
 	gs_init_mesh_anim();
 	gs_init_touch();
 	gs_init_sprites();
@@ -361,6 +628,11 @@ int main(void) {
 		/* The camera. Lights are set with only the view loaded, because the geometry engine transforms a light's direction by the
 		   current matrix when the light is set. */
 		load_view();
+		/* Before anything else this frame: draw_sky_box's own identity modelview has to be put back to the camera's
+		   view before the lights below (and everything after them) runs. */
+		draw_sky_box();
+		glMatrixMode(GL_MODELVIEW);
+		glLoadMatrix4x4((const m4x4 *)&gs_current_view);
 		int active = 0;
 		for (int i = 0; i < gs_scene.lightCount && active < 4; i++) {
 			const GsLight *light = &gs_scene.lights[i];
@@ -379,6 +651,9 @@ int main(void) {
 
 		uint32_t litBits = 0;
 		for (int i = 0; i < active; i++) litBits |= POLY_FORMAT_LIGHT0 << i;
+		/* Always opaque, so drawn once here rather than as part of either pass below -- any translucent mesh in the
+		   loop that follows still sorts against it correctly (its depth is already written). */
+		draw_tile_maps_3d(litBits);
 		/* Each mesh's own cull mode (GS_CULL_NONE/BACK/FRONT, scene.h) -> the geometry engine's own POLY_CULL_* bits. */
 		static const uint32_t CULL_BITS[3] = { POLY_CULL_NONE, POLY_CULL_BACK, POLY_CULL_FRONT };
 		/* An unlit mesh's polygons carry no light bits at all (not just an emission trick): with a light bit set, the geometry engine would

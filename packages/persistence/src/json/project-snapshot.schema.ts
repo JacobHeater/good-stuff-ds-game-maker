@@ -95,6 +95,16 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         intensity: { type: "number", minimum: 0, maximum: 1 }
       }
     },
+    // A SkyBox3D's own screen-space gradient: topColor at the top of the screen, horizonColor at the bottom.
+    skyBoxData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        topColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        horizonColor: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        distance: { type: "number", minimum: 0.5, maximum: 7.5 }
+      }
+    },
     // Whether a Camera3D is its scene's active camera; absent defers to the first Camera3D in tree order.
     cameraData: {
       type: "object",
@@ -332,6 +342,37 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         solid: { type: "array", items: { type: "boolean" } }
       }
     },
+    // A TileMap3D's palette entry: a mesh (and optional texture/color), same shape as a plain MeshInstance3D's own.
+    tileMap3DPaletteEntry: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "importedMeshId"],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        importedMeshId: { type: "string", minLength: 1 },
+        textureId: { type: "string", minLength: 1 },
+        color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+      }
+    },
+    // One painted cell: which palette entry, and its yaw (STORY.tile-map-3d.md).
+    tileMap3DCell: {
+      type: "object",
+      additionalProperties: false,
+      required: ["paletteId", "rotationY"],
+      properties: {
+        paletteId: { type: "string", minLength: 1 },
+        rotationY: { enum: [0, 1, 2, 3] }
+      }
+    },
+    // Sparse: keyed by "x,y,z" (JsonSchemaProjectSnapshotValidator checks every key parses and every paletteId exists).
+    tileMap3DData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        palette: { type: "array", items: { $ref: "#/definitions/tileMap3DPaletteEntry" } },
+        cells: { type: "object", additionalProperties: { $ref: "#/definitions/tileMap3DCell" } }
+      }
+    },
     // A Sprite2D's rotation (degrees) and scale (see core's sprite-transform.ts); a missing field is its default.
     transform2D: {
       type: "object",
@@ -442,6 +483,8 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
             "Camera3D",
             "DirectionalLight3D",
             "OmniLight3D",
+            "SkyBox3D",
+            "TileMap3D",
             "CollisionShape3D",
             "TouchArea3D",
             "AnimationPlayer"
@@ -454,11 +497,13 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         transform3D: { $ref: "#/definitions/transform3D" },
         mesh: { $ref: "#/definitions/meshInstanceData" },
         light: { $ref: "#/definitions/lightData" },
+        skyBox: { $ref: "#/definitions/skyBoxData" },
         camera: { $ref: "#/definitions/cameraData" },
         audio: { $ref: "#/definitions/audioPlayerData" },
         collision: { $ref: "#/definitions/collisionShapeData" },
         collision2D: { $ref: "#/definitions/collisionShape2DData" },
         tileMap: { $ref: "#/definitions/tileMapData" },
+        tileMap3D: { $ref: "#/definitions/tileMap3DData" },
         touchArea2D: { $ref: "#/definitions/touchArea2DData" },
         touchArea3D: { $ref: "#/definitions/touchArea3DData" },
         animation: { $ref: "#/definitions/animationPlayerData" },

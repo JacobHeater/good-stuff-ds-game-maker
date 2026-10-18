@@ -37,7 +37,8 @@ export function AudioPlayerField({
   node: SceneNode;
   sounds: readonly ImportedSound[];
   onChooseSound: (soundId: string | null) => void;
-  onImport: () => void;
+  /** Imports onto the player's own sound (`clipId` null) or onto one of its named clips (`clipId` set). */
+  onImport: (clipId: string | null) => void;
   onChange: (change: AudioPlayerChange) => void;
   /** The pointer was pressed or released on a slider, or it lost focus: the next change is a new undo step. */
   onGestureBoundary: () => void;
@@ -71,7 +72,7 @@ export function AudioPlayerField({
           )}
         </select>
       </Field>
-      <button type="button" onClick={onImport} className={buttonClasses}>
+      <button type="button" onClick={() => onImport(null)} className={buttonClasses}>
         Import Sound...
       </button>
       {sound && <div className="text-[10px] text-editor-text-muted">{getSoundByteSize(sound)} bytes of the DS's sound memory.</div>}
@@ -164,7 +165,7 @@ export function AudioPlayerField({
         Loop
       </label>
 
-      <AudioClipsField node={node} sounds={sounds} onGestureBoundary={onGestureBoundary} />
+      <AudioClipsField node={node} sounds={sounds} onImport={onImport} onGestureBoundary={onGestureBoundary} />
     </div>
   );
 }
@@ -174,7 +175,17 @@ export function AudioPlayerField({
  * sounds, alongside the one above, each playable by name with `$Player.play("name")` -- the same New/rename/delete
  * list pattern as an AnimationPlayer's animations, with the clip's own sound, volume, pitch and loop below it.
  */
-function AudioClipsField({ node, sounds, onGestureBoundary }: { node: SceneNode; sounds: readonly ImportedSound[]; onGestureBoundary: () => void }): JSX.Element {
+function AudioClipsField({
+  node,
+  sounds,
+  onImport,
+  onGestureBoundary
+}: {
+  node: SceneNode;
+  sounds: readonly ImportedSound[];
+  onImport: (clipId: string | null) => void;
+  onGestureBoundary: () => void;
+}): JSX.Element {
   const { audioClips } = useEditorStore();
   const data = getAudioPlayer(node);
   const clips = data.clips ?? [];
@@ -241,6 +252,9 @@ function AudioClipsField({ node, sounds, onGestureBoundary }: { node: SceneNode;
               )}
             </select>
           </Field>
+          <button type="button" onClick={() => onImport(clip.id)} className={buttonClasses}>
+            Import Sound...
+          </button>
           {clipSound && <div className="text-[10px] text-editor-text-muted">{getSoundByteSize(clipSound)} bytes of the DS's sound memory.</div>}
           <Field label="Volume">
             <div className="flex items-center gap-2">

@@ -21,6 +21,7 @@ import type {
   ScreenId,
   SceneNode,
   SceneNodeKind,
+  SkyBoxData,
   Vector3
 } from "@goodstuff/core";
 import {
@@ -68,6 +69,7 @@ import {
   getImportedFrameCount,
   getMeshFrameCount,
   getLightIntensity,
+  getSkyBox,
   getPrimitiveTriangleCount,
   getSoundByteSize,
   getSoundDurationSeconds,
@@ -103,7 +105,11 @@ import {
   getTileMap,
   resizeTileMapGrid,
   setTileSolid,
-  type TileMapData
+  type TileMapData,
+  getTileMap3D,
+  paintCell3D,
+  eraseCell3D,
+  type TileMap3DPaletteEntry
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
 import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
@@ -122,7 +128,18 @@ export type Transform3DField = "position" | "rotation" | "scale";
 /** Where a newly added DirectionalLight3D points (degrees, XYZ Euler): down 45 degrees and turned 30 to the side. */
 export const NEW_DIRECTIONAL_LIGHT_ROTATION = { x: -45, y: -30, z: 0 } as const;
 
-export type EditorTool = "select" | "move" | "rotate" | "scale";
+export type EditorTool = "select" | "move" | "rotate" | "scale" | "paint3d";
+/**
+ * The TileMap3D paint tool's own brush: which palette entry a click in the viewport paints, and its yaw. Editor
+ * state only, like `activeTool` -- never saved, and choosing it is not an edit (the paint/erase it goes on to
+ * do is the edit, via `PAINT_TILE_3D`/`ERASE_TILE_3D`, with the brush's values copied into the action at the
+ * moment of the click so a later brush change never retroactively changes an already-painted cell).
+ */
+export interface TileMap3DBrush {
+  paletteId: string | null;
+  rotationY: 0 | 1 | 2 | 3;
+}
+export const DEFAULT_TILE_MAP_3D_BRUSH: TileMap3DBrush = { paletteId: null, rotationY: 0 };
 /** The settings of an audio player that can be edited one at a time (the sound itself is chosen with `setAudioSound`). */
 export type AudioPlayerChange = Partial<Pick<AudioPlayerData, "autoplay" | "volume" | "pitch" | "loop">>;
 /** A named clip's own settings, edited one at a time; `soundId: null` clears its sound. */
@@ -221,6 +238,8 @@ export interface EditorState {
    * the 3D viewport, nothing in the 2D one) -- toggled by the B key, independent of `activeTool` so a drag can
    * still orbit the 3D camera when this is off even while the Select tool is active. */
   boxSelectActive: boolean;
+  /** The Paint tool's own brush (TileMap3DBrush's own doc comment): never saved, choosing it is not an edit. */
+  tileMap3DBrush: TileMap3DBrush;
   /** Undo/redo steps for scene edits. Reset whenever a project is opened, created or closed. */
   history: EditHistory;
   outputLog: string[];
@@ -396,6 +415,7 @@ export type Action =
   | { type: "SET_MESH_CULL"; id: string; cull: MeshCullMode }
   | { type: "SET_MESH_ALPHA"; id: string; alpha: number; at: number }
   | { type: "SET_LIGHT_INTENSITY"; id: string; intensity: number; at: number }
+  | { type: "SET_SKY_BOX"; id: string; change: Partial<SkyBoxData>; at: number }
   | { type: "SET_CAMERA_CURRENT"; id: string; current: boolean }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
@@ -435,11 +455,17 @@ export type Action =
   | { type: "SET_TILE_MAP"; id: string; change: TileMapChange }
   | { type: "PAINT_TILE"; id: string; column: number; row: number; tile: number }
   | { type: "SET_TILE_SOLID"; id: string; tile: number; value: boolean }
+  /** Replaces a TileMap3D's whole palette (add/remove/edit an entry): the Inspector's own palette field builds the new array. */
+  | { type: "SET_TILE_MAP_3D_PALETTE"; id: string; palette: TileMap3DPaletteEntry[] }
+  | { type: "PAINT_TILE_3D"; id: string; x: number; y: number; z: number; paletteId: string; rotationY: 0 | 1 | 2 | 3 }
+  | { type: "ERASE_TILE_3D"; id: string; x: number; y: number; z: number }
+  /** The Paint tool's own brush (not an edit: see TileMap3DBrush's own doc comment). */
+  | { type: "SET_TILE_MAP_3D_BRUSH"; change: Partial<TileMap3DBrush> }
   | { type: "SET_SPRITE_TRANSFORM"; id: string; change: SpriteTransformChange; at: number }
   | { type: "SET_TOUCH_AREA_2D"; id: string; change: TouchArea2DChange; at: number }
   | { type: "SET_LABEL"; id: string; change: LabelChange; at: number }
   | { type: "SET_TOUCH_AREA_3D"; id: string; change: TouchArea3DChange; at: number }
-  | { type: "IMPORT_SOUND"; nodeId: string | null; sound: ImportedSound; warnings: string[] }
+  | { type: "IMPORT_SOUND"; nodeId: string | null; clipId: string | null; sound: ImportedSound; warnings: string[] }
   | { type: "SELECT_SCRIPT"; id: string | null }
   | { type: "CREATE_SCRIPT"; attachTo: string | null; id: string }
   | { type: "RENAME_SCRIPT"; id: string; name: string; at: number }
@@ -469,6 +495,7 @@ export function createInitialState(): EditorState {
     fpsTarget: DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget,
     activeTool: "select",
     boxSelectActive: false,
+    tileMap3DBrush: DEFAULT_TILE_MAP_3D_BRUSH,
     history: EMPTY_HISTORY,
     outputLog: ["Good Stuff DS Game Maker ready."],
     project: null,
@@ -773,6 +800,21 @@ function applyAction(state: EditorState, action: Action): EditorState {
       // Setting the value it already has (including 100% on a light that never had one saved) isn't an edit.
       if (getLightIntensity(target) === intensity) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, light: { intensity } })) };
+    }
+    case "SET_SKY_BOX": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.kind !== "SkyBox3D") return state;
+      const current = getSkyBox(target);
+      const { change } = action;
+      const skyBox: SkyBoxData = getSkyBox({
+        skyBox: {
+          topColor: change.topColor ?? current.topColor,
+          horizonColor: change.horizonColor ?? current.horizonColor,
+          distance: change.distance !== undefined && Number.isFinite(change.distance) ? change.distance : current.distance
+        }
+      });
+      if (skyBox.topColor === current.topColor && skyBox.horizonColor === current.horizonColor && skyBox.distance === current.distance) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, skyBox })) };
     }
     case "SET_CAMERA_CURRENT": {
       const target = findSceneNode(state.sceneRoot, action.id);
@@ -1208,6 +1250,31 @@ function applyAction(state: EditorState, action: Action): EditorState {
       if (next === current) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap: next })) };
     }
+    case "SET_TILE_MAP_3D_PALETTE": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TileMap3D") return state;
+      const current = getTileMap3D(target);
+      if (current.palette === action.palette) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap3D: { ...current, palette: action.palette } })) };
+    }
+    case "PAINT_TILE_3D": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TileMap3D") return state;
+      const current = getTileMap3D(target);
+      const next = paintCell3D(current, action.x, action.y, action.z, { paletteId: action.paletteId, rotationY: action.rotationY });
+      if (next === current) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap3D: next })) };
+    }
+    case "ERASE_TILE_3D": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (target?.kind !== "TileMap3D") return state;
+      const current = getTileMap3D(target);
+      const next = eraseCell3D(current, action.x, action.y, action.z);
+      if (next === current) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, tileMap3D: next })) };
+    }
+    case "SET_TILE_MAP_3D_BRUSH":
+      return { ...state, tileMap3DBrush: { ...state.tileMap3DBrush, ...action.change } };
     case "SET_SPRITE_TRANSFORM": {
       const target = findSceneNode(state.sceneRoot, action.id);
       if (target?.kind !== "Sprite2D" && target?.kind !== "AnimatedSprite2D") return state;
@@ -1270,12 +1337,20 @@ function applyAction(state: EditorState, action: Action): EditorState {
       // names a sound it doesn't have.
       const sounds = [...(state.project.sounds ?? []), sound];
       if (target?.kind === "AudioStreamPlayer") {
-        const audio: AudioPlayerData = { ...getAudioPlayer(target), soundId: sound.id };
+        const current = getAudioPlayer(target);
+        // A clip is targeted (the Inspector's "Named sounds" section, not the player's own top-level sound): only
+        // that clip's own soundId changes, never the player's -- see STORY.named-audio-clips.md.
+        const clips = current.clips ?? [];
+        const clip = action.clipId === null ? undefined : clips.find((candidate) => candidate.id === action.clipId);
+        const audio: AudioPlayerData = clip
+          ? { ...current, clips: clips.map((candidate) => (candidate.id === clip.id ? { ...candidate, soundId: sound.id } : candidate)) }
+          : { ...current, soundId: sound.id };
+        const onto = clip ? `"${clip.name}" of "${target.name}"` : `"${target.name}"`;
         return {
           ...state,
           project: { ...state.project, sounds },
           sceneRoot: updateSceneNode(state.sceneRoot, target.id, (node) => ({ ...node, audio })),
-          outputLog: [...state.outputLog, `Imported sound "${sound.name}" (${details}) onto "${target.name}".`, ...warnings]
+          outputLog: [...state.outputLog, `Imported sound "${sound.name}" (${details}) onto ${onto}.`, ...warnings]
         };
       }
       const parent = findSceneNode(state.sceneRoot, state.selectedNodeId) ?? state.sceneRoot;
@@ -1620,6 +1695,8 @@ interface EditorStoreValue {
   renameNode: (id: string, name: string) => void;
   /** Sets a DirectionalLight3D's intensity, 0..1 (the brightness of a white light). One undo step per drag. No-op for other nodes. */
   setLightIntensity: (id: string, intensity: number) => void;
+  /** Sets a SkyBox3D's top and/or horizon color ("#rrggbb"). No-op for other nodes. */
+  setSkyBox: (id: string, change: Partial<SkyBoxData>) => void;
   /**
    * Marks or unmarks a Camera3D as the scene's active camera. Marking it unmarks whichever other Camera3D in
    * the same scene had it; unmarking it just clears its own mark (it falls back to "current" again only if it's
@@ -1714,6 +1791,14 @@ interface EditorStoreValue {
   paintTile: (id: string, column: number, row: number, tile: number) => void;
   /** Marks one of a TileMap's sheet frames solid ground (or not) for tile_solid(). No-op for other nodes. */
   setTileSolidAt: (id: string, tile: number, value: boolean) => void;
+  /** Replaces a TileMap3D's whole palette (the Inspector's own palette field adds/removes/edits an entry and passes the new array back). No-op for other nodes. */
+  setTileMap3DPalette: (id: string, palette: TileMap3DPaletteEntry[]) => void;
+  /** Paints one cell of a TileMap3D's grid. No-op for other nodes. */
+  paintTile3D: (id: string, x: number, y: number, z: number, paletteId: string, rotationY: 0 | 1 | 2 | 3) => void;
+  /** Erases one cell of a TileMap3D's grid. No-op for other nodes, or an already-empty cell. */
+  eraseTile3D: (id: string, x: number, y: number, z: number) => void;
+  /** The Paint tool's own brush (TileMap3DBrush's own doc comment): not an edit, never saved. */
+  setTileMap3DBrush: (change: Partial<TileMap3DBrush>) => void;
   /** Changes a Sprite2D's rotation and scale. Typing in a field is one undo step per pause. No-op for other nodes. */
   setSpriteTransform: (id: string, change: SpriteTransformChange) => void;
   /** Changes a TouchArea2D's size in pixels / a TouchArea3D's shape and size. Typing in a field is one undo step per pause. No-op for other nodes. */
@@ -1723,10 +1808,11 @@ interface EditorStoreValue {
   setTouchArea3D: (id: string, change: TouchArea3DChange) => void;
   /**
    * Asks for a sound file (.wav, .mp3 or .ogg), converts it to what the DS plays and adds it to the project: onto the audio
-   * player `nodeId` when that is one, otherwise as a new AudioStreamPlayer under the selected node. A refused file changes
-   * nothing and is explained in the Output log; cancelling does nothing.
+   * player `nodeId` when that is one (or onto its named clip `clipId`, instead of the player's own top-level sound, when
+   * given), otherwise as a new AudioStreamPlayer under the selected node. A refused file changes nothing and is explained
+   * in the Output log; cancelling does nothing.
    */
-  importSound: (nodeId: string | null) => Promise<void>;
+  importSound: (nodeId: string | null, clipId?: string | null) => Promise<void>;
   /**
    * Asks for an .obj file and, if it is acceptable, adds a MeshInstance3D that uses it under the selected
    * node. A refused file changes nothing and is explained in the Output log; cancelling does nothing.
@@ -1847,6 +1933,10 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Rename ${nameOf(action.id)}`, mergeKey: `rename-node:${action.id}`, at: action.at };
     case "SET_LIGHT_INTENSITY":
       return { label: `Change intensity of ${nameOf(action.id)}`, mergeKey: `light:${action.id}`, at: action.at };
+    case "SET_SKY_BOX": {
+      const field = action.change.topColor !== undefined ? "top color" : action.change.horizonColor !== undefined ? "horizon color" : "distance";
+      return { label: `Change ${field} of ${nameOf(action.id)}`, mergeKey: `sky-box:${action.id}:${field}`, at: action.at };
+    }
     case "SET_CAMERA_CURRENT":
       return { label: action.current ? `Make ${nameOf(action.id)} the active camera` : `Unmark ${nameOf(action.id)} as the active camera` };
     case "IMPORT_TEXTURE":
@@ -1918,6 +2008,12 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: `Paint a tile on ${nameOf(action.id)}` };
     case "SET_TILE_SOLID":
       return { label: `Turn solid ${action.value ? "on" : "off"} for a tile of ${nameOf(action.id)}` };
+    case "SET_TILE_MAP_3D_PALETTE":
+      return { label: `Change the palette of ${nameOf(action.id)}` };
+    case "PAINT_TILE_3D":
+      return { label: `Paint a tile on ${nameOf(action.id)}` };
+    case "ERASE_TILE_3D":
+      return { label: `Erase a tile of ${nameOf(action.id)}` };
     case "SET_LABEL":
       // Typing is one undo step per pause; a color is one step per choice.
       if (action.change.text !== undefined) return { label: `Change text of ${nameOf(action.id)}`, mergeKey: `label-text:${action.id}`, at: action.at };
@@ -2186,6 +2282,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
     (id: string, intensity: number) => dispatch({ type: "SET_LIGHT_INTENSITY", id, intensity, at: Date.now() }),
     []
   );
+  const setSkyBox = useCallback((id: string, change: Partial<SkyBoxData>) => dispatch({ type: "SET_SKY_BOX", id, change, at: Date.now() }), []);
   const setCameraCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_CAMERA_CURRENT", id, current }), []);
   const setActiveTool = useCallback((tool: EditorTool) => dispatch({ type: "SET_TOOL", tool }), []);
   const toggleBoxSelect = useCallback(() => dispatch({ type: "TOGGLE_BOX_SELECT" }), []);
@@ -2395,8 +2492,16 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   const paintTile = useCallback((id: string, column: number, row: number, tile: number) => dispatch({ type: "PAINT_TILE", id, column, row, tile }), []);
   const setTileSolidAt = useCallback((id: string, tile: number, value: boolean) => dispatch({ type: "SET_TILE_SOLID", id, tile, value }), []);
 
+  const setTileMap3DPalette = useCallback((id: string, palette: TileMap3DPaletteEntry[]) => dispatch({ type: "SET_TILE_MAP_3D_PALETTE", id, palette }), []);
+  const paintTile3D = useCallback(
+    (id: string, x: number, y: number, z: number, paletteId: string, rotationY: 0 | 1 | 2 | 3) => dispatch({ type: "PAINT_TILE_3D", id, x, y, z, paletteId, rotationY }),
+    []
+  );
+  const eraseTile3D = useCallback((id: string, x: number, y: number, z: number) => dispatch({ type: "ERASE_TILE_3D", id, x, y, z }), []);
+  const setTileMap3DBrush = useCallback((change: Partial<TileMap3DBrush>) => dispatch({ type: "SET_TILE_MAP_3D_BRUSH", change }), []);
+
   const importSound = useCallback(
-    async (nodeId: string | null): Promise<void> => {
+    async (nodeId: string | null, clipId: string | null = null): Promise<void> => {
       if (!state.project) return;
       const picked = await window.goodstuff.assets.pickSound();
       if (picked.outcome === "canceled") return;
@@ -2414,7 +2519,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
         refuse(converted.errors);
         return;
       }
-      dispatch({ type: "IMPORT_SOUND", nodeId, sound: { id: crypto.randomUUID(), ...converted.sound }, warnings: converted.warnings });
+      dispatch({ type: "IMPORT_SOUND", nodeId, clipId, sound: { id: crypto.randomUUID(), ...converted.sound }, warnings: converted.warnings });
     },
     [state.project]
   );
@@ -2651,6 +2756,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setActiveTool,
       toggleBoxSelect,
       setLightIntensity,
+      setSkyBox,
       setCameraCurrent,
       undo,
       redo,
@@ -2680,6 +2786,10 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setTileMap,
       paintTile,
       setTileSolidAt,
+      setTileMap3DPalette,
+      paintTile3D,
+      eraseTile3D,
+      setTileMap3DBrush,
       setTouchArea2D,
       setLabel,
       setSpriteTransform,
@@ -2741,6 +2851,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setActiveTool,
       toggleBoxSelect,
       setLightIntensity,
+      setSkyBox,
       setCameraCurrent,
       undo,
       redo,
@@ -2763,6 +2874,10 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setTileMap,
       paintTile,
       setTileSolidAt,
+      setTileMap3DPalette,
+      paintTile3D,
+      eraseTile3D,
+      setTileMap3DBrush,
       setTouchArea2D,
       setLabel,
       setSpriteTransform,

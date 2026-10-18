@@ -96,6 +96,14 @@ static const GsLight lights[] = {
   { 32767, { 190, -380, -285 }, 3 }
 };
 
+static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {
+  { 0, 0, 0 }
+};
+
+static const GsTileMap3D tile_maps_3d[] = {
+  { 0, 0, 0, "" }
+};
+
 static const GsSpriteImage two_d_images[] = {
   { 0, 0, 0, 0, 0 }
 };
@@ -117,11 +125,14 @@ const GsScene gs_scene_data_0 = {
   60, /* fps */
   50.0f, 0.1f, 100.0f, 0.4663076581549986f, /* fov, near, far, tan(fov / 2) */
   { { 3333, -1004, 2159, 0, 0, 3714, 1727, 0, -2381, -1405, 3022, 0, 0, 0, -19429, 4096 } }, /* view */
-  2, 4, /* camera node, node count */
+  2, /* camera node */
+  0, 0, 0, 0.0f, /* no sky box */
+  4, /* node count */
   1, 1, 1, 0, /* primitive, mesh, light, texture counts */
   0, 0, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */
   0, 0, 0, 0, /* animation player, animation, track, key counts */
   0, /* touch area count */
   0, /* skin joint count */
-  nodes, primitives, meshes, lights, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
+  0, 0, /* TileMap3D node, palette entry counts */
+  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
 };

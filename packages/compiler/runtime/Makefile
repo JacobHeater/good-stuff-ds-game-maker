@@ -11,6 +11,18 @@ ifeq ($(strip $(DEVKITARM)),)
 $(error "Please set DEVKITARM in your environment. export DEVKITARM=<path to>devkitARM")
 endif
 
+# A directory of files ndstool packs straight into the ROM's own NitroFS region (STORY.tile-map-3d.md), read back
+# at runtime with plain fopen/fread ("nitro:/...") once nitroFSInit() has run -- not compiled in like source files,
+# so nothing here has to be resident in RAM until something actually opens it. Always present (even empty, for a
+# project with no TileMap3D) so this Makefile builds the same way either way. ds_rules reads NITRO_FILES itself,
+# in a plain top-level `ifneq`, not inside a recipe -- it has to be set before `include` below runs, in BOTH the
+# top-level make and the recursive one in $(BUILD) (that recursive invocation re-parses this whole file from
+# scratch with a different CURDIR, so a CURDIR-relative path here would resolve to two different places). Deriving
+# it from this Makefile's own path instead of CURDIR keeps it the same in both: the recursive invocation already
+# passes this same file by its own absolute path (`-f $(CURDIR)/Makefile` below, captured from the top-level pass),
+# so $(MAKEFILE_LIST) resolves to that same absolute path there too.
+NITRO_FILES	:=	$(dir $(lastword $(MAKEFILE_LIST)))nitrofs
+
 include $(DEVKITARM)/ds_rules
 
 TARGET		:=	gsgame

@@ -44,6 +44,21 @@ describe("importing a rigged model", () => {
     expect(armMesh.normals).toHaveLength(armMesh.positions.length);
   });
 
+  it("reads each vertex's own UV coordinate (TEXCOORD_0), split per bone the same as positions, so a texture can be assigned afterward the same way an OBJ import's can", () => {
+    const r = importGltf(input(buildArm({ uvs: true })), "Robot");
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    const hipMesh = r.model.meshes.find((m) => m.name.includes("Hip_mesh"))!;
+    const armMesh = r.model.meshes.find((m) => m.name.includes("Arm_mesh"))!;
+    expect(hipMesh.uvs).toEqual([0, 0, 1, 0, 1, 1, 0, 1]);
+    expect(armMesh.uvs).toEqual([0, 0, 1, 0, 1, 1, 0, 1]);
+  });
+
+  it("leaves a mesh with no UVs in the file without a uvs field at all", () => {
+    const r = importGltf(input(buildArm()), "Robot");
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    for (const mesh of r.model.meshes) expect(mesh.uvs).toBeUndefined();
+  });
+
   it("still records rigid-only skin data (one bone, weight 1) for a plain single-bone-per-vertex mesh", () => {
     const r = importGltf(input(buildArm()), "Robot");
     if (!r.ok) throw new Error(r.errors.join(" "));
@@ -289,6 +304,12 @@ describe("importing with unifiedSkinning (no per-bone split -- a model going smo
     expect(arm.children.some((n) => n.name === "Body_mesh")).toBe(false);
   });
 
+  it("reads UVs here too, in the file's own order (no per-bone split to divide them across)", () => {
+    const r = importGltf(input(buildArm({ uvs: true })), "Robot", { unifiedSkinning: true });
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    expect(r.model.meshes[0].uvs).toEqual([0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1]);
+  });
+
   it("keeps every vertex's real (possibly multi-bone) weighting, not reduced to one dominant bone", () => {
     const r = importGltf(input(buildArm({ splitWeight: true })), "Robot", { unifiedSkinning: true });
     if (!r.ok) throw new Error(r.errors.join(" "));
@@ -352,6 +373,68 @@ describe("importing with unifiedSkinning (no per-bone split -- a model going smo
     if (!withOptions.ok || !withoutOptions.ok) throw new Error("expected both imports to succeed");
     expect(withOptions.model.meshes).toHaveLength(2);
     expect(withoutOptions.model.meshes).toHaveLength(2);
+  });
+
+  it("measures the model's true size from the skin's own joint data, not the mesh node's own place in the hierarchy, when the hardware-driven rescale above kicks in", () => {
+    // Regression for a real bug: this path's own meshes are owned (for `normalizeScale`'s bounding-box measurement,
+    // above) by the mesh's own node, never a bone -- correct only because glTF skinning ignores a skinned mesh
+    // node's own transform by spec, so that measurement must come from the skin's own joint data, not from
+    // `worldMatrix.get(meshNode)`. Using the mesh node's own transform there (as this once did) is right only by
+    // coincidence, when the mesh node happens to sit under the same scaled wrapper the bones do; a mesh node left as
+    // its own separate, unscaled scene root -- buildArm's own default shape, and a common real shape too -- measured
+    // 100x too big instead, because the raw (pre-Armature-scale) vertex data was treated as if already in true world
+    // units. Built the same way the dominant-bone-split path's own equivalent regression test above is (x100
+    // inflation, so the hardware-driven rescale actually kicks in), but with the mesh node ALSO nested under
+    // "Armature" (`meshUnderArmature`) -- real Mixamo files commonly put the mesh and the skeleton root as siblings
+    // under one wrapper, not as two separate top-level roots the way buildArm's own default does.
+    const built = buildArm({ armatureScale: 0.01, meshUnderArmature: true });
+    const positions = new Float32Array(built.bin.buffer, built.bin.byteOffset, 24).map((v) => v * 100);
+    built.bin.set(new Uint8Array(positions.buffer), 0);
+    (built.json.nodes as Array<Record<string, unknown>>)[1].translation = [0, 100, 0];
+    const ibmByteOffset = 280;
+    const ibm = new Float32Array(built.bin.buffer, built.bin.byteOffset + ibmByteOffset, 32);
+    for (const m of [0, 16]) {
+      ibm[m + 12] *= 100;
+      ibm[m + 13] *= 100;
+      ibm[m + 14] *= 100;
+    }
+
+    const r = importGltf(input(built), "Robot", { unifiedSkinning: true });
+    if (!r.ok) throw new Error(r.errors.join(" "));
+    expect(r.warnings.join(" ")).toMatch(/scaled down/);
+    const armature = byName(r.model.root, "Armature");
+    const arm = byName(r.model.root, "Arm");
+    // Same expected true height as the dominant-bone-split path's own equivalent test above (y = 1, same source
+    // file): the two paths must agree on the model's real size regardless of how its meshes are owned internally.
+    // Before the fix this came out to 100 (two orders of magnitude off) for this exact mesh-under-Armature shape.
+    const trueArmY = armature.transform3D!.scale.y * arm.transform3D!.position.y;
+    expect(trueArmY).toBeCloseTo(1, 1);
+  });
+
+  it("agrees with the dominant-bone-split path on the model's true size regardless of whether the mesh node sits under the same scaled wrapper the bones do or is its own separate root", () => {
+    // The mesh node's own place in the hierarchy is irrelevant to a skinned mesh's real position (glTF skinning
+    // ignores it by spec), so unifiedSkinning's own measurement of the model's true size must come out identical
+    // either way -- confirmed here directly, rather than just against the split path's own separately-expected value
+    // above, in case both happened to independently drift to the same wrong answer.
+    const trueArmY = (meshUnderArmature: boolean): number => {
+      const built = buildArm({ armatureScale: 0.01, meshUnderArmature });
+      const positions = new Float32Array(built.bin.buffer, built.bin.byteOffset, 24).map((v) => v * 100);
+      built.bin.set(new Uint8Array(positions.buffer), 0);
+      (built.json.nodes as Array<Record<string, unknown>>)[1].translation = [0, 100, 0];
+      const ibmByteOffset = 280;
+      const ibm = new Float32Array(built.bin.buffer, built.bin.byteOffset + ibmByteOffset, 32);
+      for (const m of [0, 16]) {
+        ibm[m + 12] *= 100;
+        ibm[m + 13] *= 100;
+        ibm[m + 14] *= 100;
+      }
+      const r = importGltf(input(built), "Robot", { unifiedSkinning: true });
+      if (!r.ok) throw new Error(r.errors.join(" "));
+      const armature = byName(r.model.root, "Armature");
+      const arm = byName(r.model.root, "Arm");
+      return armature.transform3D!.scale.y * arm.transform3D!.position.y;
+    };
+    expect(trueArmY(false)).toBeCloseTo(trueArmY(true), 5);
   });
 });
 

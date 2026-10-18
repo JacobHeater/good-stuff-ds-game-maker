@@ -9,7 +9,8 @@ const TOOLS: { id: EditorTool; label: string; key: string }[] = [
   { id: "select", label: "Select", key: "Q" },
   { id: "move", label: "Move", key: "W" },
   { id: "rotate", label: "Rotate", key: "E" },
-  { id: "scale", label: "Scale", key: "R" }
+  { id: "scale", label: "Scale", key: "R" },
+  { id: "paint3d", label: "Paint", key: "T" }
 ];
 
 const SCREEN_FILTERS: { id: ScreenFilter; label: string }[] = [

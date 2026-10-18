@@ -7,8 +7,8 @@ export interface BuiltGltf {
   bin: Uint8Array;
 }
 
-/** A small arm made in the test: a "Hip" bone at the origin, an "Arm" bone one unit above it, a two-quad mesh (the lower quad hangs on the hip, the upper on the arm), and a clip that bends the arm 90 degrees about Z (or, with `positionAnimation`, slides it from y=1 to y=3 instead). With `splitWeight`, vertex 2 (the lower quad's top-right corner) is weighted half to Hip and half to Arm instead of fully to Hip, for testing real multi-bone blending. With `armatureScale`, "Hip" is wrapped under a new "Armature" node with that uniform scale (and nothing else) -- a real Mixamo export's own common shape, where a unit-conversion scale lives on a wrapper above every bone rather than on the bones themselves. */
-export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWeights?: boolean; positionAnimation?: boolean; splitWeight?: boolean; armatureScale?: number } = {}): BuiltGltf {
+/** A small arm made in the test: a "Hip" bone at the origin, an "Arm" bone one unit above it, a two-quad mesh (the lower quad hangs on the hip, the upper on the arm), and a clip that bends the arm 90 degrees about Z (or, with `positionAnimation`, slides it from y=1 to y=3 instead). With `splitWeight`, vertex 2 (the lower quad's top-right corner) is weighted half to Hip and half to Arm instead of fully to Hip, for testing real multi-bone blending. With `armatureScale`, "Hip" is wrapped under a new "Armature" node with that uniform scale (and nothing else) -- a real Mixamo export's own common shape, where a unit-conversion scale lives on a wrapper above every bone rather than on the bones themselves. With `meshUnderArmature` (only meaningful alongside `armatureScale`), "Body" (the mesh node) is nested as a sibling of "Hip" under "Armature" too, instead of staying its own separate scene root -- a real Mixamo export's own other common shape (the mesh and the skeleton root as siblings under one wrapper), for testing whether the importer's own size-normalizing heuristics (which should only ever react to the skin's actual joint data, never to the mesh node's own, skinning-irrelevant place in the hierarchy -- glTF skinning ignores a skinned mesh node's own transform by spec) stay unaffected by it. */
+export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWeights?: boolean; positionAnimation?: boolean; splitWeight?: boolean; armatureScale?: number; meshUnderArmature?: boolean; uvs?: boolean } = {}): BuiltGltf {
   const chunks: Uint8Array[] = [];
   const views: Array<Record<string, number>> = [];
   const push = (bytes: Uint8Array): number => {
@@ -46,11 +46,16 @@ export function buildArm(extra: { animation?: boolean; cubic?: boolean; noSkinWe
     delete attributes.JOINTS_0;
     delete attributes.WEIGHTS_0;
   }
+  if (extra.uvs) {
+    const uvs = [0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1];
+    attributes.TEXCOORD_0 = accessor(push(f32(uvs)), 5126, 8, "VEC2");
+  }
   const nodes: Array<Record<string, unknown>> = [{ name: "Hip", children: [1] }, { name: "Arm", translation: [0, 1, 0] }, { name: "Body", mesh: 0, skin: 0 }];
   const sceneRoots = [0, 2];
   if (extra.armatureScale !== undefined) {
-    nodes.push({ name: "Armature", scale: [extra.armatureScale, extra.armatureScale, extra.armatureScale], children: [0] });
+    nodes.push({ name: "Armature", scale: [extra.armatureScale, extra.armatureScale, extra.armatureScale], children: extra.meshUnderArmature ? [0, 2] : [0] });
     sceneRoots[0] = nodes.length - 1;
+    if (extra.meshUnderArmature) sceneRoots.length = 1; // "Body" (index 2) is now nested under Armature, not its own separate scene root
   }
   const json: Record<string, unknown> = {
     asset: { version: "2.0" },

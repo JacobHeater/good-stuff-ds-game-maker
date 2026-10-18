@@ -86,8 +86,14 @@ export function computeSceneBudget(
   const usedTextureIds = new Set(nodes.flatMap((node) => (node.mesh?.textureId ? [node.mesh.textureId] : [])));
   const textureBytesUsed = (textures ?? []).filter((t) => usedTextureIds.has(t.id)).reduce((sum, t) => sum + getTextureByteSize(t), 0);
 
-  // Likewise a sound used by several players is stored once. A player naming a sound the project lacks counts nothing here.
-  const usedSoundIds = new Set(nodes.flatMap((node) => (node.audio?.soundId ? [node.audio.soundId] : [])));
+  // Likewise a sound used by several players (or several of one player's own named clips) is stored once. A player
+  // or clip naming a sound the project lacks counts nothing here.
+  const usedSoundIds = new Set(
+    nodes.flatMap((node) => [
+      ...(node.audio?.soundId ? [node.audio.soundId] : []),
+      ...(node.audio?.clips ?? []).flatMap((clip) => (clip.soundId ? [clip.soundId] : []))
+    ])
+  );
   const soundBytesUsed = (sounds ?? []).filter((s) => usedSoundIds.has(s.id)).reduce((sum, s) => sum + getSoundByteSize(s), 0);
 
   // In a 3D project (its root is a Node3D) a sprite that is drawn on the 2D screen takes a VRAM bank from the textures.

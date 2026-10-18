@@ -415,6 +415,70 @@ correction: "it should ask if you want skin on import, it is not a toggle actual
       still needs their own retest. **Not manually clicked through in the running desktop app** for this specific
       change (confirming the Scene Tree shows one node instead of several after answering the dialog) -- same gap
       this story's existing "Not verified" note already names for the rest of the import-time prompt flow.
+  14. **A real imported character's legs rendered visibly short in melonDS, reported directly from a screenshot --
+      traced to note 13's own `unifiedSkinning` path, which this story's own bbox/rescale machinery (bugs 2, 5) was
+      never exercised against.** That machinery measures a model's true size from each mesh's "owner" node's world
+      transform (`worldMatrix.get(meshOwner)`); for the dominant-bone-split path `meshOwner` is always a real bone
+      and `mesh.positions` is rebased into that bone's own local space, so this is correct. `unifiedSkinning`'s own
+      meshes are owned by the *mesh's own node* instead, with raw, un-rebased positions -- but per the glTF spec, a
+      skinned mesh's raw vertex positions live in whatever space its skin's `inverseBindMatrices` and joint
+      hierarchy define, completely independent of the mesh node's own transform (the spec says to ignore it for a
+      skinned mesh). Using `worldMatrix.get(meshNode)` for the size measurement was therefore right only by
+      coincidence -- whenever the mesh node happens to sit under the same scaled wrapper the bones do -- and wrong by
+      as much as the skeleton's own unit-conversion scale otherwise. Confirmed directly with a `buildArm`-shaped
+      probe (a new `meshUnderArmature` fixture option): the dominant-bone-split path measured the identical, correct
+      extent regardless of where the mesh node sat; `unifiedSkinning` measured it **100x too big** when the mesh
+      node was left as its own separate, unscaled scene root (`buildArm`'s own long-standing default shape, and a
+      common real-export one too) instead of nested under "Armature" alongside the bones. A character's legs --
+      the most visually obvious, most elongated part of a humanoid rig -- reading as short is exactly the symptom of
+      the model's overall scale coming out wrong this way, not a per-limb issue. Fixed in `gltf-import.ts`: for a
+      mesh that carries skin data, the bbox measurement now reconstructs each vertex's true bind-pose world position
+      the same way the runtime's own blend will at render time (`Σ weight_i * jointBindWorld_i * invBind_i *
+      rawPosition`, from that mesh's own already-captured skin data) instead of trusting any one node's transform --
+      correct for both paths, and a no-op for the split path specifically (its own skin data was already built to
+      satisfy exactly this formula with one dominant joint at weight 1, so it measures the same extent as before,
+      confirmed by a new test that asserts the two paths' own true-size measurements now agree exactly). Verified
+      with two new `gltf-import.test.ts` cases (the x100-inflated regression fixture from bug 5's own test, with the
+      mesh additionally nested under Armature: lands at the correct true height, not 100x off; and a direct
+      agreement check between `meshUnderArmature: true` and `: false` for the same source data) -- both confirmed to
+      fail before the fix (100x off; the two shapes disagreeing) and pass after. Full `vitest run` (1375 tests) and
+      `tsc --noEmit` clean. **Not yet confirmed against the user's own real file** -- found and fixed from a
+      synthetic, hierarchy-isolated repro built to test this story's own standing hypothesis (every prior bug in
+      this feature was hierarchy/coordinate-space-shaped, and this path had zero test coverage combined with the
+      rescale machinery), not from the real asset itself, which wasn't available this session; worth a retest
+      against their actual model to confirm this was the whole explanation.
+  15. **Note 14 wasn't the explanation -- the owner's legs were still short, and this time the real file (`cat_animations.glb`) was available to diagnose directly.** Parsing its own GLB header/JSON by hand (a throwaway Node
+      script, as bug-10-era NSBMD diagnosis in the converter story did) found the real shape: one `unifiedSkinning`
+      mesh ("Head", despite the name -- the whole cat body) whose skin references 25 bones, 22 of them actually used.
+      Importing it through the real pipeline and listing the resulting `jointNodeIds` in order showed exactly which
+      6 landed past index 15: `RightLeg`, `RightToeBase`, `RightFoot`, `LeftLeg`, `LeftToeBase`, `LeftFoot` -- every
+      bone below the knee on both legs. The cause: `main.c`'s `draw_skinned_mesh` has always capped how many
+      distinct bones one mesh instance blends at `GS_MAX_SKIN_JOINTS_PER_MESH` (16, chosen back when every mesh was
+      a small dominant-bone-split piece referencing a handful of nearby bones), silently dropping (zero weight
+      applied, no error) any joint past that -- and `unifiedSkinning` (note 13) changed what a mesh's own joint
+      count typically looks like without anyone revisiting this limit: its whole point is *one* mesh for an entire
+      character, so a normal body rig (spine, arms, legs, no fingers) routinely needs 20+ distinct bones, comfortably
+      over the old limit, where the dominant-bone-split path's own small pieces never would have been. Nothing in
+      the compiler checked this either -- `DsMesh.skinJointCount` is written straight from `resolvedJoints.length`
+      with no comparison against the runtime's own cap -- so this has been a silent, unlabeled failure mode since
+      note 13 shipped, not something specific to this file. **Fix, two parts**: raised `GS_MAX_SKIN_JOINTS_PER_MESH`
+      to 32 (main.c) -- comfortably covers this real file's 22 and a normal body rig's worst case, small, fixed
+      stack-array cost (1536 bytes in `draw_skinned_mesh`, called once a mesh a frame, nothing allocated per bone);
+      and added `translate-scene-3d.ts`'s own mirrored `MAX_SKIN_JOINTS_PER_MESH` constant plus a new
+      `smooth-skinning-too-many-joints` compile-time warning (naming the mesh, the bone count, and the limit) for
+      whenever a mesh still exceeds it (a richly-rigged mesh, e.g. with full finger bones, still can) -- so this
+      failure mode can never again be silent, even though the cap itself still has to exist somewhere. **Verified
+      directly against the real file**: re-running the exact same import+translate pipeline after the fix shows
+      `skinJointCount=22` with no warning, every one of the 6 previously-dropped leg/foot bones now included.
+      New compiler tests (`smooth-vertex-skinning.test.ts`): the warning fires with the right bone count and limit
+      past 32 distinct bones, is absent at exactly 32, and the mesh still compiles and draws (this is a quality
+      warning, not a build error -- the runtime's own truncation is still there as the backstop for whatever the
+      limit doesn't catch). The existing `smooth-vertex-skinning.rom.test.ts` and `rigged-models.rom.test.ts` both
+      still pass unmodified on the real toolchain and melonDS with the raised constant. Full `vitest run` (1378
+      tests) and `tsc --noEmit` (compiler) clean. **Not yet confirmed on the owner's own hardware/melonDS with their
+      actual file rebuilt** -- verified by re-running the same diagnostic pipeline that found the bug, not a fresh
+      screen capture of `cat_animations.glb` itself, which this session didn't build (the file lives outside the
+      repo, found via its real path once the owner named it, not attached or uploaded).
 - **Unit tests**: `gltf-import.test.ts` (a vertex split 50/50 between two bones round-trips its joints/weights/
   inverse-bind-matrices exactly, verified by reconstructing the vertex's real rest-pose world position from the
   stored data by hand, per the documented blend formula -- not just checking the data's shape; a further case inflates

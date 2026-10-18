@@ -100,4 +100,26 @@ describe("imported sounds and audio players in the project file", () => {
     expect(file.sounds.map((s) => s.id)).toEqual(["snd-1"]);
     expect(validator.validate(file).valid).toBe(true);
   });
+
+  it("keeps a sound only a named clip uses, not the player's own sound -- saving used to drop it, leaving the clip \"missing\" on reopen", () => {
+    const clipSound: ImportedSound = { ...sound, id: "clip-snd" };
+    const project = projectWithSound();
+    project.scene.children[0].audio = {
+      ...project.scene.children[0].audio!,
+      clips: [{ id: "c1", name: "Morning", volume: 1, pitch: 1, loop: true, soundId: clipSound.id }]
+    };
+    const saved = withUpdatedScene({ ...project, sounds: [sound, clipSound] }, project.scene);
+    const file = JSON.parse(serializer.serialize(saved)) as { sounds: Array<{ id: string }> };
+    expect(file.sounds.map((s) => s.id).sort()).toEqual(["clip-snd", "snd-1"]);
+    expect(validator.validate(file).valid).toBe(true);
+    const reopened = validator.assertValid(serializer.deserialize(serializer.serialize(saved)));
+    expect(reopened.scene.children[0].audio?.clips?.[0].soundId).toBe("clip-snd");
+  });
+
+  it("rejects a named clip that names a sound the file doesn't contain, naming the player and the clip", () => {
+    const project = projectWithSound();
+    project.scene.children[0].audio = { ...project.scene.children[0].audio!, clips: [{ id: "c1", name: "Morning", volume: 1, pitch: 1, loop: true, soundId: "ghost" }] };
+    const issues = issuesOf(roundTrip(project));
+    expect(issues.join(" ")).toMatch(/Audio player "Music".*"Morning".*ghost.*isn't in the project file/);
+  });
 });

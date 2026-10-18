@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { access, cp, mkdir, mkdtemp, rm, writeFile, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { BuildCommand, BuildFileSystem, BuildOutput, BuildRunner, ToolchainLocator, ToolchainLookup } from "./ports";
 
@@ -114,6 +114,10 @@ export class NodeBuildFileSystem implements BuildFileSystem {
   }
   writeText(path: string, contents: string): Promise<void> {
     return writeFile(path, contents, "utf-8");
+  }
+  async writeBytes(path: string, contents: Uint8Array): Promise<void> {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, contents);
   }
   copyFile(from: string, to: string): Promise<void> {
     return copyFile(from, to);

@@ -1,6 +1,6 @@
 import { listScenes, MESH_CULL_MODES, withSceneTree } from "@goodstuff/core";
-import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshCullMode, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type Vector3 } from "@goodstuff/core";
-import { findSceneNode, flattenSceneTree, flattenSceneTreeInOrder, getImportedTriangleCount, getLightIntensity, isCurrentCamera, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry, alphaLevelFromOpacity, getMeshOpacity } from "@goodstuff/core";
+import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshCullMode, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type SkyBoxData, type Vector3 } from "@goodstuff/core";
+import { findSceneNode, flattenSceneTree, flattenSceneTreeInOrder, getImportedTriangleCount, getLightIntensity, getSkyBox, isCurrentCamera, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry, alphaLevelFromOpacity, getMeshOpacity, SKY_BOX_DISTANCE_MIN, SKY_BOX_DISTANCE_MAX } from "@goodstuff/core";
 import { useEditorStore, type Transform3DField } from "../state/editor-store";
 import { AnimationPlayerField } from "./AnimationPlayerField";
 import { AudioPlayerField } from "./AudioPlayerField";
@@ -8,6 +8,7 @@ import { CollisionShapeField } from "./CollisionShapeField";
 import { SpriteAnimationsField, SpriteSheetField } from "./AnimatedSpriteFields";
 import { SpriteTransformField } from "./SpriteTransformField";
 import { TileMapField } from "./TileMapField";
+import { TileMap3DField } from "./TileMap3DField";
 import { TouchArea2DField, TouchArea3DField } from "./TouchAreaFields";
 import { LabelField } from "./LabelFields";
 import { NameField } from "./NameField";
@@ -87,6 +88,63 @@ function IntensityField({
         The DS has 31 light levels; this is level {lightLevelFromIntensity(intensity)}.
       </span>
     </Field>
+  );
+}
+
+/** A SkyBox3D's own two colors: a screen-space gradient, top color blending down into the horizon color (STORY.sky-box.md). */
+function SkyBoxField({
+  node,
+  onChange,
+  onGestureBoundary
+}: {
+  node: SceneNode;
+  onChange: (change: Partial<SkyBoxData>) => void;
+  onGestureBoundary: () => void;
+}): JSX.Element {
+  const sky = getSkyBox(node);
+  const distancePercent = Math.round(((sky.distance - SKY_BOX_DISTANCE_MIN) / (SKY_BOX_DISTANCE_MAX - SKY_BOX_DISTANCE_MIN)) * 100);
+  return (
+    <>
+      <Field label="Top color">
+        <input
+          type="color"
+          aria-label="Top color"
+          value={sky.topColor}
+          onChange={(event) => onChange({ topColor: event.target.value })}
+          className="h-6 w-10 cursor-pointer rounded border border-editor-border bg-editor-panel-alt"
+        />
+      </Field>
+      <Field label="Horizon color">
+        <input
+          type="color"
+          aria-label="Horizon color"
+          value={sky.horizonColor}
+          onChange={(event) => onChange({ horizonColor: event.target.value })}
+          className="h-6 w-10 cursor-pointer rounded border border-editor-border bg-editor-panel-alt"
+        />
+      </Field>
+      <Field label="Distance">
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={distancePercent}
+            aria-label="Distance"
+            onChange={(event) => onChange({ distance: SKY_BOX_DISTANCE_MIN + (Number(event.target.value) / 100) * (SKY_BOX_DISTANCE_MAX - SKY_BOX_DISTANCE_MIN) })}
+            onPointerDown={onGestureBoundary}
+            onPointerUp={onGestureBoundary}
+            onBlur={onGestureBoundary}
+            className="flex-1"
+          />
+          <span className="w-14 text-right tabular-nums text-editor-text-muted">{sky.distance.toFixed(1)}u</span>
+        </div>
+      </Field>
+      <div className="text-[10px] text-editor-text-muted">
+        Fills the screen behind everything else, top color at the top edge blending into horizon color at the bottom. Fixed on the screen -- it doesn't turn with the camera. Its own size always fills the screen regardless of distance; moving it closer or farther mostly matters for how it sits relative to nearby geometry.
+      </div>
+    </>
   );
 }
 
@@ -250,7 +308,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -302,9 +360,14 @@ export function InspectorPanel(): JSX.Element {
 
         {node.transform3D ? (
           <>
-            <Vector3Field label="Position" value={node.transform3D.position} onChange={setField("position")} />
-            <Vector3Field label="Rotation (deg)" value={node.transform3D.rotation} onChange={setField("rotation")} />
-            <Vector3Field label="Scale" value={node.transform3D.scale} onChange={setField("scale")} />
+            {/* A SkyBox3D's own position/rotation/scale are unused -- it's a whole-scene backdrop, not a placed object. */}
+            {node.kind !== "SkyBox3D" && (
+              <>
+                <Vector3Field label="Position" value={node.transform3D.position} onChange={setField("position")} />
+                <Vector3Field label="Rotation (deg)" value={node.transform3D.rotation} onChange={setField("rotation")} />
+                <Vector3Field label="Scale" value={node.transform3D.scale} onChange={setField("scale")} />
+              </>
+            )}
             {node.mesh && (
               <div className="flex items-center gap-2" data-testid="mesh-color">
                 <label className="flex items-center gap-2 text-xs text-editor-text-muted">
@@ -396,6 +459,9 @@ export function InspectorPanel(): JSX.Element {
                 onGestureBoundary={endEditGesture}
               />
             )}
+            {node.kind === "SkyBox3D" && (
+              <SkyBoxField key={node.id} node={node} onChange={(change) => setSkyBox(node.id, change)} onGestureBoundary={endEditGesture} />
+            )}
             {node.kind === "Camera3D" && (
               <label className="flex items-center gap-2 text-xs text-editor-text-muted" data-testid="camera-current">
                 <input
@@ -424,7 +490,7 @@ export function InspectorPanel(): JSX.Element {
             node={node}
             sounds={state.project?.sounds ?? []}
             onChooseSound={(soundId) => setAudioSound(node.id, soundId)}
-            onImport={() => void importSound(node.id)}
+            onImport={(clipId) => void importSound(node.id, clipId)}
             onChange={(change) => setAudioPlayer(node.id, change)}
             onGestureBoundary={endEditGesture}
           />
@@ -466,6 +532,18 @@ export function InspectorPanel(): JSX.Element {
             onResize={(columns, rows) => setTileMap(node.id, { columns, rows })}
             onPaint={(column, row, tile) => paintTile(node.id, column, row, tile)}
             onSetSolid={(tile, value) => setTileSolidAt(node.id, tile, value)}
+          />
+        )}
+
+        {node.kind === "TileMap3D" && (
+          <TileMap3DField
+            key={node.id}
+            node={node}
+            meshes={state.project?.meshes ?? []}
+            textures={state.project?.textures ?? []}
+            brush={state.tileMap3DBrush}
+            onChangePalette={(palette) => setTileMap3DPalette(node.id, palette)}
+            onChangeBrush={(change) => setTileMap3DBrush(change)}
           />
         )}
 
