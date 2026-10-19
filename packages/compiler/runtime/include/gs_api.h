@@ -159,6 +159,17 @@ int gs_inventory_slot_icon(int inv, int slot);
 int gs_inventory_selected_slot(int inv);
 void gs_inventory_select_slot(int inv, int slot);
 
+/* ---- Spawn pools (requirements/scene-designer/STORY.spawn-pools.md). `pool` is a spawn pool's own compile-time
+   index (resolved from its own node's name by the checker, the same way an Inventory item's name resolves to one).
+   `x`/`y`/`z` are f32 (20.12) world positions, the same representation a node's own `position` already has. */
+/* Finds a free copy of `pool`'s own N, positions and shows it there, and returns an opaque handle for despawn()/
+   is_spawned() to use later -- or -1 when every copy is already spawned. */
+int gs_spawn(int pool, int32_t x, int32_t y, int32_t z);
+/* Hides the copy `handle` names again, freeing its own slot for a later spawn() to reuse. A no-op for an already-
+   despawned (or never valid) handle. */
+void gs_despawn(int handle);
+int gs_is_spawned(int handle);
+
 /* ---- Global variables and the save file (requirements/scripting/STORY.game-state-and-save.md). `gs_global` holds the project's global variables, one 32-bit number each (a float in 20.12, a bool 0 or 1), in
    the order the generated script_code.c lists them; they keep their values when the scene changes. `gs_global_signature` says which globals the game has (a hash of their names and types), so a save from
    another version is not loaded. The three functions return 1 on success (a save existed / was written) and 0 when there is no save memory or no valid save. */

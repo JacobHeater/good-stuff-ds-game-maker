@@ -525,6 +525,7 @@ void gs_collision_reset(void);
 void gs_animation_reset(void);
 void gs_sprites_reset(void);
 void gs_inventory_reset(void);
+void gs_spawn_pools_reset(void);
 
 void gs_leave_scene(void) {
 	audio_shutdown();
@@ -534,6 +535,7 @@ void gs_leave_scene(void) {
 	gs_labels_reset();
 	gs_mesh_anim_reset();
 	gs_inventory_reset();
+	gs_spawn_pools_reset();
 }
 
 /* Starts every audio player that has Autoplay on, once, before the first frame. Sound plays on the DS's sound hardware (the ARM7 runs it);

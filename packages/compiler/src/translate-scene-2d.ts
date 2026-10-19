@@ -2,9 +2,12 @@ import {
   DS_HARDWARE_PROFILE,
   DS_MIN_PLAYBACK_HZ,
   dsVolume,
+  findSceneNode,
+  flattenSceneTree,
   flattenSceneTreeInOrder,
   danglingInstances,
   expandSceneInstances,
+  expandSpawnPools,
   getAudioPlayer,
   getCollisionShape2D,
   getInventory,
@@ -20,6 +23,7 @@ import {
   labelCellOnScreen,
   MAX_LABELS_PER_SCREEN,
   MAX_ROTATING_SPRITES,
+  nestedSpawnPools,
   getSoundByteSize,
   getSpritePalette,
   playbackFrequency,
@@ -33,14 +37,15 @@ import {
   type ImportedSprite,
   type ProjectSnapshot,
   type SceneNode,
-  type ScreenId
+  type ScreenId,
+  type SpawnPoolExpansion
 } from "@goodstuff/core";
 
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
 import { toF32 } from "./fixed-point";
 import { fontSafeText } from "./label-text";
-import type { DsAudioClip, DsAudioPlayer, DsCollider2D, DsInventory, DsLabel, DsNode2D, DsScene2D, DsScreen2D, DsSound, DsSprite, DsSpriteAnimation, DsSpriteImage, DsTileMap } from "./ds-scene";
+import type { DsAudioClip, DsAudioPlayer, DsCollider2D, DsInventory, DsLabel, DsNode2D, DsScene2D, DsScreen2D, DsSound, DsSpawnPool, DsSprite, DsSpriteAnimation, DsSpriteImage, DsTileMap } from "./ds-scene";
 import { generateScriptCode, type CompiledScript } from "./script-codegen";
 import { checkProjectScripts, compileInventoryItems, orderGlobalsForRuntime, type TranslateOptions } from "./translate-scene-3d";
 
@@ -476,10 +481,15 @@ function collectLabels(project: ProjectSnapshot, screenOf: (node: SceneNode) => 
  */
 export function translateScene2D(original: ProjectSnapshot, options: TranslateOptions = {}): TranslateResult2D {
   const diagnostics: Diagnostic[] = [];
-  // An instance of a scene is replaced by that scene's nodes before anything else looks at the tree.
-  const project: ProjectSnapshot = { ...original, scene: expandSceneInstances(original, original.scene) };
+  // A spawn pool (STORY.spawn-pools.md) becomes N ordinary instance nodes first, then an instance of a scene --
+  // pool or plain -- is replaced by that scene's own nodes, before anything else looks at the tree.
+  const spawnPools = expandSpawnPools(original, original.scene);
+  const project: ProjectSnapshot = { ...original, scene: expandSceneInstances(original, spawnPools.tree) };
   for (const node of danglingInstances(original, original.scene)) {
     diagnostics.push({ severity: "warning", code: "scene-instance-missing", nodeName: node.name, message: "This node is an instance of a scene that isn't in the project any more, so nothing is drawn for it." });
+  }
+  for (const node of nestedSpawnPools(original, original.scene)) {
+    diagnostics.push({ severity: "error", code: "nested-spawn-pool", nodeName: node.name, message: "This spawn pool's own scene already contains a spawn pool of its own (directly, or through an instance), which isn't supported -- a pool can't itself contain a pool." });
   }
 
   if (project.mode !== "2D") {
@@ -496,8 +506,21 @@ export function translateScene2D(original: ProjectSnapshot, options: TranslateOp
   }
 
   // Scripts first, exactly as translateScene3D does: they decide which nodes need a place in the node table.
-  const scripts = checkProjectScripts(project, diagnostics, options.sceneNames ?? sceneNamesOf(project));
+  const scripts = checkProjectScripts(project, diagnostics, options.sceneNames ?? sceneNamesOf(project), spawnPools.pools.map((p) => p.name), 2);
   const globals = orderGlobalsForRuntime(scripts.globals);
+
+  // A spawn pool's own copies need a node-table place and live position/visible tracking even though nothing in
+  // the authored scene scripts or $Name-references them -- the whole point is a script spawning/despawning them
+  // later. Unlike 3D (whose world transforms cascade from a dynamic parent, so only each copy's own root needs
+  // this), 2D nodes never compose a parent's position into a child's (STORY.spawn-pools.md), so every node of
+  // every copy, not just its root, needs its own real node-table index.
+  for (const pool of spawnPools.pools) {
+    for (const rootId of pool.copyRootIds) {
+      const copyRoot = findSceneNode(project.scene, rootId);
+      if (!copyRoot) continue; // the pool itself was refused (nestedSpawnPools) -- its copies were never expanded
+      for (const node of flattenSceneTree(copyRoot)) scripts.touchedIds.add(node.id);
+    }
+  }
 
   // Each screen's camera (requirements/scene-designer/STORY.standalone-2d-camera.md): the first Camera2D on it, in tree order.
   // It always needs a node-table place, whether or not a script ever moves it (its starting position already matters); every
@@ -546,6 +569,7 @@ export function translateScene2D(original: ProjectSnapshot, options: TranslateOp
   const colliders = collectCollision2D(project, diagnostics, scripts.overlapIds, nodeIndexOf);
   const tileMaps = collectTileMaps(project, diagnostics, nodeIndexOf);
   const inventories = collectInventory2D(project, nodeIndexOf, inventoryPanels);
+  const spawnPoolsOut = collectSpawnPools(spawnPools.pools, nodeIndexOf);
 
   if (hasErrors(diagnostics)) return { scene: null, diagnostics };
 
@@ -587,6 +611,7 @@ export function translateScene2D(original: ProjectSnapshot, options: TranslateOp
       tileMaps,
       items: compileInventoryItems(project),
       inventories,
+      spawnPools: spawnPoolsOut,
       topCamera: cameraByScreen.has("top") ? (nodeIndexOf.get(cameraByScreen.get("top")!.id) ?? -1) : -1,
       bottomCamera: cameraByScreen.has("bottom") ? (nodeIndexOf.get(cameraByScreen.get("bottom")!.id) ?? -1) : -1
     },
@@ -665,6 +690,27 @@ function collectInventory2D(project: ProjectSnapshot, nodeIndexOf: ReadonlyMap<s
     inventories.push({ node: index, slots: getInventory(node).slots, ...(inventoryPanels.get(node.id) ?? NO_INVENTORY_PANEL) });
   }
   return inventories;
+}
+
+/**
+ * The compiled `DsSpawnPool` of every spawn pool `expandSpawnPools` found (STORY.spawn-pools.md), shared by
+ * `translateScene2D` and `translateScene3D` (its own 2D screen gets no `screen` field reader at all -- see
+ * `DsSpawnPool`'s own comment). `nodeStart`/`nodesPerCopy` come straight from where the node table ended up
+ * putting a pool's own first two copies' own roots: copies are tree siblings of each other, structurally
+ * identical, so they occupy one contiguous, evenly-spaced run (confirmed by a dedicated test, since the whole
+ * runtime design assumes it) -- a pool's own `copyRootIds` always has at least 2 entries (`isSpawnPool` requires
+ * `spawnPoolCount > 1`), so there's always a second root to measure the spacing from. A pool whose own copies
+ * never made it into the node table (refused by `nestedSpawnPools`, so never expanded at all) is left out.
+ */
+export function collectSpawnPools(pools: SpawnPoolExpansion["pools"], nodeIndexOf: ReadonlyMap<string, number>): DsSpawnPool[] {
+  const result: DsSpawnPool[] = [];
+  for (const pool of pools) {
+    const nodeStart = nodeIndexOf.get(pool.copyRootIds[0]);
+    const secondRoot = nodeIndexOf.get(pool.copyRootIds[1]);
+    if (nodeStart === undefined || secondRoot === undefined) continue;
+    result.push({ nodeStart, nodesPerCopy: secondRoot - nodeStart, count: pool.copyRootIds.length, screen: pool.screen });
+  }
+  return result;
 }
 
 /**

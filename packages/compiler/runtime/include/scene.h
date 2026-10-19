@@ -313,6 +313,17 @@ typedef struct {
 	int16_t labelStart;        /* slot 0's own stack-count label (a run of `slots`, found by +n -- labels are never reversed), or -1 */
 } GsInventory;
 
+/* One spawn pool (STORY.spawn-pools.md): `count` pre-built, initially hidden copies of a template scene, each
+   independently spawn()/despawn()-able at runtime by a script -- the real, hardware-possible shape of "create
+   something at runtime" on an engine with no dynamic scene graph. The copies' own nodes are one contiguous run in
+   GsScene.nodes: slot i's own root is always nodeStart + i * nodesPerCopy (the compiler's own expandSpawnPools/
+   expandSceneInstances guarantee this -- see ds-scene.ts's own DsSpawnPool comment). */
+typedef struct {
+	uint16_t nodeStart;
+	uint16_t nodesPerCopy;
+	uint16_t count;
+} GsSpawnPool;
+
 typedef struct {
 	uint8_t screen; /* 0 = top, 1 = bottom */
 	uint8_t fps;    /* 30 or 60 */
@@ -343,6 +354,7 @@ typedef struct {
 	uint16_t skyBoxCount;
 	uint16_t itemCount;
 	uint16_t inventoryCount;
+	uint16_t spawnPoolCount;
 	const GsNode *nodes;
 	const GsPrimitive *primitives;
 	const GsMesh *meshes;
@@ -352,6 +364,7 @@ typedef struct {
 	const GsSkyBox *skyBoxes;
 	const GsInventoryItem *items;
 	const GsInventory *inventories;
+	const GsSpawnPool *spawnPools;
 	const GsTexture *textures;
 	const GsSound *sounds;
 	const GsAudioPlayer *audioPlayers;

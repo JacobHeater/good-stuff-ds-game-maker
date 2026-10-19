@@ -326,6 +326,16 @@ export interface SceneNode {
    * scene's whole tree (its root taking this node's name, position or transform, screen and visibility), so editing the scene changes every instance. The node has no children of its own.
    */
   instanceOf?: string;
+  /**
+   * This instance is a spawn pool (requirements/scene-designer/STORY.spawn-pools.md): instead of the one, always-shown
+   * copy an ordinary instance is, the compiler builds this many pre-built, initially hidden copies of the scene named
+   * by `instanceOf`, each independently placeable at runtime by a script's `spawn("<this node's own name>", x, y, z)`
+   * -- the real, hardware-possible shape of "create something at runtime" on an engine with no dynamic scene graph.
+   * Absent or 1 means an ordinary, always-shown instance, unchanged. `undefined`/1..SPAWN_POOL_COUNT_MAX (`spawn-pool.ts`).
+   * This node's own authored position becomes every copy's own starting point (where `spawn` measures its own x/y/z
+   * from, not where anything is shown); its own authored `visible` is ignored -- every copy starts hidden regardless.
+   */
+  spawnPoolCount?: number;
   /** The animations of an AnimatedSprite2D (see `sprite-animation.ts`); only meaningful there. Absent means none. */
   spriteAnimations?: Partial<SpriteAnimationsData>;
   /** Slot count; only meaningful on an Inventory. Absent means the defaults (see `getInventory`). Items themselves are project-wide (`ProjectSnapshot.items`), not stored here. */

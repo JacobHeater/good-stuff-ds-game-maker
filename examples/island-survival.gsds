@@ -1,0 +1,1441 @@
+{
+  "formatVersion": 1,
+  "id": "194e3c64-a68f-4ea4-8bab-2ea8302e6809",
+  "name": "Island Survival",
+  "mode": "3D",
+  "createdAt": "2026-10-19T20:48:56.354Z",
+  "updatedAt": "2026-10-19T20:48:56.354Z",
+  "scene": {
+    "id": "node3d-72",
+    "name": "Island",
+    "kind": "Node3D",
+    "screen": "top",
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "visible": true,
+    "children": [
+      {
+        "id": "camera3d-45",
+        "name": "Camera",
+        "kind": "Camera3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 9,
+            "z": 9
+          },
+          "rotation": {
+            "x": -45,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "scriptId": "camera"
+      },
+      {
+        "id": "directionallight3d-65",
+        "name": "Sun",
+        "kind": "DirectionalLight3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 8,
+            "z": 0
+          },
+          "rotation": {
+            "x": -50,
+            "y": -30,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      },
+      {
+        "id": "skybox3d-38",
+        "name": "SkyDay",
+        "kind": "SkyBox3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "skyBox": {
+          "topColor": "#4aa3e0",
+          "horizonColor": "#eef3a8",
+          "current": true
+        }
+      },
+      {
+        "id": "skybox3d-39",
+        "name": "SkyNight",
+        "kind": "SkyBox3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": false,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "skyBox": {
+          "topColor": "#0a0f2e",
+          "horizonColor": "#372a66"
+        }
+      },
+      {
+        "id": "node3d-46",
+        "name": "World",
+        "kind": "Node3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "scriptId": "world"
+      },
+      {
+        "id": "tilemap3d-37",
+        "name": "Grid",
+        "kind": "TileMap3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "tileMap3D": {
+          "palette": [
+            {
+              "id": "grass",
+              "importedMeshId": "grass-tile",
+              "color": "#4c9a52"
+            }
+          ],
+          "cells": {
+            "-3,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-3,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-3,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-3,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-3,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-3,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-3,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-2,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "-1,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "0,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "1,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "2,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,-3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,-2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,-1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,0": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,1": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,2": {
+              "paletteId": "grass",
+              "rotationY": 0
+            },
+            "3,0,3": {
+              "paletteId": "grass",
+              "rotationY": 0
+            }
+          }
+        }
+      },
+      {
+        "id": "node3d-41",
+        "name": "Ground",
+        "kind": "Node3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-40",
+            "name": "GroundShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 7,
+                "y": 1,
+                "z": 7
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": -0.5,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      },
+      {
+        "id": "meshinstance3d-42",
+        "name": "Ocean",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 60,
+            "y": 1,
+            "z": 60
+          }
+        },
+        "mesh": {
+          "primitive": "plane",
+          "triangleCount": 2,
+          "color": "#1a6faa"
+        }
+      },
+      {
+        "id": "meshinstance3d-44",
+        "name": "Player",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-43",
+            "name": "PlayerShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.8,
+            "y": 0.8,
+            "z": 0.8
+          }
+        },
+        "mesh": {
+          "primitive": "cube",
+          "triangleCount": 12,
+          "color": "#3b82f6"
+        },
+        "scriptId": "player"
+      },
+      {
+        "id": "meshinstance3d-60",
+        "name": "Crab",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-59",
+            "name": "CrabShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 3,
+            "y": 0.5,
+            "z": -3
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.7,
+            "y": 0.5,
+            "z": 0.7
+          }
+        },
+        "mesh": {
+          "primitive": "sphere",
+          "triangleCount": 168,
+          "color": "#e0342f"
+        },
+        "scriptId": "crab"
+      },
+      {
+        "id": "node3d-63",
+        "name": "Campfires",
+        "kind": "Node3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        "instanceOf": "campfire-template",
+        "spawnPoolCount": 3
+      },
+      {
+        "id": "meshinstance3d-48",
+        "name": "Tree1",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-47",
+            "name": "TreeShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": -2,
+            "y": 0.6,
+            "z": -2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 1.2,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cylinder",
+          "triangleCount": 48,
+          "color": "#2f6b3a"
+        },
+        "scriptId": "tree"
+      },
+      {
+        "id": "meshinstance3d-50",
+        "name": "Tree2",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-49",
+            "name": "TreeShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 2,
+            "y": 0.6,
+            "z": -2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 1.2,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cylinder",
+          "triangleCount": 48,
+          "color": "#2f6b3a"
+        },
+        "scriptId": "tree"
+      },
+      {
+        "id": "meshinstance3d-52",
+        "name": "Tree3",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-51",
+            "name": "TreeShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": true
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0.6,
+            "z": 2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.6,
+            "y": 1.2,
+            "z": 0.6
+          }
+        },
+        "mesh": {
+          "primitive": "cylinder",
+          "triangleCount": 48,
+          "color": "#2f6b3a"
+        },
+        "scriptId": "tree"
+      },
+      {
+        "id": "meshinstance3d-54",
+        "name": "Coconut1",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-53",
+            "name": "CoconutShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": -2,
+            "y": 0.5,
+            "z": 2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.5,
+            "y": 0.5,
+            "z": 0.5
+          }
+        },
+        "mesh": {
+          "primitive": "sphere",
+          "triangleCount": 168,
+          "color": "#caa05a"
+        },
+        "scriptId": "coconut"
+      },
+      {
+        "id": "meshinstance3d-56",
+        "name": "Coconut2",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-55",
+            "name": "CoconutShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 2,
+            "y": 0.5,
+            "z": 2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.5,
+            "y": 0.5,
+            "z": 0.5
+          }
+        },
+        "mesh": {
+          "primitive": "sphere",
+          "triangleCount": 168,
+          "color": "#caa05a"
+        },
+        "scriptId": "coconut"
+      },
+      {
+        "id": "meshinstance3d-58",
+        "name": "Coconut3",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [
+          {
+            "id": "collisionshape3d-57",
+            "name": "CoconutShape",
+            "kind": "CollisionShape3D",
+            "screen": "top",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "visible": true,
+            "children": [],
+            "transform3D": {
+              "position": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "rotation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+              },
+              "scale": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              }
+            },
+            "collision": {
+              "shape": "box",
+              "size": {
+                "x": 1,
+                "y": 1,
+                "z": 1
+              },
+              "solid": false
+            }
+          }
+        ],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0.5,
+            "z": -2
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.5,
+            "y": 0.5,
+            "z": 0.5
+          }
+        },
+        "mesh": {
+          "primitive": "sphere",
+          "triangleCount": 168,
+          "color": "#caa05a"
+        },
+        "scriptId": "coconut"
+      },
+      {
+        "id": "inventory-64",
+        "name": "Bag",
+        "kind": "Inventory",
+        "screen": "bottom",
+        "position": {
+          "x": 96,
+          "y": 140
+        },
+        "visible": true,
+        "children": [],
+        "inventory": {
+          "slots": 3,
+          "columns": 3,
+          "slotSpacingX": 2,
+          "slotSpacingY": 2,
+          "backgroundSpriteId": "bag-bg",
+          "slotSpriteId": "bag-slot",
+          "highlightSpriteId": "bag-hi"
+        }
+      },
+      {
+        "id": "label-66",
+        "name": "DayNight",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 8
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "DAY",
+          "color": 7
+        }
+      },
+      {
+        "id": "label-67",
+        "name": "Day",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 24
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Day {}",
+          "color": 3
+        }
+      },
+      {
+        "id": "label-68",
+        "name": "Best",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 40
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Best {}",
+          "color": 6
+        }
+      },
+      {
+        "id": "label-69",
+        "name": "Lives",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 56
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Lives {}",
+          "color": 2
+        }
+      },
+      {
+        "id": "label-70",
+        "name": "Message",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 80
+        },
+        "visible": false,
+        "children": [],
+        "label": {
+          "text": "YOU DIED, START to retry",
+          "color": 2
+        }
+      },
+      {
+        "id": "label-71",
+        "name": "Hint",
+        "kind": "Label",
+        "screen": "bottom",
+        "position": {
+          "x": 8,
+          "y": 176
+        },
+        "visible": true,
+        "children": [],
+        "label": {
+          "text": "Pad+A move/jump  B/X fire",
+          "color": 7
+        }
+      }
+    ],
+    "transform3D": {
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    }
+  },
+  "sceneName": "Island",
+  "sceneId": "scene-start",
+  "scenes": [
+    {
+      "id": "campfire-template",
+      "name": "CampfireTemplate",
+      "scene": {
+        "id": "meshinstance3d-62",
+        "name": "CampfireBody",
+        "kind": "MeshInstance3D",
+        "screen": "top",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "visible": true,
+        "children": [],
+        "transform3D": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "scale": {
+            "x": 0.5,
+            "y": 0.6,
+            "z": 0.5
+          }
+        },
+        "mesh": {
+          "primitive": "cylinder",
+          "triangleCount": 48,
+          "color": "#ff7f11"
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "id": "grass-tile",
+      "name": "GrassTile",
+      "positions": [
+        -0.5,
+        0,
+        -0.5,
+        0.5,
+        0,
+        -0.5,
+        0.5,
+        0,
+        0.5,
+        -0.5,
+        0,
+        0.5
+      ],
+      "normals": [
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "indices": [
+        0,
+        1,
+        2,
+        0,
+        2,
+        3
+      ]
+    }
+  ],
+  "sprites": [
+    {
+      "id": "bag-bg",
+      "name": "bag-bg",
+      "width": 64,
+      "height": 32,
+      "palette": "AAAlFQ==",
+      "pixels": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+    },
+    {
+      "id": "bag-slot",
+      "name": "bag-slot",
+      "width": 32,
+      "height": 16,
+      "palette": "AABrLTFG",
+      "pixels": "AQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgI=",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "id": "bag-hi",
+      "name": "bag-hi",
+      "width": 16,
+      "height": 16,
+      "palette": "AABccA==",
+      "pixels": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=="
+    },
+    {
+      "id": "item-icons",
+      "name": "item-icons",
+      "width": 32,
+      "height": 16,
+      "palette": "AABQFXku",
+      "pixels": "AQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgIBAQEBAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgI=",
+      "frameWidth": 16,
+      "frameHeight": 16
+    }
+  ],
+  "itemIconsSpriteId": "item-icons",
+  "items": [
+    {
+      "id": "wood",
+      "name": "Wood",
+      "iconFrame": 0,
+      "maxStack": 20
+    },
+    {
+      "id": "coconut",
+      "name": "Coconut",
+      "iconFrame": 1,
+      "maxStack": 20
+    }
+  ],
+  "scripts": [
+    {
+      "id": "world",
+      "name": "World",
+      "source": "# Keeps the day/night cycle and the persisted best day; everyone else just reads these globals.\nglobal var day = 1\nglobal var bestDay = 0\nglobal var lives = 3\n\nvar dayTimer = 0.0\nvar isDay = true\n\nfunc _ready():\n    if has_save():\n        load_game()\n    $Day.value = day\n    $Best.value = bestDay\n    $Lives.value = lives\n    $DayNight.text = \"DAY\"\n\nfunc _process(delta):\n    dayTimer += delta\n    if isDay and dayTimer >= 10.0:\n        isDay = false\n        dayTimer = 0.0\n        $SkyDay.visible = false\n        $SkyNight.visible = true\n        $DayNight.text = \"NIGHT\"\n    elif not isDay and dayTimer >= 10.0:\n        isDay = true\n        dayTimer = 0.0\n        day += 1\n        $Day.value = day\n        $SkyDay.visible = true\n        $SkyNight.visible = false\n        $DayNight.text = \"DAY\"\n"
+    },
+    {
+      "id": "player",
+      "name": "Player",
+      "source": "# Runs, jumps, falls back from the edge, and places/removes campfires from the Wood in the Bag.\nglobal var day = 1\nglobal var bestDay = 0\nglobal var lives = 3\nglobal var lastFire = -1\n\nvar vy = 0.0\nvar over = false\n\nfunc _ready():\n    pass\n\nfunc _process(delta):\n    if over:\n        if Input.is_button_pressed(\"start\"):\n            change_scene(\"Island\")\n        return\n\n    var speed = 5.0\n    var dx = 0.0\n    var dz = 0.0\n    if Input.is_button_down(\"left\"):\n        dx = -speed * delta\n    if Input.is_button_down(\"right\"):\n        dx = speed * delta\n    if Input.is_button_down(\"up\"):\n        dz = -speed * delta\n    if Input.is_button_down(\"down\"):\n        dz = speed * delta\n    if is_on_floor():\n        vy = 0.0\n        if Input.is_button_pressed(\"a\"):\n            vy = 8.0\n    vy -= 20.0 * delta\n    move_and_collide(dx, vy * delta, dz)\n\n    if position.y < -3.0:\n        position.x = 0.0\n        position.y = 1.0\n        position.z = 0.0\n        vy = 0.0\n        lives -= 1\n        $Lives.value = lives\n        if lives <= 0:\n            over = true\n            if bestDay == 0 or day > bestDay:\n                bestDay = day\n            save_game()\n            $Message.visible = true\n\n    if Input.is_button_pressed(\"b\"):\n        if $Bag.count(\"Wood\") >= 2:\n            var h = spawn(\"Campfires\", position.x, position.y, position.z)\n            if is_spawned(h):\n                $Bag.remove(\"Wood\", 2)\n                lastFire = h\n    if Input.is_button_pressed(\"x\"):\n        if is_spawned(lastFire):\n            despawn(lastFire)\n            lastFire = -1\n"
+    },
+    {
+      "id": "tree",
+      "name": "Tree",
+      "source": "# A tree: chopped for 2 Wood when the player bumps into it.\nfunc _process(delta):\n    if visible and $TreeShape.overlaps($PlayerShape):\n        visible = false\n        $Bag.add(\"Wood\", 2)\n"
+    },
+    {
+      "id": "coconut",
+      "name": "Coconut",
+      "source": "# A coconut: picked up for 1 Coconut when the player walks over it.\nfunc _process(delta):\n    if visible and $CoconutShape.overlaps($PlayerShape):\n        visible = false\n        $Bag.add(\"Coconut\", 1)\n"
+    },
+    {
+      "id": "crab",
+      "name": "Crab",
+      "source": "# Wanders the island, turning away whenever the ground ahead runs out, and snatches a Wood if it catches the player.\nvar angle = 0.0\nvar retarget = 0.0\n\nfunc _ready():\n    angle = float(randi(360))\n\nfunc _process(delta):\n    retarget -= delta\n    var ahead = ray_cast(position.x, position.y + 0.5, position.z, sin(angle), -1.0, cos(angle), 2.0)\n    if ahead < 0.0 or retarget <= 0.0:\n        angle = float(randi(360))\n        retarget = 2.0\n    move_and_collide(sin(angle) * delta, -10.0 * delta, cos(angle) * delta)\n    rotation.y = -angle\n    if $CrabShape.overlaps($PlayerShape) and $Bag.count(\"Wood\") > 0:\n        $Bag.remove(\"Wood\", 1)\n"
+    },
+    {
+      "id": "camera",
+      "name": "CameraFollow",
+      "source": "# Follows the player from a fixed distance, same as the coin game's.\nfunc _process(delta):\n    position.x = $Player.position.x\n    position.z = $Player.position.z + 9.0\n"
+    }
+  ]
+}

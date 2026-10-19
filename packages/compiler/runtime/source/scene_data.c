@@ -108,6 +108,10 @@ static const GsInventory inventories[] = {
   { 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1 }
 };
 
+static const GsSpawnPool spawn_pools[] = {
+  { 0, 0, 0 }
+};
+
 static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {
   { 0, 0, 0 }
 };
@@ -146,6 +150,6 @@ const GsScene gs_scene_data_0 = {
   0, /* skin joint count */
   0, 0, /* TileMap3D node, palette entry counts */
   0, /* sky box count */
-  0, 0, /* item, inventory counts */
-  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
+  0, 0, 0, /* item, inventory, spawn pool counts */
+  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, spawn_pools, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
 };

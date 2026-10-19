@@ -138,6 +138,18 @@ int gs_inventory_slot_icon(int inv, int slot);
 int gs_inventory_selected_slot(int inv);
 void gs_inventory_select_slot(int inv, int slot);
 
+/* ---- Spawn pools (requirements/scene-designer/STORY.spawn-pools.md). Real (gs_runtime2d.c). `pool` is a spawn
+   pool's own compile-time index (resolved from its own node's name the same way an Inventory item's name resolves
+   to one). `x`/`y` are f32 (20.12) screen pixels, the same representation a node's own `position` already has --
+   a 2D project's own spawn() takes no `z` (STORY.standalone-2d-scripting.md's own "2D is always two numbers"). */
+/* Finds a free copy of `pool`'s own N, positions and shows it there, and returns an opaque handle for despawn()/
+   is_spawned() to use later -- or -1 when every copy is already spawned. */
+int gs_spawn(int pool, int32_t x, int32_t y);
+/* Hides the copy `handle` names again, freeing its own slot for a later spawn() to reuse. A no-op for an already-
+   despawned (or never valid) handle. */
+void gs_despawn(int handle);
+int gs_is_spawned(int handle);
+
 /* ---- Global variables. Real (script_code2d.c, written by the compiler): `gs_global` holds the project's global variables,
    one 32-bit number each, in the order script_code2d.c lists them. Saving them to the DS's save memory isn't built for 2D
    yet, so gs_save_game/gs_load_game/gs_has_save are stubs that always say there is no save (gs_stubs2d.c). */

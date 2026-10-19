@@ -57,6 +57,10 @@ export type Resolution =
   | { kind: "animCall"; target: NodeTarget; method: "play" | "stop" | "is_playing"; animation: number; sprite?: boolean; mesh?: boolean }
   /** `change_scene("Level2")`: switch to another scene of the project (with its place in the project's list of scenes, the starting scene first). */
   | { kind: "sceneCall"; scene: number }
+  /** `spawn("Campfire", x, y, z)` (STORY.spawn-pools.md): finds a free copy of the pool (its own place among the project's spawn pools), positions and shows it, and gives back a handle. `x`/`y`/`z` stay ordinary expressions in the call's own `args` (a 2D project has no `z`). */
+  | { kind: "spawnCall"; pool: number }
+  /** `despawn(handle)` / `is_spawned(handle)` (STORY.spawn-pools.md): `handle` stays an ordinary int expression in the call's own `args`, the same way an Inventory call's own `slot` already is. */
+  | { kind: "despawnCall"; method: "despawn" | "is_spawned" }
   /** `a.overlaps(b)`: whether two collision shapes touch. */
   | { kind: "overlapsCall"; a: NodeTarget; b: NodeTarget }
   /** `body.move_and_collide(dx, dy, dz)`: moves a node, stopped by solid shapes. */

@@ -50,6 +50,9 @@ const BUILTIN_FUNCTIONS: ScriptCompletion[] = [
   fn("int", "(x) -> int", "A whole number: drops the fraction of a float."),
   fn("float", "(x) -> float", "A number with a fraction."),
   fn("change_scene", '("name")', "Switches to another scene of the project when this frame ends. The scene's name goes in quotes.", 'change_scene("")', 2),
+  fn("spawn", '("name", x, y, z) -> int', "Places a free copy of a spawn pool there and shows it, returning a handle for despawn()/is_spawned() -- or -1 when every copy is already spawned. A 2D project takes only x, y.", 'spawn("", , , )', 4),
+  fn("despawn", "(handle)", "Hides a copy spawn() returned a handle for, freeing it to be spawned again.", "despawn()", 1),
+  fn("is_spawned", "(handle) -> bool", "Whether that handle's own copy is currently spawned.", "is_spawned()", 1),
   fn("save_game", "() -> bool", "Writes every global variable to the game's save file. True when it was saved."),
   fn("load_game", "() -> bool", "Reads the save file back into the global variables. True when there was a save to load."),
   fn("has_save", "() -> bool", "Whether there is a save file with a game in it.")

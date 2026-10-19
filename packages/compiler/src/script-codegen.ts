@@ -444,6 +444,10 @@ class ScriptWriter {
           : { code: `gs_audio_${res.method}(gs_node_audio_player(${this.nodeIndex(res.target)}))`, ty: "int" };
       case "sceneCall":
         return { code: `gs_change_scene(${res.scene})`, ty: "int" };
+      case "spawnCall":
+        return { code: `gs_spawn(${res.pool}, ${expr.args.slice(1).map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`, ty: "int" };
+      case "despawnCall":
+        return { code: `gs_${res.method === "is_spawned" ? "is_spawned" : "despawn"}(${this.convert(this.expr(expr.args[0]), "int")})`, ty: res.method === "is_spawned" ? ("bool" as ScriptType) : "int" };
       case "saveCall":
         return { code: `gs_${res.fn}()`, ty: "bool" as ScriptType };
       case "animCall": {

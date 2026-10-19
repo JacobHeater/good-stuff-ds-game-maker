@@ -1,4 +1,4 @@
-import { createSceneNode, danglingInstances, expandSceneInstances, flattenSceneTree, listScenes, sceneNamesOf, type ProjectSnapshot, type SceneNode } from "@goodstuff/core";
+import { createSceneNode, danglingInstances, expandSceneInstances, expandSpawnPools, flattenSceneTree, listScenes, nestedSpawnPools, sceneNamesOf, type ProjectSnapshot, type SceneNode } from "@goodstuff/core";
 
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
@@ -23,19 +23,27 @@ export function translateProject3D(project: ProjectSnapshot, options: TranslateO
   const scenes: DsScene3D[] = [];
   entries.forEach((entry, index) => {
     const { scenes: _others, sceneId: _id, sceneName: _name, ...single } = project;
-    // An instance of a scene is replaced by that scene's nodes before anything else looks at the tree.
+    // A spawn pool (STORY.spawn-pools.md) becomes N ordinary instance nodes first, then an instance of a scene --
+    // pool or plain -- is replaced by that scene's own nodes, before anything else looks at the tree.
     const missing: Diagnostic[] = danglingInstances(project, entry.scene).map((node) => ({
       severity: "warning" as const,
       code: "scene-instance-missing" as const,
       nodeName: node.name,
       message: "This node is an instance of a scene that isn't in the project any more, so nothing is drawn or run for it."
     }));
-    const expanded = expandSceneInstances(project, entry.scene);
+    const nested: Diagnostic[] = nestedSpawnPools(project, entry.scene).map((node) => ({
+      severity: "error" as const,
+      code: "nested-spawn-pool" as const,
+      nodeName: node.name,
+      message: "This spawn pool's own scene already contains a spawn pool of its own (directly, or through an instance), which isn't supported -- a pool can't itself contain a pool."
+    }));
+    const spawnPools = expandSpawnPools(project, entry.scene);
+    const expanded = expandSceneInstances(project, spawnPools.tree);
     // A scene made to be put inside other scenes (an enemy, a coin) has no camera of its own. It still has to be a scene the game could switch to, so it gets a default one; the starting scene
     // is the game's first picture and must have its own.
     const scene: SceneNode = index > 0 && !flattenSceneTree(expanded).some((node) => node.kind === "Camera3D") ? withDefaultCamera(expanded) : expanded;
-    const result = translateScene3D({ ...single, scene }, { ...options, sceneIndex: index, sceneNames });
-    const all = [...missing, ...result.diagnostics];
+    const result = translateScene3D({ ...single, scene }, { ...options, sceneIndex: index, sceneNames, spawnPools: spawnPools.pools });
+    const all = [...missing, ...nested, ...result.diagnostics];
     diagnostics.push(...(entries.length > 1 ? all.map((d) => ({ ...d, sceneName: entry.name })) : all));
     if (result.scene) scenes.push(result.scene);
   });

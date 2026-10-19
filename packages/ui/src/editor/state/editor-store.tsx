@@ -62,6 +62,7 @@ import {
   getCameraFarPlane,
   CAMERA_FAR_PLANE_MIN,
   CAMERA_FAR_PLANE_MAX,
+  clampSpawnPoolCount,
   isCurrentSkyBox,
   formatSoundTime,
   getAudioPlayer,
@@ -441,6 +442,7 @@ export type Action =
   | { type: "SET_SKY_BOX_CURRENT"; id: string; current: boolean }
   | { type: "SET_CAMERA_CURRENT"; id: string; current: boolean }
   | { type: "SET_CAMERA_FAR_PLANE"; id: string; farPlane: number; at: number }
+  | { type: "SET_SPAWN_POOL_COUNT"; id: string; count: number; at: number }
   | { type: "SET_INVENTORY"; id: string; change: InventoryChange }
   | { type: "IMPORT_INVENTORY_PANEL_IMAGE"; id: string; target: InventoryPanelImageTarget; sprite: ImportedSprite; warnings: string[] }
   | { type: "ADD_INVENTORY_ITEM" }
@@ -928,6 +930,13 @@ function applyAction(state: EditorState, action: Action): EditorState {
       const farPlane = Math.min(CAMERA_FAR_PLANE_MAX, Math.max(CAMERA_FAR_PLANE_MIN, action.farPlane));
       if (farPlane === getCameraFarPlane(target)) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, camera: { ...node.camera, farPlane } })) };
+    }
+    case "SET_SPAWN_POOL_COUNT": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.instanceOf === undefined) return state;
+      const count = clampSpawnPoolCount(action.count);
+      if (count === target.spawnPoolCount) return state;
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, spawnPoolCount: count })) };
     }
     case "SET_INVENTORY": {
       const target = findSceneNode(state.sceneRoot, action.id);
@@ -1889,6 +1898,7 @@ interface EditorStoreValue {
   setCameraCurrent: (id: string, current: boolean) => void;
   /** Sets a Camera3D's own far clip plane, CAMERA_FAR_PLANE_MIN..CAMERA_FAR_PLANE_MAX scene units. Typing in the field is one undo step per pause. No-op for other nodes. */
   setCameraFarPlane: (id: string, farPlane: number) => void;
+  setSpawnPoolCount: (id: string, count: number) => void;
   setInventory: (id: string, change: InventoryChange) => void;
   importInventoryPanelImage: (id: string, target: InventoryPanelImageTarget, frame?: { width: number; height: number }) => Promise<void>;
   addInventoryItem: () => void;
@@ -2135,6 +2145,8 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: action.current ? `Make ${nameOf(action.id)} the active camera` : `Unmark ${nameOf(action.id)} as the active camera` };
     case "SET_CAMERA_FAR_PLANE":
       return { label: `Change far plane of ${nameOf(action.id)}`, mergeKey: `camera-far:${action.id}`, at: action.at };
+    case "SET_SPAWN_POOL_COUNT":
+      return { label: `Change spawn pool count of ${nameOf(action.id)}`, mergeKey: `spawn-pool-count:${action.id}`, at: action.at };
     case "SET_INVENTORY": {
       const { change } = action;
       const name = nameOf(action.id);
@@ -2524,6 +2536,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   const setSkyBoxCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_SKY_BOX_CURRENT", id, current }), []);
   const setCameraCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_CAMERA_CURRENT", id, current }), []);
   const setCameraFarPlane = useCallback((id: string, farPlane: number) => dispatch({ type: "SET_CAMERA_FAR_PLANE", id, farPlane, at: Date.now() }), []);
+  const setSpawnPoolCount = useCallback((id: string, count: number) => dispatch({ type: "SET_SPAWN_POOL_COUNT", id, count, at: Date.now() }), []);
   const setInventory = useCallback((id: string, change: InventoryChange) => dispatch({ type: "SET_INVENTORY", id, change }), []);
   const importInventoryPanelImage = useCallback(async (id: string, target: InventoryPanelImageTarget, frame?: { width: number; height: number }): Promise<void> => {
     const result = await window.goodstuff.assets.importSprite(frame);
@@ -3030,6 +3043,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setSkyBoxCurrent,
       setCameraCurrent,
       setCameraFarPlane,
+      setSpawnPoolCount,
       setInventory,
       importInventoryPanelImage,
       addInventoryItem,
@@ -3134,6 +3148,7 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setSkyBoxCurrent,
       setCameraCurrent,
       setCameraFarPlane,
+      setSpawnPoolCount,
       setInventory,
       importInventoryPanelImage,
       addInventoryItem,

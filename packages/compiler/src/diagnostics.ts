@@ -12,6 +12,7 @@ export type DiagnosticCode =
   | "sprite-without-image"
   | "extra-scenes-not-built"
   | "scene-instance-missing"
+  | "nested-spawn-pool"
   | "animation-frame-out-of-range"
   | "animated-sprite-without-animations"
   | "animated-mesh-without-frames"

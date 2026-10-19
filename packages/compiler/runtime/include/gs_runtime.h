@@ -76,4 +76,9 @@ void gs_start_audio(void);
 void gs_init_inventory(void);
 void gs_update_inventory_panel(void);
 
+/* Sets up every spawn pool's own state, all unspawned (STORY.spawn-pools.md). No per-frame update: a spawned
+   copy's own subtree already follows its root every frame through the ordinary dynamic-node machinery
+   (gs_update_nodes), the same as any other scripted node. */
+void gs_init_spawn_pools(void);
+
 #endif

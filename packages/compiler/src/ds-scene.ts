@@ -307,6 +307,27 @@ export interface DsInventory {
   screen: ScreenId;
 }
 
+/**
+ * One spawn pool (requirements/scene-designer/STORY.spawn-pools.md): `count` pre-built, initially hidden copies of
+ * a template scene, each independently `spawn()`/`despawn()`-able at runtime by a script -- the real, hardware-
+ * possible shape of "create something at runtime" on an engine with no dynamic scene graph. The copies' own nodes
+ * are one contiguous run in the owning tree's own node table (`DsScene3D.nodes`/`DsScene2D.nodes`): slot `i`'s own
+ * root is always `nodeStart + i * nodesPerCopy` (guaranteed by `expandSpawnPools`/`expandSceneInstances` in core
+ * producing `count` structurally identical copies, as tree siblings, in order -- never interleaved with anything
+ * else, so flattening the tree visits one copy's entire subtree before the next).
+ */
+export interface DsSpawnPool {
+  nodeStart: number;
+  nodesPerCopy: number;
+  count: number;
+  /**
+   * Which of the two screens the copies' own nodes are indices into -- only read by the 2D runtime's own
+   * GsSpawnPool (scene2d.h): a 3D project's own node table only ever has the one 2D screen (always the sub
+   * engine) to begin with, the same reasoning `DsInventory.screen`'s own comment already gives.
+   */
+  screen: ScreenId;
+}
+
 /** One TileMap3D palette entry, compiled exactly like a plain MeshInstance3D's own primitive/texture/color (STORY.tile-map-3d.md). */
 export interface DsTileMap3DPaletteEntry {
   primitive: number;
@@ -367,6 +388,8 @@ export interface DsScene3D {
   items: DsInventoryItem[];
   /** Every Inventory node in the scene. */
   inventories: DsInventory[];
+  /** Every spawn pool in the scene (STORY.spawn-pools.md). */
+  spawnPools: DsSpawnPool[];
   meshes: DsMesh[];
   primitives: DsPrimitive[];
   textures: DsTexture[];
@@ -590,6 +613,8 @@ export interface DsScene2D {
   items: DsInventoryItem[];
   /** Every Inventory node in the scene. */
   inventories: DsInventory[];
+  /** Every spawn pool in the scene (STORY.spawn-pools.md). */
+  spawnPools: DsSpawnPool[];
   /** Generated C: every script's `_ready`/`_process` functions, its per-node variables, and the instance table the runtime walks each frame. Empty when no script runs. */
   scriptCode: string;
 }

@@ -276,6 +276,14 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
 
+  out.push("static const GsSpawnPool spawn_pools[] = {");
+  if (scene.spawnPools.length === 0) out.push("  { 0, 0, 0 }");
+  scene.spawnPools.forEach((p, i) => {
+    out.push(`  { ${p.nodeStart}, ${p.nodesPerCopy}, ${p.count} }${i < scene.spawnPools.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
   out.push("static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {");
   if (scene.tileMap3DPaletteEntries.length === 0) out.push("  { 0, 0, 0 }");
   scene.tileMap3DPaletteEntries.forEach((p, i) => {
@@ -307,9 +315,9 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${scene.skinJoints.length}, /* skin joint count */`);
   out.push(`  ${scene.tileMaps3D.length}, ${scene.tileMap3DPaletteEntries.length}, /* TileMap3D node, palette entry counts */`);
   out.push(`  ${scene.skyBoxes.length}, /* sky box count */`);
-  out.push(`  ${scene.items.length}, ${scene.inventories.length}, /* item, inventory counts */`);
+  out.push(`  ${scene.items.length}, ${scene.inventories.length}, ${scene.spawnPools.length}, /* item, inventory, spawn pool counts */`);
   out.push(
-    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
+    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, spawn_pools, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
   );
   out.push("};");
   out.push("");
@@ -541,6 +549,14 @@ export function writeScene2DDataC(scene: DsScene2D): string {
   out.push("};");
   out.push("");
 
+  out.push("static const GsSpawnPool spawn_pools[] = {");
+  if (scene.spawnPools.length === 0) out.push("  { 0, 0, 0, 0 }");
+  scene.spawnPools.forEach((p, i) => {
+    out.push(`  { ${p.nodeStart}, ${p.nodesPerCopy}, ${p.count}, ${SCREEN_CODES[p.screen]} }${i < scene.spawnPools.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
   out.push("const GsScene2D gs_scene2d = {");
   out.push(`  ${scene.fps}, /* fps */`);
   out.push(`  ${top}, /* top screen: image, sprite counts, images, sprites */`);
@@ -552,6 +568,7 @@ export function writeScene2DDataC(scene: DsScene2D): string {
   out.push(`  ${scene.colliders.length}, colliders, /* collider count, colliders */`);
   out.push(`  ${scene.tileMaps.length}, tileMaps, /* tile map count, tile maps */`);
   out.push(`  ${scene.items.length}, items, ${scene.inventories.length}, inventories, /* item count, items, inventory count, inventories */`);
+  out.push(`  ${scene.spawnPools.length}, spawn_pools, /* spawn pool count, spawn pools */`);
   out.push(`  ${scene.topCamera}, ${scene.bottomCamera} /* top screen's camera node, bottom screen's (-1: none) */`);
   out.push("};");
   out.push("");

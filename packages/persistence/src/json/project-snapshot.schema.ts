@@ -548,6 +548,7 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         scriptId: { type: "string", minLength: 1 },
         spriteId: { type: "string", minLength: 1 },
         instanceOf: { type: "string", minLength: 1 },
+        spawnPoolCount: { type: "integer", minimum: 1, maximum: 16 },
         label: { $ref: "#/definitions/labelData" },
         spriteAnimations: { $ref: "#/definitions/spriteAnimationsData" },
         transform2D: { $ref: "#/definitions/transform2D" },

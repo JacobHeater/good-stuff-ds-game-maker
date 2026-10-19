@@ -631,6 +631,7 @@ static void enter_scene(int index, int first) {
 	gs_start_audio();
 	gs_init_animation();
 	gs_init_inventory();
+	gs_init_spawn_pools();
 	gs_update_nodes();
 	const GsSceneScripts *scripts = &gs_scene_scripts[index];
 	scripts->reset();

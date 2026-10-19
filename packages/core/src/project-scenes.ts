@@ -1,5 +1,7 @@
+import type { ScreenId } from "./index";
 import type { ProjectScene, ProjectSnapshot } from "./project-snapshot";
 import { flattenSceneTree, type SceneNode } from "./scene-node";
+import { clampSpawnPoolCount, isSpawnPool } from "./spawn-pool";
 
 /**
  * A project can hold several scenes (requirements/scene-designer/STORY.multiple-scenes.md). To keep every existing project file and every piece of code that reads `project.scene` working,
@@ -183,4 +185,63 @@ export function instanceWouldCycle(project: SceneList, targetId: string, sourceI
 /** The instance nodes in a scene that name a scene the project doesn't have. */
 export function danglingInstances(project: SceneList, root: SceneNode): SceneNode[] {
   return flattenSceneTree(root).filter((node) => node.instanceOf !== undefined && !findSceneEntry(project, node.instanceOf));
+}
+
+// ---- Spawn pools (requirements/scene-designer/STORY.spawn-pools.md) --------------------------------------------------------------------------------------------------------------
+
+/** Whether `sourceId`'s own scene tree contains a spawn pool anywhere, directly or through its own (ordinary) instances -- what an instance becoming a pool of `sourceId` must not be true of. */
+export function spawnPoolWouldNest(project: SceneList, sourceId: string): boolean {
+  const containsPool = (sceneId: string, seen: Set<string>): boolean => {
+    if (seen.has(sceneId)) return false;
+    seen.add(sceneId);
+    const entry = findSceneEntry(project, sceneId);
+    if (!entry) return false;
+    return flattenSceneTree(entry.scene).some((node) => isSpawnPool(node) || (node.instanceOf !== undefined && containsPool(node.instanceOf, seen)));
+  };
+  return containsPool(sourceId, new Set());
+}
+
+/** The spawn-pool nodes in a scene whose own target scene (directly, or through its own instances) already contains a spawn pool -- a structurally disallowed authoring mistake (no sensible
+    runtime fallback, unlike a merely-missing scene), reported as a compile error rather than silently expanded or left empty. */
+export function nestedSpawnPools(project: SceneList, root: SceneNode): SceneNode[] {
+  return flattenSceneTree(root).filter((node) => isSpawnPool(node) && node.instanceOf !== undefined && spawnPoolWouldNest(project, node.instanceOf));
+}
+
+/** One spawn-pool node's own N copies, after expansion: which sibling node ids (in order) stand for its own slots. */
+export interface SpawnPoolExpansion {
+  tree: SceneNode;
+  pools: ReadonlyArray<{ poolNodeId: string; name: string; sourceSceneId: string; screen: ScreenId; copyRootIds: readonly string[] }>;
+}
+
+/**
+ * The scene tree with every spawn-pool node (`spawn-pool.ts`'s `isSpawnPool`) replaced by that many sibling instance
+ * nodes -- each hidden, each otherwise an ordinary instance node in every way `expandSceneInstances` (run on this
+ * function's own output, right after, in both `translateScene2D` and `translateProject3D`) already knows how to
+ * expand. This pass only ever produces more *instance* nodes; it never substitutes a template's own subtree itself
+ * (still `expandSceneInstances`'s own job, reused unchanged, for all N copies at once). A pool `nestedSpawnPools`
+ * would flag is left alone here -- not expanded (treated as if it had no pool count at all, an ordinary single
+ * instance), not erroring itself -- the dedicated diagnostic check at the translate call site is what actually
+ * fails the build, the same split `danglingInstances` already has from `expandSceneInstances`.
+ */
+export function expandSpawnPools(project: SceneList, root: SceneNode): SpawnPoolExpansion {
+  const pools: Array<{ poolNodeId: string; name: string; sourceSceneId: string; screen: ScreenId; copyRootIds: readonly string[] }> = [];
+  const visit = (node: SceneNode): SceneNode[] => {
+    if (isSpawnPool(node) && node.instanceOf !== undefined && !spawnPoolWouldNest(project, node.instanceOf)) {
+      const count = clampSpawnPoolCount(node.spawnPoolCount) ?? 1;
+      const { spawnPoolCount: _count, ...rest } = node;
+      const copyRootIds: string[] = [];
+      const copies: SceneNode[] = [];
+      for (let i = 0; i < count; i++) {
+        const id = `${node.id}/${i}`;
+        copyRootIds.push(id);
+        copies.push({ ...rest, id, visible: false });
+      }
+      pools.push({ poolNodeId: node.id, name: node.name, sourceSceneId: node.instanceOf, screen: node.screen, copyRootIds });
+      return copies;
+    }
+    const children = node.children.flatMap(visit);
+    const unchanged = children.length === node.children.length && children.every((child, i) => child === node.children[i]);
+    return [unchanged ? node : { ...node, children }];
+  };
+  return { tree: visit(root)[0], pools };
 }

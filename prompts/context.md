@@ -1734,6 +1734,83 @@ version — this is a summary, not a substitute):
   overflowed into the second slot too; switched to edge-triggered `is_button_pressed`. **Passed on real melonDS**:
   `filledCell0` blue (icon, unselected, unaffected), `highlightedCell1` magenta (highlight, selected, nothing
   else drawn there), `addClickSelected` 2 ("S1"). Full suite (1551 tests) and `tsc --noEmit` clean.
+- **Spawn pools** (`scene-designer/STORY.spawn-pools.md`, done). Owner, designing an island explore-and-survive
+  game, asked for runtime object placement ("for placing a campfire you do InstantsScene('Name', x, y)"); true
+  dynamic creation is impossible on this engine (no dynamic scene graph, every node/sprite/script is a fixed
+  compile-time slot), so the real, buildable shape is an object pool: N pre-compiled, initially-hidden copies of a
+  template scene, placed with `spawn("Name", x, y[, z]) -> int` and freed with `despawn(handle)`. Chosen by the
+  owner as the first of four engine additions to build (ahead of timers, arrays, and an AI/pathfinding helper, not
+  yet started). Reuses three pieces of existing machinery rather than inventing new ones: scene instancing's own
+  `expandSceneInstances`/`renamedSubtree` (a pool node becomes N ordinary sibling instance nodes first, then
+  expanded exactly as today); the existing budget diagnostics (`too-many-sprites`/`over-triangle-budget`/etc. run
+  on the already-expanded tree, so pool content is covered for free); and Inventory's own dispatch pattern (a
+  quoted name resolved at compile time, a plain `int` handle, never a new "node reference" value type). New
+  `DsSpawnPool`/`GsSpawnPool` compiled table records each pool's `{nodeStart, nodesPerCopy, count, screen?}` —
+  slot `i`'s root is always `nodeStart + i*nodesPerCopy`, guaranteed by depth-first flattening visiting one pool
+  copy's whole subtree before the next (siblings, not children). **The 2D/3D asymmetry this story turned on**: 3D
+  composes a node's world transform from its parent's every frame, so moving only a copy's root and marking the
+  subtree `dynamic` is enough; 2D has no such cascade (every node's position is always absolute screen pixels), so
+  2D's `gs_spawn` individually repositions every node of a copy's subtree — solved with no new compiled data, by
+  having it read each node's own authored starting position straight out of the existing, read-only
+  `gs_scene2d.nodes[]` table (`gs_init_nodes2d` already copies from it once at scene start and never touches it
+  again). New script builtins `spawn`/`despawn`/`is_spawned`, with `spawn`'s own argument count varying by project
+  mode (name+x+y in 2D, name+x+y+z in 3D) — the one builtin whose signature does that. Editor: a "Pool count"
+  field in `InspectorPanel.tsx`'s existing instance block; `shown-scene.ts`'s `useShownSceneRoot` (also read by
+  the Hardware budget panel, per the precedent `BUG.triangle-budget-ignores-scene-instances.md` already set for
+  ordinary instances) expands pools before instances so the live gauge doesn't under-report them.
+  **Real runtime bug, caught by the permanent hardware test, not any unit test**: 2D's first `gs_spawn` draft
+  restored every node's `visible` bit in a copy's subtree from the compiled table — including the root's, which
+  is *always* compiled `visible: false` (that's what makes it a hidden pool copy), so spawning silently re-hid it
+  every time and nothing ever appeared. 3D's own `gs_spawn.c` had already gotten this right (hardcoding the root's
+  `visible = 1`, never reading it from the table), since the root is the only node 3D's version directly touches;
+  the 2D port, needing to loop the whole subtree for the position fix-up, carried the table-read onto the root by
+  mistake. Fixed by special-casing the root (`n == 0`) to force `visible = 1` while every other node still
+  restores its own authored bit. Caught via `packages/compiler/src/testing/spawn-pools.rom.test.ts` (permanent,
+  2D tree only — 3D's mechanism is already hardware-proven by many other stories' own tests, lower marginal risk,
+  owner agreed to skip a parallel 3D test): one ROM, five independent captures, each a complete deterministic
+  tap sequence from a cold start (`is_button_pressed`, edge-triggered; melonDS captures don't persist state
+  between calls). All 5 passed after the fix. **A test-construction mistake caught in the same pass**: the
+  "exhausted pool returns -1" check displayed the raw handle through a Label and compared text width — but `-1`
+  ("H-1") and the idle default `-2` ("H-2") render at the same width, so the check would have passed even if the
+  value never updated at all. Fixed by displaying `handleC + 11` instead, so the two cases genuinely differ in
+  digit width (9 vs 10). Full monorepo suite (1598 tests) and `tsc --noEmit` clean across every package.
+- **Island survival example** (`scene-designer/STORY.island-survival-example.md`, done). Owner: "make a new test
+  game that uses all the features so far" (a second real game, like the coin collector, built the same hand-authored
+  way via `createSceneNode()` calls, no editor UI). `createIslandSurvivalProject()` (`core/examples/island-survival.ts`)
+  exercises everything shipped since the coin game that it never touched: TileMap3D (a 7x7 grass island, one
+  chunk), a day/night `SkyBox3D` pair swapped by a timer, an Inventory with its own on-screen panel (Wood/Coconut),
+  and spawn pools (a 3-slot campfire pool, placed with B/costs 2 Wood, put out with X) — on top of the coin game's
+  own move_and_collide/overlaps/labels/globals/save/change_scene foundation, plus one genuinely new combination:
+  `ray_cast`-based wandering (a crab that turns away whenever the ground ahead runs out, stealing a Wood if it
+  catches the player). **Two real bugs found building it, one in the engine, one in this game's own construction**:
+  (1) 2D's brand-new spawn-pool `visible` bug (documented under spawn-pools' own entry above) was caught by *this*
+  game's permanent hardware test, not a unit test — the reason that story wasn't called done until this one's own
+  ROM test passed. (2) The island's own floor, first built the same way `coin-game.ts`'s walls are (an invisible
+  `MeshInstance3D` + `CollisionShape3D` child, `visible: false` since the tile-mapped grass already draws it) —
+  but an invisible node nothing ever reveals gets pruned from the compiled scene *entirely*, shape included, not
+  merely hidden (`translate-scene-3d.ts`'s own `visit`, documented behavior per
+  `collision/STORY.solid-shapes-and-move-and-collide.md`'s "a hidden solid shape stops nothing" — `coin-game.ts`'s
+  own ground/walls only survive because they stay visible). In the real game as first written, the player would
+  have fallen through the floor forever; caught by a direct `ray_cast` probe, not by any ROM-test symptom (every
+  test happened to position the player by a direct write, never actually landing on gravity alone). Fixed with a
+  new `collider()` helper — a plain `Node3D` (draws nothing by design) left *visible*, with the shape as its
+  child — survives compilation, draws nothing, stays solid. **Two more real mistakes, both in the ROM test's own
+  construction, caught in the same diagnosis pass**: the "place a campfire" test's own player position
+  accidentally overlapped a tree closely enough to also trigger its chop logic, refunding the Wood the campfire
+  had just spent in the same frames (fixed: moved >= 2.2 units from every tree/coconut); the "crab steals a Wood"
+  test teleported the crab onto the player once and stepped — but Crab's own script moves before checking the
+  overlap, so a depenetration push away from the player's own solid shape (if the move resolves a starting
+  penetration) can make the overlap check never see them together at all (fixed: force the crab back onto the
+  player at the start of every frame across a short run, so the check sees them together at least once, closer to
+  how a real approach actually plays out). **A known, accepted limitation, not fixed**: `ray_cast` returns only a
+  distance, never which node it hit, so the crab's cliff-avoidance can be fooled by an unrelated solid (the
+  player, a tree) sitting along its sample line — a real v1 gap of `ray_cast` for this exact use (ties into the
+  still-not-built AI/pathfinding helper), mitigated here only by the island's own small scale. Hardware-verified:
+  `testing/island-survival.rom.test.ts` (13 cases, the same CPU-exact `runDump` harness `coin-game.rom.test.ts`
+  uses), scoped to the new integration surface only (every single-feature mechanic already has its own dedicated
+  test). Compiler-level `island-survival.test.ts` and persistence round-trip (`example-projects.test.ts`,
+  `examples/island-survival.gsds` written via `GSDS_WRITE_EXAMPLES=1`) also pass. Full monorepo suite (1599 tests)
+  and `tsc --noEmit` clean across every package.
 
 ## Known test-environment failures (not caused by the code; don't chase them)
 - `translate-scene-3d.test.ts` "the runtime's fallback scene": on this Windows checkout (`core.autocrlf=true`) the committed

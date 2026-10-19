@@ -329,3 +329,66 @@ void gs_inventory_select_slot(int inv, int slot) {
 	if (inv < 0 || !selectedSlot) return;
 	selectedSlot[inv] = (slot < 0 || slot >= gs_scene2d.inventories[inv].slots) ? -1 : slot;
 }
+
+/* ---- Spawn pools (STORY.spawn-pools.md) ----------------------------------------------------------------------------------------
+   A direct port of the 3D runtime's own gs_spawn.c, with one real difference: a 2D node's own position is always
+   absolute (this file's own top comment), with no parent-to-child cascade to carry a moved root's own copy along
+   with it the way the 3D runtime's world-transform recomposition already does for free. So spawning one here moves
+   every node of its own copy, not just the root -- each one's own *authored* position (still sitting, untouched,
+   in the read-only GsScene2D.nodes table gs_node_state was only ever initialized from) shifted by how far the
+   root itself moved, and each one's own *authored* visible restored (not hard-coded to shown: a template node the
+   author already hid -- shown later by its own script, say -- has to stay hidden on spawn too). Despawning is
+   simpler: hiding the whole range is always safe, regardless of each one's own bit, since nothing draws once off. */
+
+typedef struct {
+	uint8_t *used; /* one byte per slot, 0 = free */
+} SpawnPoolState2D;
+static SpawnPoolState2D *spawnPoolState;
+
+void gs_init_spawn_pools(void) {
+	if (gs_scene2d.spawnPoolCount == 0) return;
+	spawnPoolState = malloc(sizeof(SpawnPoolState2D) * gs_scene2d.spawnPoolCount);
+	for (int i = 0; i < gs_scene2d.spawnPoolCount; i++) spawnPoolState[i].used = calloc(gs_scene2d.spawnPools[i].count, 1);
+}
+
+static int handle_of(int pool, int slot) { return (pool << 16) | slot; }
+static int pool_of(int handle) { return handle < 0 ? -1 : handle >> 16; }
+static int slot_of(int handle) { return handle < 0 ? -1 : handle & 0xffff; }
+
+int gs_spawn(int pool, int32_t x, int32_t y) {
+	if (pool < 0 || pool >= gs_scene2d.spawnPoolCount) return -1;
+	const GsSpawnPool *p = &gs_scene2d.spawnPools[pool];
+	for (int s = 0; s < p->count; s++) {
+		if (spawnPoolState[pool].used[s]) continue;
+		spawnPoolState[pool].used[s] = 1;
+		const int base = p->nodeStart + s * p->nodesPerCopy;
+		const int32_t dx = x - gs_scene2d.nodes[base].position[0];
+		const int32_t dy = y - gs_scene2d.nodes[base].position[1];
+		for (int n = 0; n < p->nodesPerCopy; n++) {
+			const int i = base + n;
+			gs_node_state[i].position[0] = gs_scene2d.nodes[i].position[0] + dx;
+			gs_node_state[i].position[1] = gs_scene2d.nodes[i].position[1] + dy;
+			/* The root's own authored visible is always false (a pool copy is always compiled hidden) -- spawning
+			   it is what shows it. Everything else keeps its own authored bit, which might legitimately be hidden
+			   by design (shown later by the template's own script, say). */
+			gs_node_state[i].visible = n == 0 ? 1 : gs_scene2d.nodes[i].visible;
+		}
+		return handle_of(pool, s);
+	}
+	return -1; /* the pool's own N copies are all already spawned */
+}
+
+void gs_despawn(int handle) {
+	const int pool = pool_of(handle), slot = slot_of(handle);
+	if (pool < 0 || pool >= gs_scene2d.spawnPoolCount || slot < 0 || slot >= gs_scene2d.spawnPools[pool].count) return;
+	spawnPoolState[pool].used[slot] = 0;
+	const GsSpawnPool *p = &gs_scene2d.spawnPools[pool];
+	const int base = p->nodeStart + slot * p->nodesPerCopy;
+	for (int n = 0; n < p->nodesPerCopy; n++) gs_node_state[base + n].visible = 0;
+}
+
+int gs_is_spawned(int handle) {
+	const int pool = pool_of(handle), slot = slot_of(handle);
+	if (pool < 0 || pool >= gs_scene2d.spawnPoolCount || slot < 0 || slot >= gs_scene2d.spawnPools[pool].count) return 0;
+	return spawnPoolState[pool].used[slot];
+}

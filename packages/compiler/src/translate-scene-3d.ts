@@ -52,12 +52,13 @@ import {
   type Vector3,
   sceneNamesOf,
   collectProjectGlobals,
-  type ProjectGlobal
+  type ProjectGlobal,
+  type SpawnPoolExpansion
 } from "@goodstuff/core";
 
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
-import { collectSprites, NO_INVENTORY_PANEL } from "./translate-scene-2d";
+import { collectSprites, collectSpawnPools, NO_INVENTORY_PANEL } from "./translate-scene-2d";
 import { compileTileMap3D } from "./translate-tile-map-3d";
 import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioClip, DsAudioPlayer, DsCamera, DsCollider, DsInventory, DsInventoryItem, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
 import { FixedPointRangeError, packNormal, rgb15, toF32, toT16, toV10, toV16 } from "./fixed-point";
@@ -118,6 +119,9 @@ export interface TranslateOptions {
   sceneIndex?: number;
   /** The names of all the project's scenes, for `change_scene("name")`. Defaults to the project's own. */
   sceneNames?: readonly string[];
+  /** This scene's own spawn pools (STORY.spawn-pools.md), already expanded by the caller (`translateProject3D`'s own
+      `expandSpawnPools`, run before `expandSceneInstances`, since the scene this function receives is already expanded). Empty for a scene with none. */
+  spawnPools?: SpawnPoolExpansion["pools"];
 }
 
 export interface TranslateResult {
@@ -384,8 +388,23 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   }
 
   // ---- Scripts first: they decide which nodes must be kept and which can move.
-  const scripts = checkProjectScripts(project, diagnostics, options.sceneNames ?? sceneNamesOf(project));
+  const spawnPools = options.spawnPools ?? [];
+  const scripts = checkProjectScripts(project, diagnostics, options.sceneNames ?? sceneNamesOf(project), spawnPools.map((p) => p.name), 3);
   const globals = orderGlobalsForRuntime(scripts.globals);
+
+  // A spawn pool's own copies (STORY.spawn-pools.md) need a node-table place and live position tracking even
+  // though nothing in the authored scene scripts or $Name-references them -- the whole point is a script
+  // spawning/despawning them later. Only each copy's own root needs marking: world transforms cascade from a
+  // dynamic parent down through its whole subtree (`visit`'s own `parentDynamic`, below), and a child with its own
+  // authored `visible: true` is kept by `visit`'s `!node.visible && !containsTouched(node)` gate on its own, same
+  // as any other ordinary content -- unlike 2D, which has no such cascade (translateScene2D's own equivalent marks
+  // every node of every copy, not just the root).
+  for (const pool of spawnPools) {
+    for (const rootId of pool.copyRootIds) {
+      scripts.touchedIds.add(rootId);
+      scripts.dynamicRootIds.add(rootId);
+    }
+  }
 
   const meshes: Collected[] = [];
   const cameras: Collected[] = [];
@@ -585,6 +604,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   // The sprites on the 2D screen (the sub engine). One VRAM bank holds their tiles, so with sprites the textures get 384 KB instead of 512 KB.
   const twoDScreen = otherScreen(getThreeDScreen(project) ?? "top");
   const keptIndexOf = new Map(kept.map((entry) => [entry.node.id, entry.index]));
+  const dsSpawnPools = collectSpawnPools(spawnPools, keptIndexOf);
   const { screens: twoDScreens, inventoryPanels } = collectSprites(project, () => twoDScreen, [twoDScreen], diagnostics, options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget, {
     nodeIndexOf: (node) => keptIndexOf.get(node.id),
     reachedByScript: (node) => scripts.touchedIds.has(node.id),
@@ -1242,6 +1262,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       tileMap3DChunkFiles,
       items: compileInventoryItems(project),
       inventories,
+      spawnPools: dsSpawnPools,
       meshes: dsMeshes,
       primitives,
       textures,
@@ -1297,7 +1318,7 @@ export interface ScriptPlan {
  * Checks every attached script against the scene (a script nothing uses isn't compiled, so a half-written one never blocks a build)
  * and reports each problem as a diagnostic naming the script, line and column.
  */
-export function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[], sceneNames: readonly string[]): ScriptPlan {
+export function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagnostic[], sceneNames: readonly string[], spawnPoolNames: readonly string[] = [], spawnArgCount: 2 | 3 = 3): ScriptPlan {
   const plan: ScriptPlan = { touchedIds: new Set(), dynamicRootIds: new Set(), playedIds: new Set(), animPlayedIds: new Set(), overlapIds: new Set(), touchIds: new Set(), moveIds: new Set(), globals: [], compiled: [] };
   const scriptsById = new Map((project.scripts ?? []).map((script) => [script.id, script]));
   const attachments = new Map<string, SceneNode[]>();
@@ -1341,7 +1362,7 @@ export function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagn
     // children. Nodes whose checks name the same nodes share one compiled script (one copy of the code, a copy of the variables each); a node that finds
     // different nodes for its $Names is compiled as a script of its own, so in the C a $Name always means one fixed node.
     const groups = new Map<string, { result: ScriptCheckResult; nodes: SceneNode[] }>();
-    const { perNode, diagnostics: problems } = checkScriptOnNodes(script.source, project.scene, attached, sceneNames, plan.globals, undefined, itemNames);
+    const { perNode, diagnostics: problems } = checkScriptOnNodes(script.source, project.scene, attached, sceneNames, plan.globals, undefined, itemNames, spawnPoolNames, spawnArgCount);
     for (const problem of problems) {
       diagnostics.push({
         severity: problem.severity,

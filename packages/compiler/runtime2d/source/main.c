@@ -23,6 +23,7 @@ void gs_read_input(void);
 void gs_init_audio2d(void);
 void gs_start_audio2d(void);
 void gs_init_inventory2d(void);
+void gs_init_spawn_pools(void);
 
 /* The backdrop behind the sprites. Not black, so screenshots can find each screen (the emulator tests read these values). */
 #define TOP_BACKDROP RGB15(3, 5, 10)
@@ -433,6 +434,7 @@ int main(void) {
 	gs_init_audio2d();
 	gs_start_audio2d();
 	gs_init_inventory2d();
+	gs_init_spawn_pools();
 
 	/* Every script's _ready(), once, before the first frame draws -- whatever it changes already shows in that frame. */
 	for (int i = 0; i < gs_script_instance_count; i++) {

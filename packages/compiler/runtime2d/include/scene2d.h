@@ -155,6 +155,16 @@ typedef struct {
 	                   project's own GsInventory (scene.h) has no matching field, since it only ever has the one 2D screen (always the sub engine) */
 } GsInventory;
 
+/* One spawn pool (STORY.spawn-pools.md), the same shape and meaning as the 3D runtime's own GsSpawnPool in
+   scene.h, plus `screen` (which of GsScene2D.top/bottom the copies' own nodes are indices into) -- the same
+   reason GsInventory's own `screen` field exists here and not there. */
+typedef struct {
+	uint16_t nodeStart;
+	uint16_t nodesPerCopy;
+	uint16_t count;
+	uint8_t screen;
+} GsSpawnPool;
+
 /* What one 2D engine draws. Each image takes one of the engine's 16 extended palettes, in order. */
 typedef struct {
 	uint16_t imageCount;
@@ -187,6 +197,8 @@ typedef struct {
 	const GsInventoryItem *items;
 	uint16_t inventoryCount;
 	const GsInventory *inventories;
+	uint16_t spawnPoolCount;
+	const GsSpawnPool *spawnPools;
 	/* Each screen's active Camera2D: its place in `nodes`, or -1 for no camera (every sprite stays at its own absolute
 	   position, exactly as before this existed). See STORY.standalone-2d-camera.md. */
 	int16_t topCamera;

@@ -1,4 +1,4 @@
-import { listScenes, MESH_CULL_MODES, withSceneTree } from "@goodstuff/core";
+import { listScenes, MESH_CULL_MODES, SPAWN_POOL_COUNT_MAX, SPAWN_POOL_COUNT_MIN, withSceneTree } from "@goodstuff/core";
 import { getMeshFrameCount, getSpriteByteSize, type ImportedSprite, type ImportedTexture, type MeshCullMode, type MeshInstance3DData, type MeshPrimitive, type SceneNode, type ScreenId, type SkyBoxData, type Vector3 } from "@goodstuff/core";
 import { findSceneNode, flattenSceneTree, flattenSceneTreeInOrder, getImportedTriangleCount, getLightIntensity, getSkyBox, isCurrentCamera, isCurrentSkyBox, lightLevelFromIntensity, getPrimitiveTriangleCount, MESH_PRIMITIVES, resolveMeshGeometry, alphaLevelFromOpacity, getMeshOpacity, getCameraFarPlane, CAMERA_FAR_PLANE_MIN, CAMERA_FAR_PLANE_MAX } from "@goodstuff/core";
 import { useEditorStore, type Transform3DField } from "../state/editor-store";
@@ -303,7 +303,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setSkyBoxCurrent, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush, setCameraFarPlane, setInventory, setItemIconSheet, importItemIconSheet, importInventoryPanelImage, addInventoryItem, removeInventoryItem, setInventoryItem } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setSkyBoxCurrent, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush, setCameraFarPlane, setInventory, setItemIconSheet, importItemIconSheet, importInventoryPanelImage, addInventoryItem, removeInventoryItem, setInventoryItem, setSpawnPoolCount } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -642,6 +642,24 @@ export function InspectorPanel(): JSX.Element {
                 <span className="text-red-400">The scene this was an instance of isn't in the project any more, so nothing is shown or built for it.</span>
               );
             })()}
+            <Field label="Pool count">
+              <input
+                type="number"
+                min={SPAWN_POOL_COUNT_MIN}
+                max={SPAWN_POOL_COUNT_MAX}
+                value={node.spawnPoolCount ?? 1}
+                onChange={(event) => setSpawnPoolCount(node.id, Number(event.target.value))}
+                className={inputClasses}
+                data-testid="spawn-pool-count"
+              />
+            </Field>
+            {(node.spawnPoolCount ?? 1) > 1 && (
+              <span>
+                A spawn pool of {node.spawnPoolCount} hidden copies, each independently placed by a script's own{" "}
+                <code>spawn("{node.name}", x, y{state.project?.mode === "2D" ? "" : ", z"})</code>. This node's own position is where each copy starts from, not where anything is shown --
+                nothing draws here until a script spawns one.
+              </span>
+            )}
           </div>
         )}
 

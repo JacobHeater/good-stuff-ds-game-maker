@@ -34,7 +34,8 @@ const PENDING_GLOBAL_NODE_ID_PREFIX = "\u0000pending-global:";
 export const RESERVED_NAMES: ReadonlySet<string> = new Set([
   "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "randi", "randf", "atan2", "bool", "void",
   "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "tile_solid", "delta",
-  "add", "remove", "count", "slot_count", "slot_item_is", "slot_icon", "set_frame", "selected_slot", "select_slot"
+  "add", "remove", "count", "slot_count", "slot_item_is", "slot_icon", "set_frame", "selected_slot", "select_slot",
+  "spawn", "despawn", "is_spawned"
 ]);
 
 /** What the checker needs to know about the project the script lives in. */
@@ -53,6 +54,10 @@ export interface ScriptSceneContext {
   globals?: ReadonlyArray<{ name: string; type: ScriptType }>;
   /** The project's shared item list (`ProjectSnapshot.items`, STORY.inventory.md), by name (the same "match by name, not by id" split a named audio clip already has), in compile order: what an Inventory call's own item name (e.g. `add("Sword", 1)`) resolves against. Left out when not known, in which case any item name is accepted (not yet resolvable to a real index). */
   items?: readonly string[];
+  /** The scene's own spawn pools (`ProjectSnapshot`'s own spawn-pool nodes, STORY.spawn-pools.md), by name, in compile order: what `spawn("Campfire", x, y, z)`'s own pool name resolves against. Left out when not known, in which case any pool name is accepted (not yet resolvable to a real index). */
+  spawnPools?: readonly string[];
+  /** How many numeric arguments `spawn()` takes after the pool name: 3 (x, y, z) for a 3D project, 2 (x, y) for a 2D one -- the only built-in whose own signature varies by project mode, since a 2D node's own position is always just two numbers everywhere else too. Defaults to 3 (3D) when not known. */
+  spawnArgCount?: 2 | 3;
   /**
    * Whether a `global $Name` that isn't found in `root` is left unresolved instead of reported as an error (its member accesses are all allowed too, since its
    * real kind isn't known here). For editing a scene in isolation before it's placed somewhere else (an instance) that actually has the node; a real compile of
@@ -1498,6 +1503,70 @@ class Checker {
     return "void";
   }
 
+  /**
+   * `spawn("Campfire", x, y, z)` (STORY.spawn-pools.md): the pool's own name must be one of the project's spawn
+   * pools (same resolution as `change_scene`'s own scene name); `x`/`y`[/`z`] stay ordinary numeric expressions
+   * (int or float, a variable is fine), read directly from the call's own `args` at code generation, the same way
+   * `move_and_collide`'s own numbers already are -- a position, not a count, so it's never forced to `int` the way
+   * an Inventory call's own `slot`/`count` are. A 2D project takes only `x`/`y` (`this.context.spawnArgCount`, set
+   * by whichever translator is checking this project -- there's no other built-in whose own signature varies by
+   * project mode). Returns the handle `despawn()`/`is_spawned()` take, or -1 when the pool is already full.
+   */
+  private checkSpawnCall(expr: Extract<Expr, { kind: "call" }>): ExprType {
+    const argCount = this.context.spawnArgCount ?? 3;
+    const signature = argCount === 2 ? 'spawn("name", x, y)' : 'spawn("name", x, y, z)';
+    if (expr.args.length !== argCount + 1) {
+      this.checkArgCount(expr, argCount + 1, signature);
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return "int";
+    }
+    const nameArg = expr.args[0];
+    if (nameArg.kind !== "string") {
+      this.typeOfExpr(nameArg);
+      this.error(nameArg, `spawn() needs the pool's name in quotes, like ${signature}.`);
+      for (const arg of expr.args.slice(1)) this.typeOfExpr(arg);
+      return "int";
+    }
+    nameArg.ty = "string";
+    const pools = this.context.spawnPools;
+    let pool = 0;
+    if (pools) {
+      pool = pools.indexOf(nameArg.value);
+      if (pool < 0) {
+        this.error(nameArg, pools.length === 0 ? "This project has no spawn pools yet. Add one in the Inspector." : `There is no spawn pool "${nameArg.value}". Its spawn pools are: ${pools.map((name) => `"${name}"`).join(", ")}.`);
+        for (const arg of expr.args.slice(1)) this.typeOfExpr(arg);
+        return "int";
+      }
+    }
+    let ok = true;
+    for (const arg of expr.args.slice(1)) {
+      const value = this.asValue(this.typeOfExpr(arg), arg);
+      if (value === null) ok = false;
+      else if (!isNumeric(value)) {
+        this.error(arg, `spawn() needs numbers for where to place it, not ${an(value)}.`);
+        ok = false;
+      }
+    }
+    if (ok) expr.res = { kind: "spawnCall", pool };
+    return "int";
+  }
+
+  /** `despawn(handle)`/`is_spawned(handle)` (STORY.spawn-pools.md): `handle` is whatever `spawn()` returned, an
+      ordinary int expression (a variable, not just a literal) -- the same shape an Inventory call's own `slot` already is. */
+  private checkDespawnOrIsSpawned(expr: Extract<Expr, { kind: "call" }>, name: "despawn" | "is_spawned"): ExprType {
+    const resultType: ExprType = name === "is_spawned" ? "bool" : "void";
+    if (!this.checkArgCount(expr, 1, `${name}(handle)`)) {
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return resultType;
+    }
+    const arg = expr.args[0];
+    arg.ty = "int";
+    const value = this.asValue(this.typeOfExpr(arg), arg);
+    if (value !== null) this.requireAssignable(value, "int", arg);
+    if (value !== null && value !== "bool" && value !== "string" && value !== "float") expr.res = { kind: "despawnCall", method: name };
+    return resultType;
+  }
+
   private notePlay(target: NodeTarget): void {
     if (target.kind === "self") this.usage.selfCallsPlay = true;
     else this.usage.nodeCallsPlay.add(target.nodeId);
@@ -1612,6 +1681,11 @@ class Checker {
         return this.checkBodyCall(expr, name, { kind: "self" }, expr.callee);
       case "change_scene":
         return this.checkChangeScene(expr);
+      case "spawn":
+        return this.checkSpawnCall(expr);
+      case "despawn":
+      case "is_spawned":
+        return this.checkDespawnOrIsSpawned(expr, name);
       case "save_game":
       case "load_game":
       case "has_save":
