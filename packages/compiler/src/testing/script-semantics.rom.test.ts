@@ -35,7 +35,7 @@ var flag = true
 var big = 2147483647
 var tiny = -3
 
-func add(a: int, b: int) -> int:
+func iadd(a: int, b: int) -> int:
     return a + b
 func sub(a: int, b: int) -> int:
     return a - b
@@ -276,9 +276,9 @@ const c = (name: string, fn: string, args: Array<number | string>, expected: num
 
 const cases: Case[] = [
   // Integers.
-  c("3 + 4", "add", [3, 4], 7),
-  c("-5 + 2", "add", [-5, 2], -3),
-  c("2147483647 + 1 wraps", "add", [2147483647, 1], -2147483648),
+  c("3 + 4", "iadd", [3, 4], 7),
+  c("-5 + 2", "iadd", [-5, 2], -3),
+  c("2147483647 + 1 wraps", "iadd", [2147483647, 1], -2147483648),
   c("3 - 10", "sub", [3, 10], -7),
   c("6 * 7", "mul", [6, 7], 42),
   c("-6 * 7", "mul", [-6, 7], -42),

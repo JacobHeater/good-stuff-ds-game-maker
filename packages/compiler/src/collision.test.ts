@@ -58,7 +58,7 @@ describe("collision shapes in the scene description", () => {
     expect(text).toContain(
       "audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n};"
     );
-    expect(text).toMatch(/\{ 0, 0, 1, -1, 0, -1, -1, \{ 0, 0, 0 \}/); // shape A is collider 0
+    expect(text).toMatch(/\{ 0, 0, 1, -1, 0, -1, -1, -1, \{ 0, 0, 0 \}/); // shape A is collider 0
     // A scene with none has the placeholder entry, since C does not allow an empty array.
     const none = translateScene3D(scriptedProject([{ source: "func _ready():\n    pass\n" }])).scene!;
     expect(writeSceneDataC(none)).toContain("static const GsCollider colliders[] = {\n  { 0, 0, { 0, 0, 0 }, 0, 0 }\n};");

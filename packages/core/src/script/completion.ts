@@ -127,6 +127,8 @@ interface Capabilities {
   label: boolean;
   /** A TileMap: `tile_solid(x, y)`. */
   tileMap: boolean;
+  /** An Inventory: visible (its own on-screen panel), add/remove/count/slot_count/slot_item_is/slot_icon/selected_slot/select_slot. */
+  inventory: boolean;
   /** The animation names to offer in `play("`. */
   animations: readonly string[];
 }
@@ -148,6 +150,7 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
   if (c.sprite) {
     list.push(prop("position", "vector", "Where its center is on the screen, in pixels: position.x and position.y."), prop("rotation", "float", "Its angle in degrees, clockwise."));
     list.push(prop("scale", "vector", "Its size on each axis (1 is normal, negative flips it): scale.x and scale.y."), prop("visible", "bool", "Whether it is shown."));
+    list.push(method("set_frame", "(frame)", "Directly shows a frame of its sheet, stopping any animation playing.", "set_frame()"));
   }
   if (c.audio) {
     list.push(prop("volume", "float", "How loud, from 0 to 100."), prop("pitch", "float", "How high the sound plays (1 is normal)."));
@@ -169,6 +172,17 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
   }
   if (c.shape || c.shape2D) list.push(method("overlaps", "(other) -> bool", "Whether it touches another collision shape.", "overlaps()", 1, true));
   if (c.tileMap) list.push(method("tile_solid", "(x, y) -> bool", "Whether the tile at that world position (in pixels, like position.x/.y) is solid ground.", "tile_solid(, )", 3));
+  if (c.inventory) {
+    list.push(prop("visible", "bool", "Whether its own on-screen panel is shown (STORY.inventory-ui-panel.md)."));
+    list.push(method("add", "(item, count) -> int", 'Adds count of the item (in quotes) to the first slots that fit; returns how many didn\'t fit.', 'add("", )', 3));
+    list.push(method("remove", "(item, count) -> int", "Removes up to count of the item; returns how many were actually removed.", 'remove("", )', 3));
+    list.push(method("count", "(item) -> int", "How many of the item it holds in total.", 'count("")', 2));
+    list.push(method("slot_count", "(slot) -> int", "How many are in that slot (0 when empty).", "slot_count()", 1));
+    list.push(method("slot_item_is", "(slot, item) -> bool", "Whether that slot holds the item (in quotes).", 'slot_item_is(, "")', 2));
+    list.push(method("slot_icon", "(slot) -> int", "That slot's own item's icon frame, or -1 when empty.", "slot_icon()", 1));
+    list.push(method("selected_slot", "() -> int", "Which slot the player last touched on its own on-screen panel, or -1 for none.", "selected_slot()"));
+    list.push(method("select_slot", "(slot)", "Selects that slot on its own on-screen panel (as if the player had touched it), or clears the selection with -1.", "select_slot()", 1));
+  }
   if (c.body) {
     list.push(method("move_and_collide", "(dx, dy, dz) -> bool", "Moves it by that much, stopped by solid collision shapes. True when it was stopped.", "move_and_collide(, , )", 5));
     list.push(method("probe_solid", "(y, x0, x1, x2) -> int", "Which of three points (x0, x1, x2 along the longer side of the body's collision shape, y up from the shape's center) are inside a solid shape, as a number: 1 for the first, 2 the second, 4 the third, added up.", "probe_solid(, , , )", 7));
@@ -194,11 +208,12 @@ function capabilitiesOfKind(kind: SceneNodeKind, hasShape: boolean, animations: 
     touch: kind === "TouchArea2D" || kind === "TouchArea3D",
     label: kind === "Label",
     tileMap: kind === "TileMap",
+    inventory: kind === "Inventory",
     animations
   };
 }
 
-const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, shape2D: true, body: true, touch: true, label: false, tileMap: true, animations: [] };
+const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, shape2D: true, body: true, touch: true, label: false, tileMap: true, inventory: true, animations: [] };
 
 /** What `self` can do: what every node the script is attached to can do (everything when it is attached to none yet). */
 function selfCapabilities(context: ScriptSceneContext): Capabilities {
@@ -216,6 +231,7 @@ function selfCapabilities(context: ScriptSceneContext): Capabilities {
     touch: each.every((c) => c.touch),
     label: each.every((c) => c.label),
     tileMap: each.every((c) => c.tileMap),
+    inventory: each.every((c) => c.inventory),
     animations: [...new Set(each.flatMap((c) => c.animations))]
   };
 }
@@ -347,6 +363,15 @@ export function completeScript(source: string, offset: number, context: ScriptSc
       const caps = play[1] ? receiverCapabilities(play[1], context) : selfCapabilities(context);
       if (!caps || caps.animations.length === 0) return null;
       return asString(caps.animations.map((name) => ({ label: name, kind: "text", detail: "animation" })));
+    }
+    // An item name (STORY.inventory.md): the first argument of add/remove/count, or the second of slot_item_is.
+    const itemFirst = new RegExp(String.raw`(?:(${RECEIVER})\s*\.\s*)?\b(?:add|remove|count)\s*\(\s*$`).exec(head);
+    const itemSecond = new RegExp(String.raw`(?:(${RECEIVER})\s*\.\s*)?\bslot_item_is\s*\([^,()]*,\s*$`).exec(head);
+    const item = itemFirst ?? itemSecond;
+    if (item) {
+      const caps = item[1] ? receiverCapabilities(item[1], context) : selfCapabilities(context);
+      if (!caps?.inventory || !context.items || context.items.length === 0) return null;
+      return asString(context.items.map((id) => ({ label: id, kind: "text", detail: "item" })));
     }
     return null;
   }

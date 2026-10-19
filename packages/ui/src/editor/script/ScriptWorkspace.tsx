@@ -52,7 +52,8 @@ function useScriptDiagnostics(script: ProjectScript | undefined): ScriptDiagnost
             projectGlobals(state.project?.scripts, script),
             // A `global $Name` may only exist once this scene is instanced somewhere else (a name tag, a coin); editing this scene alone can't see that, so it
             // isn't reported as an error here. A real compile checks it against wherever this scene actually ends up.
-            { allowUnresolvedGlobalNodes: true }
+            { allowUnresolvedGlobalNodes: true },
+            state.project?.items?.map((item) => item.name)
           ).diagnostics
         }),
       CHECK_DELAY_MS

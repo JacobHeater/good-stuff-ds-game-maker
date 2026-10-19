@@ -71,6 +71,18 @@ export type Resolution =
   | { kind: "bodyState"; target: NodeTarget; state: "floor" | "wall" | "ceiling" }
   /** `map.tile_solid(x, y)`: whether the tile under a world-space pixel position is solid ground. */
   | { kind: "tileSolidCall"; target: NodeTarget }
+  /**
+   * A call on an Inventory node (STORY.inventory.md). `item`, when the method takes one, is the project item's
+   * compile-time index (its own name, a string literal, resolved against the project's shared item list); a `slot`
+   * or `count` argument stays an ordinary expression in the call's own `args` (read directly by the code generator,
+   * the same way `moveCall`/`probeCall` read theirs) since either can be a variable, not just a literal.
+   * `add`/`remove` take (item, count); `count` takes (item); `slot_count`/`slot_icon` take (slot); `slot_item_is`
+   * takes (slot, item); `selected_slot` takes nothing; `select_slot` takes (slot) -- both are the player's last
+   * touch on this Inventory's own on-screen panel (STORY.inventory-ui-panel.md), not anything about its items.
+   */
+  | { kind: "inventoryCall"; target: NodeTarget; method: "add" | "remove" | "count" | "slot_count" | "slot_item_is" | "slot_icon" | "selected_slot" | "select_slot"; item?: number }
+  /** `sprite.set_frame(frame)`: directly shows a frame of a Sprite2D/AnimatedSprite2D's own sheet, bypassing any named animation (STORY.inventory.md). `frame` stays in the call's own `args`. */
+  | { kind: "spriteSetFrame"; target: NodeTarget }
   | { kind: "nodeRef"; target: NodeTarget };
 
 interface ExprBase extends SourceSpan {

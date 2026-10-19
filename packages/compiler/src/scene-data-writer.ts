@@ -206,7 +206,7 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   scene.nodes.forEach((n, i) => {
     out.push(`  /* ${commentSafe(n.name)} */`);
     out.push(
-      `  { ${n.parent}, ${n.dynamic ? 1 : 0}, ${n.visible ? 1 : 0}, ${n.audio}, ${n.collider}, ${n.animPlayer}, ${n.touch}, { ${n.position.join(", ")} }, { ${n.rotation.join(", ")} }, { ${n.scale.join(", ")} }, ` +
+      `  { ${n.parent}, ${n.dynamic ? 1 : 0}, ${n.visible ? 1 : 0}, ${n.audio}, ${n.collider}, ${n.animPlayer}, ${n.touch}, ${n.inventory}, { ${n.position.join(", ")} }, { ${n.rotation.join(", ")} }, { ${n.scale.join(", ")} }, ` +
         `{ ${n.worldScale.join(", ")} }, ${matrix(n.world)} }${i < scene.nodes.length - 1 ? "," : ""}`
     );
   });
@@ -258,6 +258,24 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("};");
   out.push("");
 
+  out.push("static const GsInventoryItem items[] = {");
+  if (scene.items.length === 0) out.push("  { -1, 0 }");
+  scene.items.forEach((item, i) => {
+    out.push(`  { ${item.iconFrame}, ${item.maxStack} }${i < scene.items.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
+  out.push("static const GsInventory inventories[] = {");
+  if (scene.inventories.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1 }");
+  scene.inventories.forEach((inv, i) => {
+    out.push(
+      `  { ${inv.node}, ${inv.slots}, ${inv.panelX}, ${inv.panelY}, ${inv.columns}, ${inv.slotWidth}, ${inv.slotHeight}, ${inv.spacingX}, ${inv.spacingY}, ${inv.backgroundSprite}, ${inv.slotSpriteStart}, ${inv.iconSpriteStart}, ${inv.highlightSprite}, ${inv.labelStart} }${i < scene.inventories.length - 1 ? "," : ""}`
+    );
+  });
+  out.push("};");
+  out.push("");
+
   out.push("static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {");
   if (scene.tileMap3DPaletteEntries.length === 0) out.push("  { 0, 0, 0 }");
   scene.tileMap3DPaletteEntries.forEach((p, i) => {
@@ -289,8 +307,9 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push(`  ${scene.skinJoints.length}, /* skin joint count */`);
   out.push(`  ${scene.tileMaps3D.length}, ${scene.tileMap3DPaletteEntries.length}, /* TileMap3D node, palette entry counts */`);
   out.push(`  ${scene.skyBoxes.length}, /* sky box count */`);
+  out.push(`  ${scene.items.length}, ${scene.inventories.length}, /* item, inventory counts */`);
   out.push(
-    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
+    `  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, ${twoD}, ${scene.meshAnimations.length}, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices`
   );
   out.push("};");
   out.push("");
@@ -504,6 +523,24 @@ export function writeScene2DDataC(scene: DsScene2D): string {
   out.push("};");
   out.push("");
 
+  out.push("static const GsInventoryItem items[] = {");
+  if (scene.items.length === 0) out.push("  { -1, 0 }");
+  scene.items.forEach((item, i) => {
+    out.push(`  { ${item.iconFrame}, ${item.maxStack} }${i < scene.items.length - 1 ? "," : ""}`);
+  });
+  out.push("};");
+  out.push("");
+
+  out.push("static const GsInventory inventories[] = {");
+  if (scene.inventories.length === 0) out.push("  { 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, 0 }");
+  scene.inventories.forEach((inv, i) => {
+    out.push(
+      `  { ${inv.node}, ${inv.slots}, ${inv.panelX}, ${inv.panelY}, ${inv.columns}, ${inv.slotWidth}, ${inv.slotHeight}, ${inv.spacingX}, ${inv.spacingY}, ${inv.backgroundSprite}, ${inv.slotSpriteStart}, ${inv.iconSpriteStart}, ${inv.highlightSprite}, ${inv.labelStart}, ${SCREEN_CODES[inv.screen]} }${i < scene.inventories.length - 1 ? "," : ""}`
+    );
+  });
+  out.push("};");
+  out.push("");
+
   out.push("const GsScene2D gs_scene2d = {");
   out.push(`  ${scene.fps}, /* fps */`);
   out.push(`  ${top}, /* top screen: image, sprite counts, images, sprites */`);
@@ -514,6 +551,7 @@ export function writeScene2DDataC(scene: DsScene2D): string {
   out.push(`  ${scene.audioClips.length}, audioClips, /* audio clip count, audio clips */`);
   out.push(`  ${scene.colliders.length}, colliders, /* collider count, colliders */`);
   out.push(`  ${scene.tileMaps.length}, tileMaps, /* tile map count, tile maps */`);
+  out.push(`  ${scene.items.length}, items, ${scene.inventories.length}, inventories, /* item count, items, inventory count, inventories */`);
   out.push(`  ${scene.topCamera}, ${scene.bottomCamera} /* top screen's camera node, bottom screen's (-1: none) */`);
   out.push("};");
   out.push("");

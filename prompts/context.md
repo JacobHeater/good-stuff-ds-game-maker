@@ -1633,6 +1633,108 @@ version — this is a summary, not a substitute):
   session verified via the same diagnostic pipeline that found the bug, not a fresh screen capture of
   `cat_animations.glb` itself.
 
+- **Inventory node + project-wide item list** (`scene-designer/STORY.inventory.md`, done). Owner request: "let's add a new Inventory Node it can have items with a icon and
+  max in a stack and more." Asked per-node palette (TileMap3D-style) vs. one shared project-wide list; owner chose
+  the shared list explicitly, overriding the per-node option the planning step itself recommended as simpler. New
+  `Inventory` node kind (`core/inventory.ts`): engine-independent like `AudioStreamPlayer`, data is just `{ slots }`
+  (1..64). Items live on `ProjectSnapshot.items: InventoryItem[]` + `itemIconsSpriteId` (one shared icon sheet, each
+  item an optional frame index into it); never auto-pruned on save (like `scripts`, unlike meshes/textures — a
+  script names an item by a string literal in source text, not a scannable field). Script API:
+  `add(item, count)`/`remove(item, count)`/`count(item)`/`slot_count(slot)`/`slot_item_is(slot, item)`/
+  `slot_icon(slot)`, `item` always a compile-time-resolved string literal (like `play("name")`'s own clip
+  resolution). New small runtime primitive `gs_sprite_set_frame(node, frame)` (both runtime trees) lets a script
+  show `slot_icon()`'s result on an ordinary Sprite2D — no automatic inventory-rendering UI, same "engine draws,
+  game decides what" philosophy as everywhere else. Compiler: the full, project-ordered item list compiles into
+  *every* scene (3D and 2D), not a per-scene-used subset — confirmed via `rom-builder.ts` that 2D (`build2D`) has no
+  multi-scene-sharing mechanism at all, ruling out a "shared project-wide C file" approach. **Design correction made
+  mid-build**: script resolution is by item *name* (not a separate stable `id`), matching `AudioClip`'s own
+  precedent (`play("name")` already matches `.name`, with `.id` a hidden React key) — an earlier draft had this
+  backwards (id=script-facing, name=cosmetic) before the editor UI was built. **A real, pre-existing editor-store
+  bug this surfaced, not caused by this feature**: `editorReducer`'s `changed` detector and `EditState`/`restore()`
+  both listed every project-level array (`meshes`/`textures`/`sounds`/`sprites`/`scripts`) by name with no
+  generic fallback, so the new project-level Inventory actions applied correctly but **Undo silently did nothing**
+  until `items`/`itemIconsSpriteId` were added to both spots (`editor-store.tsx`, `edit-history.ts`) — worth
+  checking again if a future project-level (not per-node) action is ever added the same way. Hardware test
+  `compiler/src/testing/inventory.rom.test.ts` (permanent) covers the full add/remove/count/slot_count/
+  slot_item_is/slot_icon arithmetic via on-screen Label values plus a `gs_sprite_set_frame` before/after capture —
+  **passed on real melonDS** once the Windows session (locked when the feature was first built) was unlocked. One
+  real bug caught, in the test itself, not the runtime: a label's own expected value assumed a slot would already
+  be full at a checkpoint it's read before the add that fills it — fixed by correcting the test, not the code,
+  which was already right. The capture tooling was intermittently flaky under rapid manual relaunches in the same
+  few seconds (window/process contention, not a logic defect) — a single clean run passed outright. Full monorepo
+  suite (1512 tests) and `tsc --noEmit` clean across every package as of this entry.
+
+- **Inventory's own on-screen panel** (`scene-designer/STORY.inventory-ui-panel.md`, done). Follow-up to the
+  Inventory node above, which deliberately drew nothing automatically. Owner request: "in the game there is no
+  inventory UI but the dev should be able to make on[e] by adding slot image and background image and other
+  useful things" — asked whether this means new Inspector fields the *engine* lays out and draws vs. new
+  hand-assembly conveniences, owner chose the first (recommended) option, then narrowed "other useful things" to
+  stack-count text, touch-to-select with a highlight image, and columns/spacing controls. `InventoryData` gained
+  optional `backgroundSpriteId`/`slotSpriteId` (optionally 2-frame: empty/filled)/`highlightSpriteId` plus
+  `columns`/`slotSpacingX`/`slotSpacingY`; `Inventory` became a real 2D visual kind again (ordinary Position X/Y +
+  Screen fields, removed from `isEngineIndependent`). New script API `selected_slot()`/`select_slot(slot)`, same
+  dispatch machinery the six existing Inventory methods already use. Compiler: `collectSprites`/`collectLabels`
+  (`translate-scene-2d.ts`) gained `collectInventoryPanel`, folding a panel's background/slot-frame/item-icon/
+  highlight sprites and per-slot stack-count labels into the *exact same* per-screen arrays an ordinary
+  Sprite2D/Label already shares — not a table of its own, since the DS's OAM slots and 16 palettes are allocated
+  purely by array position at runtime. Runtime (both trees): a new per-frame `gs_update_inventory_panel`/
+  `update_inventory_panel`, called right before the sprite/label tables flush to hardware, hides/shows the panel
+  from the node's own live `visible`, swaps slot-frame/icon graphics, hit-tests `gs_touching`/`gs_touch_x/y`
+  directly (no `TouchArea2D` needed) to select a slot, and moves the highlight — built on new by-raw-index sibling
+  primitives (`gs_sprite_set_hidden_at`/`_xy_at`/`_frame_at`, `gs_label_set_value_at`/`_shown_at`) alongside the
+  existing node-based ones, since a panel sprite/label has no node of its own. **Four real gaps caught before/
+  during implementation, none from a pre-existing bug report**: (1) the DS's own sprite-array reversal (lowest
+  OAM index drawn on top) both moves *and* re-orders a multi-sprite run, breaking naive sequential indexing —
+  solved with a deferred remap pass and a "`*Start - n`, not `+ n`" indexing convention; (2) a stale doc comment on
+  `GsInventory` (scene.h) wrongly claimed its panel fields were "only meaningful when `iconSpriteStart >= 0`" —
+  false, since a panel can exist with no icon sheet at all; fixed before it misled the runtime work that followed;
+  (3) the standalone 2D runtime has two screens, but `GsInventory`'s compiled indices said nothing about which —
+  fixed with a 2D-runtime-only `screen` field (matching `GsAudioPlayer`'s own precedent for the same reason); (4)
+  **the permanent hardware test itself caught a real checker gap, not a pre-existing bug**: `visible = false` on
+  an Inventory failed to compile, since the base story never gave a script any reason to read/write an Inventory's
+  own `visible` — fixed with a narrow `isInventoryTarget` capability (just `visible`, not position/rotation/scale,
+  which the panel's own v1 never reads live). Hardware test
+  `compiler/src/testing/inventory-ui-panel.rom.test.ts` (permanent): one ROM, three captures (idle; holding "a" to
+  fill both slots while clicking slot 1 to select it; holding "b" to hide the panel via script) — **passed on real
+  melonDS**, confirming the background/slot-frame/icon/highlight pixels, the touch-driven selection and highlight
+  move, `selected_slot()`'s own value (read via label text width), and the panel disappearing when hidden. One test
+  bug caught along the way, not a runtime bug: the label-width helper first measured against `BACKDROP_BLACK`
+  (correct for a *3D* project's always-black sub-screen) instead of this *2D* project's own non-black backdrop,
+  reading the label as 31 characters wide instead of 3 until fixed. Compiler-level `inventory-panel.test.ts` (9
+  tests) separately proves the sprite/label sharing, budget-diagnostic firing, and missing-sprite/no-icon-sheet
+  edge cases. Full monorepo suite (1549 tests) and `tsc --noEmit` clean across every package as of this entry.
+  **Post-ship bug, reported by the owner**: "add a slot image add a icon image and the slot image is missing" —
+  `pruneUnusedAssets`/`withUpdatedScene` (`core/project-snapshot.ts`) only ever counted a plain node's own
+  `spriteId` as "in use"; a panel's own `backgroundSpriteId`/`slotSpriteId`/`highlightSpriteId` weren't in that
+  scan at all, so any prune (e.g. importing the icon sheet) deleted the slot image as "unused" out from under a
+  still-configured panel. `itemIconsSpriteId` had the same gap one level removed (kept alive only when an item
+  used a frame of it, never by a panel drawing from it directly). Fixed by adding all three panel ids to the scan
+  and widening `itemIconsSpriteId`'s own keep-alive condition; two new tests in `imported-sprite.test.ts`. Full
+  suite (1551 tests) and `tsc --noEmit` clean.
+  **Second post-ship bug, same owner report**: a slot image imported as a "two frame" sheet (per the field's own
+  documented contract) showed in-game as one uncut picture — `importInventoryPanelImage`/`importItemIconSheet`
+  (`editor-store.tsx`) both called the shared sprite importer with no frame size at all, unlike
+  `AnimatedSprite2D`'s own `SpriteSheetField`, which already has a "pick a frame size, then import" flow. Fixed by
+  giving the Slot field and the project-wide icon sheet field that same flow (`PanelImageField`'s new `frames`
+  mode; `SheetPreview` lifted out of `AnimatedSpriteFields.tsx` and exported for reuse as a frame-numbered
+  preview), plus warnings for a 1-frame or >2-frame image. Asked whether to drop the shared icon sheet for one
+  image per item instead, owner chose to keep the shared sheet (a distinct image per item would cost one of the
+  DS's own 16 per-screen palette slots *per item*) and have picking improved instead — this fix is that
+  improvement, since the pre-existing per-item click-to-pick frame grid was effectively unusable while the sheet
+  was always stuck at one frame. Doesn't retroactively fix already-saved single-frame data; re-import required.
+  **Third post-ship bug, same owner**: "when you click on an item the item disappears" — `collectInventoryPanel`
+  (`translate-scene-2d.ts`) pushed the highlight sprite *after* the item icons, so it drew on top of a selected,
+  filled slot's own icon, replacing it instead of framing it. Fixed by pushing the highlight before the icons
+  instead (background, slot frames, highlight, icons) — compiler-only, no runtime change, since the remap/`*Start
+  - n` convention doesn't care which group is pushed in which order. Rewrote `inventory-ui-panel.rom.test.ts` to
+  actually catch this class of regression (fills one slot, touches the *other*, empty one, so the highlight's own
+  color is checked somewhere nothing else draws over it) — the original version sampled a single opaque,
+  same-size pixel that would have passed regardless of draw order. Also fixed in the same rewrite: the test
+  script used `is_button_down` (true every held frame), so `add("Gem", 1)` ran ~70 times across a 1.2s hold and
+  overflowed into the second slot too; switched to edge-triggered `is_button_pressed`. **Passed on real melonDS**:
+  `filledCell0` blue (icon, unselected, unaffected), `highlightedCell1` magenta (highlight, selected, nothing
+  else drawn there), `addClickSelected` 2 ("S1"). Full suite (1551 tests) and `tsc --noEmit` clean.
+
 ## Known test-environment failures (not caused by the code; don't chase them)
 - `translate-scene-3d.test.ts` "the runtime's fallback scene": on this Windows checkout (`core.autocrlf=true`) the committed
   `runtime/source/scene_data.c` is CRLF in the working tree while the generator writes LF, so the byte comparison fails. Everything else passes

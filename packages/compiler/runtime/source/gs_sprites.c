@@ -197,3 +197,47 @@ int gs_sprite_is_playing(int node) {
 	const int i = sprite_of_node(node);
 	return i >= 0 && anim_state[i].playing;
 }
+
+/* Directly shows `frame`, stopping any animation playing (STORY.inventory.md: shows an Inventory slot's own icon). */
+void gs_sprite_set_frame(int node, int frame) {
+	const int i = sprite_of_node(node);
+	if (i < 0) return;
+	const GsSprite *sprite = &gs_scene.sprites2D.sprites[i];
+	const GsSpriteImage *image = &gs_scene.sprites2D.images[sprite->image];
+	if (frame < 0 || frame >= image->frameCount) return;
+	anim_state[i].playing = 0;
+	anim_state[i].frame = frame;
+	anim_state[i].shown = frame;
+	if (frame_gfx[sprite->image] && frame_gfx[sprite->image][frame]) {
+		oamSetGfx(&oamSub, i, size_of(image->width, image->height), SpriteColorFormat_256Color, frame_gfx[sprite->image][frame]);
+	}
+}
+
+/*
+ * The same three things `follow`/`animate`/`gs_sprite_set_frame` already do to a sprite the hardware knows by its own
+ * node -- hidden, moved, shown a different frame -- for one with no node at all, by its own raw index into
+ * GsScreen2D.sprites instead (STORY.inventory-ui-panel.md: a panel's own background/slot-frame/icon/highlight
+ * sprites are static, positioned once at compile time, with no node to follow -- gs_inventory.c's own per-frame
+ * update calls these directly by the sprite indices GsInventory already gives it). Each is a no-op outside the
+ * screen's own sprite count, or (for the frame one) outside that sprite's own image's own frame count -- the same
+ * bounds gs_sprite_set_frame already respects for a node-backed sprite.
+ */
+void gs_sprite_set_hidden_at(int index, int hidden) {
+	if (index < 0 || index >= gs_scene.sprites2D.spriteCount) return;
+	oamSetHidden(&oamSub, index, hidden);
+}
+
+void gs_sprite_set_xy_at(int index, int x, int y) {
+	if (index < 0 || index >= gs_scene.sprites2D.spriteCount) return;
+	oamSetXY(&oamSub, index, x, y);
+}
+
+void gs_sprite_set_frame_at(int index, int frame) {
+	if (index < 0 || index >= gs_scene.sprites2D.spriteCount) return;
+	const GsSprite *sprite = &gs_scene.sprites2D.sprites[index];
+	const GsSpriteImage *image = &gs_scene.sprites2D.images[sprite->image];
+	if (frame < 0 || frame >= image->frameCount) return;
+	if (frame_gfx[sprite->image] && frame_gfx[sprite->image][frame]) {
+		oamSetGfx(&oamSub, index, size_of(image->width, image->height), SpriteColorFormat_256Color, frame_gfx[sprite->image][frame]);
+	}
+}

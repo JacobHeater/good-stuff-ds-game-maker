@@ -139,6 +139,42 @@ describe("sprite images in the project and budget", () => {
     const without = withUpdatedScene(project, { ...scene, children: [] });
     expect(without).not.toHaveProperty("sprites");
   });
+
+  it("keeps an Inventory's own background/slot/highlight images alive (STORY.inventory-ui-panel.md), even though no node's own spriteId uses them", () => {
+    const bg = asSprite(ok(picture(16, 16, () => [10, 200, 10, 255]), 16, 16).sprite, "bg");
+    const slot = asSprite(ok(picture(16, 16, () => [200, 200, 10, 255]), 16, 16).sprite, "slot");
+    const hi = asSprite(ok(picture(16, 16, () => [200, 10, 200, 255]), 16, 16).sprite, "hi");
+    const bag = createSceneNode({ name: "Bag", kind: "Inventory" });
+    bag.inventory = { backgroundSpriteId: bg.id, slotSpriteId: slot.id, highlightSpriteId: hi.id };
+    const scene = createSceneNode({ name: "Main", kind: "Node2D", children: [bag] });
+    const project = { ...createProjectSnapshot({ name: "P", mode: "2D", scene }), sprites: [bg, slot, hi] };
+    expect(withUpdatedScene(project, scene).sprites).toEqual([bg, slot, hi]);
+    // Clearing the panel's own images (not the node) lets them be pruned, same as any other now-unused image.
+    const cleared = createSceneNode({ name: "Bag", kind: "Inventory" });
+    const without = withUpdatedScene(project, { ...scene, children: [cleared] });
+    expect(without).not.toHaveProperty("sprites");
+  });
+
+  it("keeps the project's item icon sheet alive when an Inventory panel is configured, even with no item using a frame of it yet", () => {
+    const icons = asSprite(ok(picture(16, 16, () => [10, 10, 200, 255]), 16, 16).sprite, "icons");
+    const bag = createSceneNode({ name: "Bag", kind: "Inventory" });
+    bag.inventory = { highlightSpriteId: "hi-only" }; // any one of the three is enough to count as "has a panel"
+    const scene = createSceneNode({ name: "Main", kind: "Node2D", children: [bag] });
+    const project = {
+      ...createProjectSnapshot({ name: "P", mode: "2D", scene }),
+      sprites: [icons],
+      itemIconsSpriteId: icons.id,
+      items: [{ id: "x", name: "X", maxStack: 1 }] // no iconFrame chosen yet
+    };
+    const kept = withUpdatedScene(project, scene);
+    expect(kept.sprites).toEqual([icons]);
+    expect(kept.itemIconsSpriteId).toBe(icons.id);
+    // With no panel and no item using a frame, the same sheet is pruned, exactly as before this story.
+    const noPanel = { ...project, scene: { ...scene, children: [createSceneNode({ name: "Bag", kind: "Inventory" })] } };
+    const dropped = withUpdatedScene(noPanel, noPanel.scene);
+    expect(dropped).not.toHaveProperty("sprites");
+    expect(dropped).not.toHaveProperty("itemIconsSpriteId");
+  });
 });
 
 describe("tree order", () => {

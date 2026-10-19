@@ -118,6 +118,25 @@ void gs_anim_set_speed(int player, int32_t speed);
 void gs_sprite_play(int node, int animation);
 void gs_sprite_stop(int node);
 int gs_sprite_is_playing(int node);
+/* Directly shows `frame` of the sprite's own sheet, stopping any animation playing on it (STORY.inventory.md). A node that isn't
+   drawn as a sprite, or a frame its sheet doesn't have, is a no-op. */
+void gs_sprite_set_frame(int node, int frame);
+
+/* ---- Inventory (STORY.inventory.md). Real (gs_runtime2d.c). `inv` is an Inventory's place in GsScene2D.inventories, from the
+   node it belongs to (-1 when the node has none: every call is then a no-op/0). `item` is a project item's compile-time index;
+   `slot` is 0-based within this inventory's own slot count. Slots are anonymous: add() fills the first that fit. */
+int gs_node_inventory(int node);
+int gs_inventory_add(int inv, int item, int count);
+int gs_inventory_remove(int inv, int item, int count);
+int gs_inventory_count(int inv, int item);
+int gs_inventory_slot_count(int inv, int slot);
+int gs_inventory_slot_item_is(int inv, int slot, int item);
+int gs_inventory_slot_icon(int inv, int slot);
+/* Which slot the player last touched on this Inventory's own on-screen panel (STORY.inventory-ui-panel.md), or -1
+   for none -- a script's own way to react to a tap and to clear the selection itself; select_slot's own `slot`
+   out of 0..slots-1 clears it instead, the same as -1 would. */
+int gs_inventory_selected_slot(int inv);
+void gs_inventory_select_slot(int inv, int slot);
 
 /* ---- Global variables. Real (script_code2d.c, written by the compiler): `gs_global` holds the project's global variables,
    one 32-bit number each, in the order script_code2d.c lists them. Saving them to the DS's save memory isn't built for 2D

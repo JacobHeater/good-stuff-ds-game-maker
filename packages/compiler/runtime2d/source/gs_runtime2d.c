@@ -218,3 +218,114 @@ int gs_tile_solid(int node, int32_t x, int32_t y) {
 	}
 	return 0;
 }
+
+/* ---- Inventory (STORY.inventory.md) ------------------------------------------------------------------------------------------
+   A direct port of the 3D runtime's own gs_inventory.c: which items exist is project-wide (GsScene2D.items, same meaning as the
+   3D runtime's own GsScene.items); an Inventory only keeps its own slots. Found by node index the same way collider_of_node
+   finds a collision shape's own entry -- a 2D project's node table has no per-kind index fields (STORY.standalone-2d-scripting.md). */
+
+typedef struct {
+	int16_t *slotItem; /* -1 = empty, one entry per slot */
+	uint8_t *slotCount;
+} InventoryState2D;
+static InventoryState2D *inventoryState;
+/* Which slot the player last touched on each Inventory's own on-screen panel (STORY.inventory-ui-panel.md), -1 =
+   none; parallel to inventoryState. main.c's own per-frame panel update reads and writes this through the two
+   functions below rather than directly (it has no access to this file's own statics), the same way a script does. */
+static int *selectedSlot;
+
+void gs_init_inventory2d(void) {
+	if (gs_scene2d.inventoryCount == 0) return;
+	inventoryState = malloc(sizeof(InventoryState2D) * gs_scene2d.inventoryCount);
+	selectedSlot = malloc(sizeof(int) * gs_scene2d.inventoryCount);
+	for (int i = 0; i < gs_scene2d.inventoryCount; i++) {
+		int slots = gs_scene2d.inventories[i].slots;
+		inventoryState[i].slotItem = malloc(sizeof(int16_t) * slots);
+		inventoryState[i].slotCount = calloc(slots, sizeof(uint8_t));
+		for (int s = 0; s < slots; s++) inventoryState[i].slotItem[s] = -1;
+		selectedSlot[i] = -1;
+	}
+}
+
+int gs_node_inventory(int node) {
+	for (int i = 0; i < gs_scene2d.inventoryCount; i++) {
+		if (gs_scene2d.inventories[i].node == node) return i;
+	}
+	return -1;
+}
+
+int gs_inventory_add(int inv, int item, int count) {
+	if (count <= 0) return 0;
+	if (inv < 0 || !inventoryState || item < 0 || item >= gs_scene2d.itemCount) return count;
+	InventoryState2D *state = &inventoryState[inv];
+	const int slots = gs_scene2d.inventories[inv].slots;
+	const int maxStack = gs_scene2d.items[item].maxStack;
+	int remaining = count;
+	for (int s = 0; s < slots && remaining > 0; s++) {
+		if (state->slotItem[s] != item) continue;
+		const int room = maxStack - state->slotCount[s];
+		const int add = room < remaining ? room : remaining;
+		state->slotCount[s] += add;
+		remaining -= add;
+	}
+	for (int s = 0; s < slots && remaining > 0; s++) {
+		if (state->slotItem[s] != -1) continue;
+		const int add = maxStack < remaining ? maxStack : remaining;
+		state->slotItem[s] = (int16_t)item;
+		state->slotCount[s] = (uint8_t)add;
+		remaining -= add;
+	}
+	return remaining;
+}
+
+int gs_inventory_remove(int inv, int item, int count) {
+	if (inv < 0 || !inventoryState || item < 0 || count <= 0) return 0;
+	InventoryState2D *state = &inventoryState[inv];
+	const int slots = gs_scene2d.inventories[inv].slots;
+	int removed = 0;
+	for (int s = 0; s < slots && removed < count; s++) {
+		if (state->slotItem[s] != item) continue;
+		const int take = state->slotCount[s] < (count - removed) ? state->slotCount[s] : (count - removed);
+		state->slotCount[s] -= take;
+		removed += take;
+		if (state->slotCount[s] == 0) state->slotItem[s] = -1;
+	}
+	return removed;
+}
+
+int gs_inventory_count(int inv, int item) {
+	if (inv < 0 || !inventoryState || item < 0) return 0;
+	InventoryState2D *state = &inventoryState[inv];
+	const int slots = gs_scene2d.inventories[inv].slots;
+	int total = 0;
+	for (int s = 0; s < slots; s++) {
+		if (state->slotItem[s] == item) total += state->slotCount[s];
+	}
+	return total;
+}
+
+int gs_inventory_slot_count(int inv, int slot) {
+	if (inv < 0 || !inventoryState || slot < 0 || slot >= gs_scene2d.inventories[inv].slots) return 0;
+	return inventoryState[inv].slotCount[slot];
+}
+
+int gs_inventory_slot_item_is(int inv, int slot, int item) {
+	if (inv < 0 || !inventoryState || slot < 0 || slot >= gs_scene2d.inventories[inv].slots) return 0;
+	return inventoryState[inv].slotItem[slot] == item;
+}
+
+int gs_inventory_slot_icon(int inv, int slot) {
+	if (inv < 0 || !inventoryState || slot < 0 || slot >= gs_scene2d.inventories[inv].slots) return -1;
+	const int item = inventoryState[inv].slotItem[slot];
+	return item < 0 ? -1 : gs_scene2d.items[item].iconFrame;
+}
+
+int gs_inventory_selected_slot(int inv) {
+	if (inv < 0 || !selectedSlot) return -1;
+	return selectedSlot[inv];
+}
+
+void gs_inventory_select_slot(int inv, int slot) {
+	if (inv < 0 || !selectedSlot) return;
+	selectedSlot[inv] = (slot < 0 || slot >= gs_scene2d.inventories[inv].slots) ? -1 : slot;
+}

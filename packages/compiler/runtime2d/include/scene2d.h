@@ -125,6 +125,36 @@ typedef struct {
 	int16_t node;
 } GsTileMap;
 
+/* One project-wide item (STORY.inventory.md), the same shape and meaning as the 3D runtime's own GsInventoryItem
+   (scene.h): compiled identically into every scene. iconFrame is a frame index a script can pass straight to
+   gs_sprite_set_frame (gs_inventory_slot_icon just returns it), or -1 for an item with no icon. */
+typedef struct {
+	int16_t iconFrame;
+	uint16_t maxStack;
+} GsInventoryItem;
+
+/* One Inventory node a script can reach, the same "found by node field" pattern GsCollider2D/GsAudioPlayer already
+   use -- an Inventory nothing names/attaches a script to is never built at all (STORY.inventory.md). Which items it
+   can hold is project-wide (GsScene2D.items), not per-node; its own on-screen panel (STORY.inventory-ui-panel.md,
+   the same shape and meaning as the 3D runtime's own GsInventory in scene.h -- see that one's own comment for what
+   each field means and why a *Start field is found by subtracting the slot number, not adding it -- plus one more
+   field, `screen`, this struct's own comment explains) is. */
+typedef struct {
+	int16_t node; /* index into GsScene2D.nodes */
+	uint16_t slots;
+	int32_t panelX, panelY;
+	uint16_t columns;
+	uint16_t slotWidth, slotHeight;
+	uint16_t spacingX, spacingY;
+	int16_t backgroundSprite;
+	int16_t slotSpriteStart;
+	int16_t iconSpriteStart;
+	int16_t highlightSprite;
+	int16_t labelStart;
+	uint8_t screen; /* which of GsScene2D.top/bottom the sprite/label indices above are into -- 0 = top (main engine), 1 = bottom (sub engine); a 3D
+	                   project's own GsInventory (scene.h) has no matching field, since it only ever has the one 2D screen (always the sub engine) */
+} GsInventory;
+
 /* What one 2D engine draws. Each image takes one of the engine's 16 extended palettes, in order. */
 typedef struct {
 	uint16_t imageCount;
@@ -153,6 +183,10 @@ typedef struct {
 	const GsCollider2D *colliders;
 	uint16_t tileMapCount;
 	const GsTileMap *tileMaps;
+	uint16_t itemCount;
+	const GsInventoryItem *items;
+	uint16_t inventoryCount;
+	const GsInventory *inventories;
 	/* Each screen's active Camera2D: its place in `nodes`, or -1 for no camera (every sprite stays at its own absolute
 	   position, exactly as before this existed). See STORY.standalone-2d-camera.md. */
 	int16_t topCamera;

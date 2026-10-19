@@ -9,6 +9,7 @@ import { SpriteAnimationsField, SpriteSheetField } from "./AnimatedSpriteFields"
 import { SpriteTransformField } from "./SpriteTransformField";
 import { TileMapField } from "./TileMapField";
 import { TileMap3DField } from "./TileMap3DField";
+import { InventoryField } from "./InventoryField";
 import { TouchArea2DField, TouchArea3DField } from "./TouchAreaFields";
 import { LabelField } from "./LabelFields";
 import { NameField } from "./NameField";
@@ -302,7 +303,7 @@ function parseMeshSelectValue(value: string): { primitive: MeshPrimitive } | { i
  * nodes keep the flat X/Y position editor.
  */
 export function InspectorPanel(): JSX.Element {
-  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setSkyBoxCurrent, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush, setCameraFarPlane } =
+  const { state, moveNode, setTransform3D, toggleVisible, setMeshSource, setMeshTexture, setMeshColor, setMeshUnlit, setMeshSmoothSkinning, setMeshCull, setMeshAlpha, importTexture, setSpriteImage, setNodeScreen, importSprite, setAudioSound, setAudioPlayer, setCollisionShape, setTouchArea2D, setTouchArea3D, setLabel, setSpriteTransform, switchScene, addSpriteAnimation, setSpriteAnimation, removeSpriteAnimation, setSpriteStartAnimation, renameNode, importSound, setLightIntensity, setSkyBox, setSkyBoxCurrent, setCameraCurrent, endEditGesture, attachScript, createScript, openScript, setTileMap, paintTile, setTileSolidAt, setTileMap3DPalette, setTileMap3DBrush, setCameraFarPlane, setInventory, setItemIconSheet, importItemIconSheet, importInventoryPanelImage, addInventoryItem, removeInventoryItem, setInventoryItem } =
     useEditorStore();
   const node = findSceneNode(state.sceneRoot, state.selectedNodeId);
 
@@ -532,6 +533,23 @@ export function InspectorPanel(): JSX.Element {
               />
             </Field>
           </div>
+        )}
+
+        {node.kind === "Inventory" && (
+          <InventoryField
+            key={node.id}
+            node={node}
+            items={state.project?.items ?? []}
+            itemIconsSpriteId={state.project?.itemIconsSpriteId}
+            sprites={state.project?.sprites ?? []}
+            onChange={(change) => setInventory(node.id, change)}
+            onChooseIconSheet={(spriteId) => setItemIconSheet(spriteId)}
+            onImportIconSheet={(frame) => void importItemIconSheet(frame)}
+            onImportPanelImage={(target, frame) => void importInventoryPanelImage(node.id, target, frame)}
+            onAddItem={() => addInventoryItem()}
+            onRemoveItem={(itemId) => removeInventoryItem(itemId)}
+            onChangeItem={(itemId, change) => setInventoryItem(itemId, change)}
+          />
         )}
 
         {node.kind === "Label" && <LabelField key={node.id} node={node} onChange={(change) => setLabel(node.id, change)} />}

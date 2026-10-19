@@ -54,7 +54,11 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
     textures: { type: "array", items: { $ref: "#/definitions/importedTexture" } },
     sounds: { type: "array", items: { $ref: "#/definitions/importedSound" } },
     sprites: { type: "array", items: { $ref: "#/definitions/importedSprite" } },
-    scripts: { type: "array", items: { $ref: "#/definitions/projectScript" } }
+    scripts: { type: "array", items: { $ref: "#/definitions/projectScript" } },
+    // Items an Inventory node can hold, shared project-wide (STORY.inventory.md). That ids are unique and every
+    // iconFrame is a valid frame of itemIconsSpriteId's sheet aren't expressible here; JsonSchemaProjectSnapshotValidator checks them.
+    items: { type: "array", items: { $ref: "#/definitions/inventoryItem" } },
+    itemIconsSpriteId: { type: "string", minLength: 1 }
   },
   definitions: {
     vector2: {
@@ -377,6 +381,35 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         cells: { type: "object", additionalProperties: { $ref: "#/definitions/tileMap3DCell" } }
       }
     },
+    // One project-wide item an Inventory can hold (STORY.inventory.md): iconFrame is a frame index into the
+    // project's itemIconsSpriteId sheet, absent for an item with no icon yet.
+    inventoryItem: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name", "maxStack"],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        name: { type: "string" },
+        iconFrame: { type: "integer", minimum: 0 },
+        maxStack: { type: "integer", minimum: 1, maximum: 999 }
+      }
+    },
+    // An Inventory node's own slot count and on-screen panel (STORY.inventory.md, STORY.inventory-ui-panel.md); a
+    // field absent means its own default (DEFAULT_INVENTORY_SLOTS, DEFAULT_INVENTORY_COLUMNS, ...). The panel's
+    // three images are each independent and optional -- leaving them all unset draws nothing.
+    inventoryData: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        slots: { type: "integer", minimum: 1, maximum: 64 },
+        backgroundSpriteId: { type: "string", minLength: 1 },
+        slotSpriteId: { type: "string", minLength: 1 },
+        highlightSpriteId: { type: "string", minLength: 1 },
+        columns: { type: "integer", minimum: 1, maximum: 64 },
+        slotSpacingX: { type: "integer", minimum: 0, maximum: 32 },
+        slotSpacingY: { type: "integer", minimum: 0, maximum: 32 }
+      }
+    },
     // A Sprite2D's rotation (degrees) and scale (see core's sprite-transform.ts); a missing field is its default.
     transform2D: {
       type: "object",
@@ -491,7 +524,8 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
             "TileMap3D",
             "CollisionShape3D",
             "TouchArea3D",
-            "AnimationPlayer"
+            "AnimationPlayer",
+            "Inventory"
           ]
         },
         screen: { enum: ["top", "bottom"] },
@@ -516,7 +550,8 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         instanceOf: { type: "string", minLength: 1 },
         label: { $ref: "#/definitions/labelData" },
         spriteAnimations: { $ref: "#/definitions/spriteAnimationsData" },
-        transform2D: { $ref: "#/definitions/transform2D" }
+        transform2D: { $ref: "#/definitions/transform2D" },
+        inventory: { $ref: "#/definitions/inventoryData" }
       }
     }
   }

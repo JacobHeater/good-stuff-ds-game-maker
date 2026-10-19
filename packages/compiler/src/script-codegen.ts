@@ -486,6 +486,31 @@ class ScriptWriter {
           code: `gs_tile_solid(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`,
           ty: "bool" as ScriptType
         };
+      case "inventoryCall": {
+        const inv = `gs_node_inventory(${this.nodeIndex(res.target)})`;
+        const intArg = (i: number): string => this.convert(this.expr(expr.args[i]), "int");
+        switch (res.method) {
+          case "add":
+            return { code: `gs_inventory_add(${inv}, ${res.item}, ${intArg(1)})`, ty: "int" };
+          case "remove":
+            return { code: `gs_inventory_remove(${inv}, ${res.item}, ${intArg(1)})`, ty: "int" };
+          case "count":
+            return { code: `gs_inventory_count(${inv}, ${res.item})`, ty: "int" };
+          case "slot_count":
+            return { code: `gs_inventory_slot_count(${inv}, ${intArg(0)})`, ty: "int" };
+          case "slot_item_is":
+            return { code: `gs_inventory_slot_item_is(${inv}, ${intArg(0)}, ${res.item})`, ty: "bool" as ScriptType };
+          case "slot_icon":
+            return { code: `gs_inventory_slot_icon(${inv}, ${intArg(0)})`, ty: "int" };
+          case "selected_slot":
+            return { code: `gs_inventory_selected_slot(${inv})`, ty: "int" };
+          default:
+            // select_slot: void (see checkInventoryCall) -- only ever used as a bare statement, so its own ty is never read.
+            return { code: `gs_inventory_select_slot(${inv}, ${intArg(0)})`, ty: "int" };
+        }
+      }
+      case "spriteSetFrame":
+        return { code: `gs_sprite_set_frame(${this.nodeIndex(res.target)}, ${this.convert(this.expr(expr.args[0]), "int")})`, ty: "int" };
       case "builtin":
         return this.builtin(expr, res.name);
       default:

@@ -2,6 +2,7 @@ import type { AnimationPlayerData } from "./animation";
 import type { AudioPlayerData } from "./audio-player";
 import type { CollisionShapeData } from "./collision-shape";
 import type { CollisionShape2DData } from "./collision-shape-2d";
+import type { InventoryData } from "./inventory";
 import type { LabelData } from "./label";
 import type { SpriteAnimationsData } from "./sprite-animation";
 import type { TileMapData } from "./tile-map";
@@ -27,7 +28,8 @@ export type SceneNodeKind2D =
   | "Area2D"
   | "TouchArea2D"
   | "AudioStreamPlayer"
-  | "AnimationPlayer";
+  | "AnimationPlayer"
+  | "Inventory";
 
 export type SceneNodeKind3D =
   | "Node3D"
@@ -54,7 +56,8 @@ export const SCENE_NODE_KINDS_2D: SceneNodeKind2D[] = [
   "Area2D",
   "TouchArea2D",
   "AudioStreamPlayer",
-  "AnimationPlayer"
+  "AnimationPlayer",
+  "Inventory"
 ];
 
 /** All 3D node kinds, in the order they should be offered in "Add Node" pickers. */
@@ -325,6 +328,8 @@ export interface SceneNode {
   instanceOf?: string;
   /** The animations of an AnimatedSprite2D (see `sprite-animation.ts`); only meaningful there. Absent means none. */
   spriteAnimations?: Partial<SpriteAnimationsData>;
+  /** Slot count; only meaningful on an Inventory. Absent means the defaults (see `getInventory`). Items themselves are project-wide (`ProjectSnapshot.items`), not stored here. */
+  inventory?: Partial<InventoryData>;
 }
 
 let nodeCounter = 0;

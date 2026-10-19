@@ -62,3 +62,25 @@ void gs_label_set_text(int node, const char *text) {
 	screen.text[i] = text;
 	screen.dirty = 1;
 }
+
+/*
+ * The same two things `gs_label_set_value`/the shown/hidden half of `gs_update_labels` already do for a label the
+ * hardware knows by its own node, for one with no node at all, by its own raw index into GsScreen2D.labels instead
+ * (STORY.inventory-ui-panel.md: a panel's own per-slot stack-count labels have no backing node -- gs_inventory.c's
+ * own per-frame update calls these directly by the label index GsInventory.labelStart + slot gives it). A count
+ * label's own text is fixed at compile time ("x{}"); showing or hiding it (instead of changing its text) is how
+ * "blank for 0 or 1, 'x3' style above that" is drawn.
+ */
+void gs_label_set_value_at(int index, int32_t value) {
+	if (index < 0 || index >= screen.count || screen.value[index] == value) return;
+	screen.value[index] = value;
+	screen.dirty = 1;
+}
+
+void gs_label_set_shown_at(int index, int shown) {
+	if (index < 0 || index >= screen.count) return;
+	const uint8_t s = shown ? 1 : 0;
+	if (screen.shown[index] == s) return;
+	screen.shown[index] = s;
+	screen.dirty = 1;
+}

@@ -129,3 +129,29 @@ describe("a TileMap3D's own palette keeps its models and textures, with no plain
     expect(pruned.textures).toBeUndefined();
   });
 });
+
+describe("an Inventory item's icon sheet (STORY.inventory.md) is kept alive by an item using it, with no node referencing it directly", () => {
+  const projectWithItems = (items: { id: string; name: string; iconFrame?: number; maxStack: number }[]): ProjectSnapshot => ({
+    ...createProjectSnapshot({ name: "P", mode: "3D", scene: createSceneNode({ name: "Main", kind: "Node3D" }) }),
+    items,
+    itemIconsSpriteId: "icons",
+    sprites: [{ id: "icons", name: "Icons", width: 8, height: 8, palette: "AAA=", pixels: "AA==" }]
+  });
+
+  it("keeps the icon sheet when an item uses a frame of it", () => {
+    const pruned = pruneUnusedAssets(projectWithItems([{ id: "sword", name: "Sword", iconFrame: 0, maxStack: 1 }]));
+    expect(pruned.sprites).toHaveLength(1);
+    expect(pruned.itemIconsSpriteId).toBe("icons");
+  });
+
+  it("drops the icon sheet and clears itemIconsSpriteId when no item has an icon any more", () => {
+    const pruned = pruneUnusedAssets(projectWithItems([{ id: "sword", name: "Sword", maxStack: 1 }]));
+    expect(pruned.sprites).toBeUndefined();
+    expect(pruned.itemIconsSpriteId).toBeUndefined();
+  });
+
+  it("keeps the items list itself regardless (never auto-pruned, like scripts)", () => {
+    const pruned = pruneUnusedAssets(projectWithItems([{ id: "sword", name: "Sword", maxStack: 1 }]));
+    expect(pruned.items).toEqual([{ id: "sword", name: "Sword", maxStack: 1 }]);
+  });
+});

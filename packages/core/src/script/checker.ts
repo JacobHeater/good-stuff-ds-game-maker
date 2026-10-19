@@ -33,7 +33,8 @@ const PENDING_GLOBAL_NODE_ID_PREFIX = "\u0000pending-global:";
 /** Names that mean something built in, so a script's own variables and functions can't use them. */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set([
   "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "randi", "randf", "atan2", "bool", "void",
-  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "tile_solid", "delta"
+  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "tile_solid", "delta",
+  "add", "remove", "count", "slot_count", "slot_item_is", "slot_icon", "set_frame", "selected_slot", "select_slot"
 ]);
 
 /** What the checker needs to know about the project the script lives in. */
@@ -50,6 +51,8 @@ export interface ScriptSceneContext {
   sceneNames?: readonly string[];
   /** The project's global variables (see `collectProjectGlobals`): every script can use them by name. Left out when not known; the script's own `global var`s are used then. */
   globals?: ReadonlyArray<{ name: string; type: ScriptType }>;
+  /** The project's shared item list (`ProjectSnapshot.items`, STORY.inventory.md), by name (the same "match by name, not by id" split a named audio clip already has), in compile order: what an Inventory call's own item name (e.g. `add("Sword", 1)`) resolves against. Left out when not known, in which case any item name is accepted (not yet resolvable to a real index). */
+  items?: readonly string[];
   /**
    * Whether a `global $Name` that isn't found in `root` is left unresolved instead of reported as an error (its member accesses are all allowed too, since its
    * real kind isn't known here). For editing a scene in isolation before it's placed somewhere else (an instance) that actually has the node; a real compile of
@@ -70,7 +73,7 @@ export interface ScriptSceneContext {
 }
 
 /** What a node has to be to use a member: a 3D transform, a sound player, a collision shape, an animation player or a touch area. */
-type NodeCapability = "transform" | "audio" | "collision" | "animation" | "speed" | "touch" | "label";
+type NodeCapability = "transform" | "audio" | "collision" | "animation" | "speed" | "touch" | "label" | "inventory";
 
 /** The nodes that play named animations: an AnimationPlayer (properties of other nodes over time) and an AnimatedSprite2D (frames of its sprite sheet). */
 const ANIMATED_KINDS: readonly SceneNodeKind[] = ["AnimationPlayer", "AnimatedSprite2D"];
@@ -710,7 +713,7 @@ class Checker {
       expr.res = { kind: "nodeVector", target: { kind: "self" }, prop: expr.name };
       return "vec3";
     }
-    if (expr.name === "visible" && this.isLabelTarget({ kind: "self" })) {
+    if (expr.name === "visible" && (this.isLabelTarget({ kind: "self" }) || this.isInventoryTarget({ kind: "self" }))) {
       expr.res = { kind: "nodeProp", target: { kind: "self" }, prop: "visible" };
       return "bool";
     }
@@ -800,6 +803,14 @@ class Checker {
     return kinds.length > 0 && kinds.every((kind) => kind === "Label");
   }
 
+  /** Whether `target` is an Inventory (for `self`: every node the script is attached to is one): only its `visible` is
+      scriptable, to hide or show its own on-screen panel (STORY.inventory-ui-panel.md) -- not position, rotation or
+      scale, which the panel's own v1 never reads live (it stays at its node's own starting position). */
+  private isInventoryTarget(target: NodeTarget): boolean {
+    const kinds = this.targetKinds(target);
+    return kinds.length > 0 && kinds.every((kind) => kind === "Inventory");
+  }
+
   /** Whether `target` is a Sprite2D, AnimatedSprite2D or CollisionShape2D (for `self`: every node the script is attached to is one):
       its position, rotation and scale are 2D, the same slots and member shape a sprite's already are. */
   private isSpriteTarget(target: NodeTarget): boolean {
@@ -839,6 +850,7 @@ class Checker {
     if (capability === "speed") return kind === "AnimationPlayer";
     if (capability === "touch") return kind === "TouchArea2D" || kind === "TouchArea3D";
     if (capability === "label") return kind === "Label";
+    if (capability === "inventory") return kind === "Inventory";
     return capability === "transform" ? is3DNodeKind(kind) : kind === "AudioStreamPlayer";
   }
 
@@ -888,7 +900,7 @@ class Checker {
           expr.res = { kind: "nodeVector", target, prop: expr.name };
           return "vec3";
         case "visible":
-          if (!this.isLabelTarget(target) && !this.nodeSupports(target, "transform", expr.name, expr.nameSpan)) return "unknown";
+          if (!this.isLabelTarget(target) && !this.isInventoryTarget(target) && !this.nodeSupports(target, "transform", expr.name, expr.nameSpan)) return "unknown";
           expr.res = { kind: "nodeProp", target, prop: "visible" };
           return "bool";
         case "value":
@@ -934,8 +946,31 @@ class Checker {
         case "tile_solid":
           this.error(expr.nameSpan, "tile_solid must be called: tile_solid(x, y).");
           return "unknown";
+        case "add":
+        case "remove":
+          this.error(expr.nameSpan, `${expr.name} must be called: ${expr.name}(item, count).`);
+          return "unknown";
+        case "count":
+          this.error(expr.nameSpan, "count must be called: count(item).");
+          return "unknown";
+        case "slot_count":
+        case "slot_icon":
+          this.error(expr.nameSpan, `${expr.name} must be called: ${expr.name}(slot).`);
+          return "unknown";
+        case "slot_item_is":
+          this.error(expr.nameSpan, "slot_item_is must be called: slot_item_is(slot, item).");
+          return "unknown";
+        case "selected_slot":
+          this.error(expr.nameSpan, "selected_slot must be called: selected_slot().");
+          return "unknown";
+        case "select_slot":
+          this.error(expr.nameSpan, "select_slot must be called: select_slot(slot).");
+          return "unknown";
+        case "set_frame":
+          this.error(expr.nameSpan, "set_frame must be called: set_frame(frame).");
+          return "unknown";
         default:
-          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text, and (tile maps) tile_solid(x, y).`);
+          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text, and (tile maps) tile_solid(x, y), and (inventories) add(item, count), remove(item, count), count(item), slot_count(slot), slot_item_is(slot, item), slot_icon(slot), selected_slot() and select_slot(slot), and (sprites) set_frame(frame).`);
           return "unknown";
       }
     }
@@ -968,7 +1003,20 @@ class Checker {
           return this.checkBodyCall(expr, callee.name, object.res.target, callee.nameSpan);
         }
         if (callee.name === "tile_solid") return this.checkTileSolid(expr, object.res.target, callee.nameSpan);
-        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), touch areas have is_touched(), is_touch_pressed() and is_touch_released(), and tile maps have tile_solid(x, y).`);
+        if (
+          callee.name === "add" ||
+          callee.name === "remove" ||
+          callee.name === "count" ||
+          callee.name === "slot_count" ||
+          callee.name === "slot_item_is" ||
+          callee.name === "slot_icon" ||
+          callee.name === "selected_slot" ||
+          callee.name === "select_slot"
+        ) {
+          return this.checkInventoryCall(expr, callee.name, object.res.target, callee.nameSpan);
+        }
+        if (callee.name === "set_frame") return this.checkSpriteSetFrame(expr, object.res.target, callee.nameSpan);
+        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), touch areas have is_touched(), is_touch_pressed() and is_touch_released(), tile maps have tile_solid(x, y), inventories have add(item, count), remove(item, count), count(item), slot_count(slot), slot_item_is(slot, item), slot_icon(slot), selected_slot() and select_slot(slot), and sprites have set_frame(frame).`);
         return "unknown";
       }
       this.error(callee, "This can't be called.");
@@ -1141,6 +1189,108 @@ class Checker {
     const kind = this.kindOf(target);
     if (kind === null || kind === "TileMap") return true;
     this.error(at, `tile_solid() works on a TileMap node, but $${target.name} is a ${kind}. Name a TileMap instead.`);
+    return false;
+  }
+
+  /**
+   * A call on an Inventory node (STORY.inventory.md): `add`/`remove` (item, count), `count` (item), `slot_count`/
+   * `slot_icon` (slot), `slot_item_is` (slot, item). An `item` argument must be a string literal, resolved here
+   * against the project's own item list (`this.context.items`, absent only when checking a script in isolation,
+   * in which case any name is accepted); `slot`/`count` stay ordinary int expressions, left for the code generator
+   * to read directly from the call's own `args` (they can be a variable, not just a literal).
+   *
+   * `selected_slot()`/`select_slot(slot)` (STORY.inventory-ui-panel.md) are about this Inventory's own on-screen
+   * panel, not its items, but go through the exact same dispatch and `item`-resolving machinery as the rest --
+   * neither one ever has an `item` argument, so that part of this function is simply never exercised for them.
+   */
+  private checkInventoryCall(
+    expr: Extract<Expr, { kind: "call" }>,
+    name: "add" | "remove" | "count" | "slot_count" | "slot_item_is" | "slot_icon" | "selected_slot" | "select_slot",
+    target: NodeTarget,
+    nameSpan: SourceSpan
+  ): ExprType {
+    const resultType: ExprType = name === "slot_item_is" ? "bool" : name === "select_slot" ? "void" : "int";
+    const argNames: readonly ("item" | "slot" | "count")[] =
+      name === "add" || name === "remove"
+        ? ["item", "count"]
+        : name === "count"
+          ? ["item"]
+          : name === "slot_item_is"
+            ? ["slot", "item"]
+            : name === "selected_slot"
+              ? []
+              : ["slot"];
+    if (!this.checkArgCount(expr, argNames.length, `${name}(${argNames.join(", ")})`)) {
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return resultType;
+    }
+    if (!this.nodeSupports(target, "inventory", name, nameSpan)) {
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return resultType;
+    }
+    let item: number | undefined;
+    let ok = true;
+    for (let i = 0; i < argNames.length; i++) {
+      const arg = expr.args[i];
+      if (argNames[i] !== "item") {
+        arg.ty = "int";
+        const value = this.asValue(this.typeOfExpr(arg), arg);
+        if (value !== null) this.requireAssignable(value, "int", arg);
+        if (value === null || value === "bool" || value === "string" || value === "float") ok = false;
+        continue;
+      }
+      if (arg.kind !== "string") {
+        this.typeOfExpr(arg);
+        this.error(arg, `${name}() needs the item's name in quotes, like ${name}(${argNames.map((a) => (a === "item" ? '"sword"' : a === "count" ? "1" : "0")).join(", ")}).`);
+        ok = false;
+        continue;
+      }
+      arg.ty = "string";
+      if (this.context.items) {
+        const at = this.context.items.indexOf(arg.value);
+        if (at < 0) {
+          this.error(arg, this.context.items.length === 0 ? `There are no items yet. Add one in the Inspector.` : `There is no item "${arg.value}". Its items are: ${this.context.items.map((id) => `"${id}"`).join(", ")}.`);
+          ok = false;
+          continue;
+        }
+        item = at;
+      } else {
+        item = 0;
+      }
+    }
+    if (ok) expr.res = { kind: "inventoryCall", target, method: name, item };
+    return resultType;
+  }
+
+  /** `sprite.set_frame(frame)` (or `set_frame(frame)` for `self`): directly shows a frame of a Sprite2D/AnimatedSprite2D's own sheet,
+   * bypassing any named animation (STORY.inventory.md's own use: showing slot_icon()'s own result). `frame` stays an ordinary int
+   * expression, read directly from the call's own `args` at code generation. */
+  private checkSpriteSetFrame(expr: Extract<Expr, { kind: "call" }>, target: NodeTarget, nameSpan: SourceSpan): ExprType {
+    if (!this.checkArgCount(expr, 1, "set_frame(frame)")) {
+      for (const arg of expr.args) this.typeOfExpr(arg);
+      return "void";
+    }
+    const arg = expr.args[0];
+    arg.ty = "int";
+    const value = this.asValue(this.typeOfExpr(arg), arg);
+    if (value !== null) this.requireAssignable(value, "int", arg);
+    if (this.requireSpriteFrameTarget(target, nameSpan)) expr.res = { kind: "spriteSetFrame", target };
+    return "void";
+  }
+
+  /** Whether `target` is a Sprite2D or AnimatedSprite2D (what `set_frame()` works on, STORY.inventory.md); reports what to do when it isn't. */
+  private requireSpriteFrameTarget(target: NodeTarget, at: SourceSpan): boolean {
+    if (target.kind === "self") {
+      for (const attached of this.context.attached) {
+        if (attached.kind === "Sprite2D" || attached.kind === "AnimatedSprite2D") continue;
+        this.error(at, `set_frame() works on a Sprite2D or AnimatedSprite2D, and this script is attached to ${attached.name} (a ${attached.kind}).`);
+        return false;
+      }
+      return true;
+    }
+    const kind = this.kindOf(target);
+    if (kind === null || kind === "Sprite2D" || kind === "AnimatedSprite2D") return true;
+    this.error(at, `set_frame() works on a Sprite2D or AnimatedSprite2D, but $${target.name} is a ${kind}.`);
     return false;
   }
 
@@ -1476,6 +1626,17 @@ class Checker {
         return this.checkAnimationCall(expr, "is_playing", { kind: "self" }, expr.callee);
       case "tile_solid":
         return this.checkTileSolid(expr, { kind: "self" }, expr.callee);
+      case "add":
+      case "remove":
+      case "count":
+      case "slot_count":
+      case "slot_item_is":
+      case "slot_icon":
+      case "selected_slot":
+      case "select_slot":
+        return this.checkInventoryCall(expr, name, { kind: "self" }, expr.callee);
+      case "set_frame":
+        return this.checkSpriteSetFrame(expr, { kind: "self" }, expr.callee);
     }
     for (const arg of expr.args) this.typeOfExpr(arg);
     this.error(expr.callee, `Unknown function "${name}".`);

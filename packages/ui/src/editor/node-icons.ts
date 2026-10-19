@@ -27,6 +27,7 @@ export const NODE_KIND_ICON: Record<SceneNodeKind, string> = {
   TouchArea2D: "👆",
   AudioStreamPlayer: "🔊",
   AnimationPlayer: "▶",
+  Inventory: "🎒",
   Node3D: "◈",
   MeshInstance3D: "🧊",
   Camera3D: "🎥",

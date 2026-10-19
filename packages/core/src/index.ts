@@ -20,6 +20,7 @@ export * from "./convex-hull";
 export * from "./touch-area";
 export * from "./tile-map";
 export * from "./tile-map-3d";
+export * from "./inventory";
 export * from "./sprite-animation";
 export * from "./sprite-transform";
 export * from "./project-script";

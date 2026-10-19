@@ -177,7 +177,7 @@ describe("scripts and sound", () => {
 
 describe("the generated C", () => {
   const SOURCE = `var speed = 2.5
-var count: int = 3
+var total: int = 3
 var alive = true
 
 func helper(a: int, b: float) -> float:
@@ -189,13 +189,13 @@ func _ready():
 func _process(delta):
     var i = 7 / 2
     var f = 7 / 2.0
-    count += 1
+    total += 1
     speed *= 2
     if Input.is_button_down("left") and not alive:
         position.x -= speed * delta
     elif Input.is_button_pressed("a"):
         visible = false
-    for k in range(count):
+    for k in range(total):
         rotation.y += clamp(f, 0, 90) + sin(45) + float(abs(-k))
     while i > 0:
         i -= 1
@@ -207,7 +207,7 @@ func _process(delta):
   const code = scene(scriptedProject([{ name: "Probe", source: SOURCE }])).scriptCode;
 
   it("keeps each variable per node, with its initial value in the DS's format", () => {
-    expect(code).toContain("\tint32_t m_speed; /* float */\n\tint32_t m_count; /* int */\n\tint32_t m_alive; /* bool */");
+    expect(code).toContain("\tint32_t m_speed; /* float */\n\tint32_t m_total; /* int */\n\tint32_t m_alive; /* bool */");
     expect(code).toContain("static gss0_State gss0_state[1] = {\n\t{ 10240, 3, 1 }\n};"); // 2.5 is 10240 in 20.12
     expect(code).toContain("static const uint16_t gss0_self[1] = { 1 };");
   });
@@ -216,7 +216,7 @@ func _process(delta):
     expect(code).toContain("return (gs_mulf(gs_i2f(p_a), p_b) + gs_divi(gss0_state[inst].m_speed, 2));");
     expect(code).toContain("int32_t v_i = gs_divi(7, 2);");
     expect(code).toContain("int32_t v_f = gs_divf(28672, 8192);"); // 7 and 2.0 already in 20.12
-    expect(code).toContain("gss0_state[inst].m_count = (gss0_state[inst].m_count + 1);");
+    expect(code).toContain("gss0_state[inst].m_total = (gss0_state[inst].m_total + 1);");
     expect(code).toContain("gss0_state[inst].m_speed = (gss0_state[inst].m_speed * 2);"); // a float times an int needs no shift
     expect(code).toContain("gs_node_state[gss0_self[inst]].position[0] = (-6144);");
   });
@@ -232,7 +232,7 @@ func _process(delta):
   });
 
   it("evaluates a for loop's limit once, and maps lines back to the script", () => {
-    expect(code).toMatch(/for \(int32_t v_k = 0, gs_end_\d+_\d+ = gss0_state\[inst\]\.m_count; v_k < gs_end_\d+_\d+; v_k\+\+\) \{/);
+    expect(code).toMatch(/for \(int32_t v_k = 0, gs_end_\d+_\d+ = gss0_state\[inst\]\.m_total; v_k < gs_end_\d+_\d+; v_k\+\+\) \{/);
     expect(code).toContain('#line 11 "Probe"\nstatic void gss0__process(int inst, int32_t p_delta) {');
     expect(code).toContain('#line 21 "Probe"');
   });

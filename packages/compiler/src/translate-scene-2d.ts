@@ -7,6 +7,8 @@ import {
   expandSceneInstances,
   getAudioPlayer,
   getCollisionShape2D,
+  getInventory,
+  inventorySlotSize,
   getSpriteAnimations,
   getSpriteFramePixels,
   getSpriteFrames,
@@ -38,9 +40,9 @@ import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
 import { toF32 } from "./fixed-point";
 import { fontSafeText } from "./label-text";
-import type { DsAudioClip, DsAudioPlayer, DsCollider2D, DsLabel, DsNode2D, DsScene2D, DsScreen2D, DsSound, DsSprite, DsSpriteAnimation, DsSpriteImage, DsTileMap } from "./ds-scene";
+import type { DsAudioClip, DsAudioPlayer, DsCollider2D, DsInventory, DsLabel, DsNode2D, DsScene2D, DsScreen2D, DsSound, DsSprite, DsSpriteAnimation, DsSpriteImage, DsTileMap } from "./ds-scene";
 import { generateScriptCode, type CompiledScript } from "./script-codegen";
-import { checkProjectScripts, orderGlobalsForRuntime, type TranslateOptions } from "./translate-scene-3d";
+import { checkProjectScripts, compileInventoryItems, orderGlobalsForRuntime, type TranslateOptions } from "./translate-scene-3d";
 
 export interface TranslateResult2D {
   /** Null exactly when `diagnostics` contains an error. */
@@ -87,6 +89,26 @@ function toImage(sprite: ImportedSprite): DsSpriteImage {
   };
 }
 
+/** One screen's own sprite data, still being built up (`collectSprites`'s own local accumulator, shared with `collectInventoryPanel` so a panel's sprites land in the exact same arrays an ordinary Sprite2D/AnimatedSprite2D already does -- OAM ids and palette slots are allocated purely by array position at runtime, so there is only ever one real table to share, never a separate one). */
+interface ScreenBuild {
+  images: DsSpriteImage[];
+  imageIndex: Map<string, number>;
+  sprites: DsSprite[];
+  animations: DsSpriteAnimation[];
+  rotating: number;
+}
+
+/** `image`'s own place in `screen.images` (its sheet already there, or freshly added and deduped by id, the same as any other screen sprite's own image). */
+function indexOfImage(screen: ScreenBuild, image: ImportedSprite): number {
+  let index = screen.imageIndex.get(image.id);
+  if (index === undefined) {
+    index = screen.images.length;
+    screen.images.push(toImage(image));
+    screen.imageIndex.set(image.id, index);
+  }
+  return index;
+}
+
 /**
  * What a 3D project's scripts can do to sprites (a 2D project's ROM runs no scripts). `nodeIndexOf` is a sprite's place in the node table (undefined when it isn't in it),
  * `reachedByScript` says a script is attached to it or names it (the runtime then follows its node every frame, and a hidden one is kept so a script can show it), and
@@ -98,6 +120,9 @@ export interface SpriteLiveness {
   rotatable: (node: SceneNode) => boolean;
 }
 
+/** What `collectSprites` found for one Inventory node's own on-screen panel (STORY.inventory-ui-panel.md): everything `DsInventory` needs except `node`/`slots`, added once the node's own place in the node table is known. */
+export type InventoryPanelFields = Omit<DsInventory, "node" | "slots">;
+
 /**
  * The sprites of a project on each screen, ready for the runtime: the distinct images (once per screen, tile-ordered) and the sprites in hardware order. A `Sprite2D` is
  * drawn centered on its `position` at absolute screen pixels (the 2D viewport places every node at its own position without adding its parents'), and a node is drawn
@@ -106,7 +131,9 @@ export interface SpriteLiveness {
  * image, too many sprites, palettes or bytes on a screen) and warnings (no image, off the screen) go to `diagnostics`.
  * An `AnimatedSprite2D` is drawn the same way from a sprite sheet (its frames all go into sprite memory, sharing the sheet's palette) and comes with its animations:
  * `fps` is the game's frame rate, which turns an animation's frames a second into how far it goes each game frame.
- * Shared by 2D projects (both screens) and 3D projects (their 2D screen).
+ * Shared by 2D projects (both screens) and 3D projects (their 2D screen) -- as is `inventoryPanels` (STORY.inventory-ui-panel.md): an Inventory node with at least one of
+ * its own panel images set gets its background/slot-frame/highlight/item-icon sprites (drawn in that order, so the highlight never hides an item's own icon) folded into these same per-screen arrays (not a table of their own -- see
+ * `InventoryPanelFields`'s own comment for why), and its stack-count labels folded into this same call's own `labels`.
  */
 export function collectSprites(
   project: ProjectSnapshot,
@@ -115,18 +142,30 @@ export function collectSprites(
   diagnostics: Diagnostic[],
   fps: number,
   live?: SpriteLiveness
-): Record<ScreenId, DsScreen2D> {
+): { screens: Record<ScreenId, DsScreen2D>; inventoryPanels: Map<string, InventoryPanelFields> } {
   const { width: screenWidth, height: screenHeight } = DS_HARDWARE_PROFILE.screens;
   const images = new Map<string, ImportedSprite>((project.sprites ?? []).map((sprite) => [sprite.id, sprite]));
 
-  const screens: Record<ScreenId, { images: DsSpriteImage[]; imageIndex: Map<string, number>; sprites: DsSprite[]; animations: DsSpriteAnimation[]; rotating: number }> = {
+  const screens: Record<ScreenId, ScreenBuild> = {
     top: { images: [], imageIndex: new Map(), sprites: [], animations: [], rotating: 0 },
     bottom: { images: [], imageIndex: new Map(), sprites: [], animations: [], rotating: 0 }
   };
-  const labels = collectLabels(project, screenOf, used, diagnostics, live);
+  const labels = collectLabels(project, screenOf, diagnostics, live);
+  // Raw (pre-reversal) sprite indices, by node id and screen; the real indices aren't known until every node's own
+  // sprites are pushed and the whole-screen reversal below has happened (see the remap just before `finish`).
+  const rawPanels: Array<{ id: string; screen: ScreenId; fields: InventoryPanelFields }> = [];
 
   const ordered = flattenSceneTreeInOrder(project.scene);
   for (const node of ordered) {
+    if (node.kind === "Inventory") {
+      // The exact same gate collectInventory2D itself uses ("nothing reaches it, nothing is built" -- an Inventory
+      // no script ever names or attaches to can never add/remove/query anything, panel or not), so a panel's own
+      // sprites/labels are never compiled with no DsInventory entry left to reference them.
+      if (!live || live.nodeIndexOf(node) === undefined) continue;
+      const panel = collectInventoryPanel(node, project, images, screens[screenOf(node)], labels[screenOf(node)], screenOf(node), diagnostics);
+      if (panel) rawPanels.push({ id: node.id, screen: screenOf(node), fields: panel });
+      continue;
+    }
     if (node.kind !== "Sprite2D" && node.kind !== "AnimatedSprite2D") continue;
     // A hidden sprite is left out, unless a script can show it (then it starts hidden and the runtime shows it).
     if (!node.visible && !live?.reachedByScript(node)) continue;
@@ -207,12 +246,7 @@ export function collectSprites(
       animationStart = start < 0 ? -1 : animationFirst + start;
     }
     const animationFields = { animation: animationStart, animationFirst, animationCount: animated ? animated.animations.length : 0 };
-    let index = screen.imageIndex.get(image.id);
-    if (index === undefined) {
-      index = screen.images.length;
-      screen.images.push(toImage(image));
-      screen.imageIndex.set(image.id, index);
-    }
+    const index = indexOfImage(screen, image);
     if (live) {
       const dynamic = live.reachedByScript(node);
       const transform = getSpriteTransform(node);
@@ -266,25 +300,136 @@ export function collectSprites(
         message: `The sprite images on the ${id} screen need ${bytes / 1024} KB of sprite memory, but the DS has ${limits.spriteMemoryBytesPerScreen / 1024} KB for each screen.`
       });
     }
+    // Checked here, not inside collectLabels, now that an Inventory panel's own stack-count labels (above) have had
+    // their chance to add to the same screen's own count.
+    if (labels[id].length > MAX_LABELS_PER_SCREEN) {
+      diagnostics.push({
+        severity: "error",
+        code: "too-many-labels",
+        message: `The ${id} screen has ${labels[id].length} labels, but a screen can hold ${MAX_LABELS_PER_SCREEN}.`
+      });
+    }
   }
 
+  // Tree order is drawing order (later = on top), and the hardware draws the lowest-numbered sprite on top, so the
+  // whole screen's own sprites are listed the other way round from how they were collected -- which is also why a
+  // panel's own raw (collection-order) sprite indices, recorded above, aren't the real ones until this has happened:
+  // an index `i` into the pre-reversal array ends up at `sprites.length - 1 - i` once it has. A panel's own `*Start`
+  // fields always point at slot 0 specifically (not the lowest slot number), so finding slot `n`'s own sprite from
+  // one is `*Start - n`, not `+ n` -- the same reversal that moves a single sprite's index also reverses the order
+  // of every run pushed together, the same direction as everything else.
+  const remapIndex = (id: ScreenId, raw: number): number => (raw === -1 ? -1 : screens[id].sprites.length - 1 - raw);
+  const inventoryPanels = new Map<string, InventoryPanelFields>(
+    rawPanels.map(({ id, screen, fields }) => [
+      id,
+      {
+        ...fields,
+        backgroundSprite: remapIndex(screen, fields.backgroundSprite),
+        slotSpriteStart: remapIndex(screen, fields.slotSpriteStart),
+        iconSpriteStart: remapIndex(screen, fields.iconSpriteStart),
+        highlightSprite: remapIndex(screen, fields.highlightSprite)
+      }
+    ])
+  );
 
-  // Tree order is drawing order (later = on top), and the hardware draws the lowest-numbered sprite on top, so list them the other way round.
   const finish = (id: ScreenId): DsScreen2D => ({ images: screens[id].images, animations: screens[id].animations, sprites: [...screens[id].sprites].reverse(), labels: labels[id] });
-  return { top: finish("top"), bottom: finish("bottom") };
+  return { screens: { top: finish("top"), bottom: finish("bottom") }, inventoryPanels };
+}
+
+/**
+ * One Inventory node's own on-screen panel (STORY.inventory-ui-panel.md), if it has one configured -- at least one
+ * of its own background/slot/highlight images is set (undefined otherwise: nothing drawn, the same as a Sprite2D
+ * with no image chosen). The panel's background is one static sprite at this node's own position; the slot frames
+ * (if a slot image is set), the highlight (if set, repositioned by the runtime to whichever slot was last
+ * touched) and the item icons (if the project has an icon sheet) are pushed in that order -- background, slot
+ * frames, highlight, icons -- not background/slot/icon/highlight: a sprite pushed later ends up drawn on top
+ * (`collectSprites`'s own reversal), and an item's own icon has to stay visible on a selected, filled slot, not
+ * be hidden underneath the highlight. Every sprite here is pushed into `screen` directly -- the exact same
+ * per-screen table an ordinary Sprite2D/AnimatedSprite2D already shares (see `collectSprites`'s own comment on
+ * why this can't be a table of its own) -- and every stack-count label into `labels`, the same way. The indices
+ * this returns are raw (collection order); `collectSprites` remaps them once the whole screen's own sprites are
+ * known and reversed.
+ */
+function collectInventoryPanel(
+  node: SceneNode,
+  project: ProjectSnapshot,
+  images: ReadonlyMap<string, ImportedSprite>,
+  screen: ScreenBuild,
+  labels: DsLabel[],
+  screenId: ScreenId,
+  diagnostics: Diagnostic[]
+): InventoryPanelFields | undefined {
+  const data = getInventory(node);
+  if (data.backgroundSpriteId === undefined && data.slotSpriteId === undefined && data.highlightSpriteId === undefined) return undefined;
+
+  const resolve = (spriteId: string | undefined, what: string): ImportedSprite | undefined => {
+    if (spriteId === undefined) return undefined;
+    const image = images.get(spriteId);
+    if (!image) {
+      diagnostics.push({ severity: "error", code: "missing-sprite", nodeName: node.name, message: `This Inventory's own ${what} image uses "${spriteId}", which isn't in the project.` });
+    }
+    return image;
+  };
+  const background = resolve(data.backgroundSpriteId, "background");
+  const slotImage = resolve(data.slotSpriteId, "slot");
+  const highlight = resolve(data.highlightSpriteId, "highlight");
+  // Never reported as an error here: a project-wide field validated once already (JsonSchemaProjectSnapshotValidator), and this engine's own established
+  // permissive handling for it (compileInventoryItems never resolves it either) -- a dangling or absent icon sheet just means no icons are drawn.
+  const iconSheet = project.itemIconsSpriteId === undefined ? undefined : images.get(project.itemIconsSpriteId);
+
+  const { slots, columns, slotSpacingX: spacingX, slotSpacingY: spacingY } = data;
+  const { width: slotWidth, height: slotHeight } = inventorySlotSize(slotImage, iconSheet);
+  const panelX = Math.round(node.position.x);
+  const panelY = Math.round(node.position.y);
+  const cellX = (slot: number): number => panelX + (slot % columns) * (slotWidth + spacingX);
+  const cellY = (slot: number): number => panelY + Math.floor(slot / columns) * (slotHeight + spacingY);
+  const blank = { animation: -1, animationFirst: 0, animationCount: 0 };
+
+  const backgroundSprite = background ? screen.sprites.push({ name: `${node.name} background`, image: indexOfImage(screen, background), x: panelX, y: panelY, ...blank }) - 1 : -1;
+
+  let slotSpriteStart = -1;
+  if (slotImage) {
+    slotSpriteStart = screen.sprites.length;
+    for (let slot = 0; slot < slots; slot++) {
+      screen.sprites.push({ name: `${node.name} slot ${slot}`, image: indexOfImage(screen, slotImage), x: cellX(slot), y: cellY(slot), ...blank });
+    }
+  }
+
+  // The highlight is pushed before the icons, not after: a sprite pushed later ends up drawn on top (same rule as
+  // everywhere else -- see collectSprites's own comment on the reversal), and an icon has to stay visible on a
+  // selected, filled slot, not be covered by the highlight underneath it. (Drawn in between the slot frame and the
+  // icon, so an empty selected slot still shows the highlight clearly, over the frame.)
+  const highlightSprite = highlight ? screen.sprites.push({ name: `${node.name} highlight`, image: indexOfImage(screen, highlight), x: cellX(0), y: cellY(0), ...blank }) - 1 : -1;
+
+  // Item icons and the stack-count labels are the panel's actual content, so they're part of it whenever a panel exists at
+  // all (one of the three images above is set) -- not gated on their own image/project field separately existing.
+  let iconSpriteStart = -1;
+  if (iconSheet) {
+    iconSpriteStart = screen.sprites.length;
+    for (let slot = 0; slot < slots; slot++) {
+      screen.sprites.push({ name: `${node.name} icon ${slot}`, image: indexOfImage(screen, iconSheet), x: cellX(slot), y: cellY(slot), ...blank });
+    }
+  }
+
+  // One label per slot, positioned at its own slot's top-left corner (rounded to the nearest 8-pixel text cell, the
+  // same rounding labelCell uses), text fixed at compile time ("x{}", the value filling in the count) -- hidden to
+  // start (every slot is empty), since the runtime toggles whether it shows at all once a frame from its slot's
+  // own live count (STORY.inventory-ui-panel.md: hidden for 0 or 1, "x3" style shown above that), the same
+  // shown/dirty mechanism an ordinary Label's own visibility already uses, not a change of text.
+  const labelStart = labels.length;
+  for (let slot = 0; slot < slots; slot++) {
+    labels.push({ name: `${node.name} count ${slot}`, column: Math.round(cellX(slot) / 8), row: Math.round(cellY(slot) / 8), color: 7, text: "x{}", visible: false });
+  }
+
+  return { panelX, panelY, columns, slotWidth, slotHeight, spacingX, spacingY, backgroundSprite, slotSpriteStart, iconSpriteStart, highlightSprite, labelStart, screen: screenId };
 }
 
 /**
  * The `Label` nodes on each screen (requirements/scene-designer/STORY.labels-and-text.md): where the first character goes on the 8 x 8 grid, its color and its text. A hidden label is left out
- * unless a script can show it; one whose first cell is off the screen is left out (with a warning) unless a script can reach it; a screen holds only so many.
+ * unless a script can show it; one whose first cell is off the screen is left out (with a warning) unless a script can reach it. The budget (`MAX_LABELS_PER_SCREEN`) is checked by the caller
+ * (`collectSprites`), not here, since an Inventory panel's own stack-count labels (STORY.inventory-ui-panel.md) are appended into this same result afterward and need to count toward it too.
  */
-function collectLabels(
-  project: ProjectSnapshot,
-  screenOf: (node: SceneNode) => ScreenId,
-  used: readonly ScreenId[],
-  diagnostics: Diagnostic[],
-  live?: SpriteLiveness
-): Record<ScreenId, DsLabel[]> {
+function collectLabels(project: ProjectSnapshot, screenOf: (node: SceneNode) => ScreenId, diagnostics: Diagnostic[], live?: SpriteLiveness): Record<ScreenId, DsLabel[]> {
   const result: Record<ScreenId, DsLabel[]> = { top: [], bottom: [] };
   for (const node of flattenSceneTreeInOrder(project.scene)) {
     if (node.kind !== "Label") continue;
@@ -309,15 +454,6 @@ function collectLabels(
       text: fontSafeText(data.text),
       ...(live ? { node: live.nodeIndexOf(node) ?? -1, visible: node.visible } : {})
     });
-  }
-  for (const id of used) {
-    if (result[id].length > MAX_LABELS_PER_SCREEN) {
-      diagnostics.push({
-        severity: "error",
-        code: "too-many-labels",
-        message: `The ${id} screen has ${result[id].length} labels, but a screen can hold ${MAX_LABELS_PER_SCREEN}.`
-      });
-    }
   }
   return result;
 }
@@ -395,12 +531,12 @@ export function translateScene2D(original: ProjectSnapshot, options: TranslateOp
   const nodeIndexOf = new Map(nodeTable.map((node, index) => [node.id, index]));
 
   for (const node of flattenSceneTreeInOrder(project.scene)) {
-    if (node.kind !== "Sprite2D" && node.kind !== "AnimatedSprite2D" && node.kind !== "AudioStreamPlayer" && node.kind !== "CollisionShape2D" && node.kind !== "Camera2D" && node.kind !== "TileMap") {
+    if (node.kind !== "Sprite2D" && node.kind !== "AnimatedSprite2D" && node.kind !== "AudioStreamPlayer" && node.kind !== "CollisionShape2D" && node.kind !== "Camera2D" && node.kind !== "TileMap" && node.kind !== "Inventory") {
       warnUnbuilt(node, diagnostics);
     }
   }
   const fps = options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget;
-  const screens = collectSprites(project, (node) => node.screen, ["top", "bottom"], diagnostics, fps, {
+  const { screens, inventoryPanels } = collectSprites(project, (node) => node.screen, ["top", "bottom"], diagnostics, fps, {
     nodeIndexOf: (node) => nodeIndexOf.get(node.id),
     reachedByScript: reached,
     // Rotation and scale need a rotation matrix: a sprite that starts turned or scaled, or one whose transform a script writes.
@@ -409,6 +545,7 @@ export function translateScene2D(original: ProjectSnapshot, options: TranslateOp
   const audio = collectAudio(project, diagnostics, scripts.playedIds, nodeIndexOf);
   const colliders = collectCollision2D(project, diagnostics, scripts.overlapIds, nodeIndexOf);
   const tileMaps = collectTileMaps(project, diagnostics, nodeIndexOf);
+  const inventories = collectInventory2D(project, nodeIndexOf, inventoryPanels);
 
   if (hasErrors(diagnostics)) return { scene: null, diagnostics };
 
@@ -448,6 +585,8 @@ export function translateScene2D(original: ProjectSnapshot, options: TranslateOp
       audioClips: audio.audioClips,
       colliders,
       tileMaps,
+      items: compileInventoryItems(project),
+      inventories,
       topCamera: cameraByScreen.has("top") ? (nodeIndexOf.get(cameraByScreen.get("top")!.id) ?? -1) : -1,
       bottomCamera: cameraByScreen.has("bottom") ? (nodeIndexOf.get(cameraByScreen.get("bottom")!.id) ?? -1) : -1
     },
@@ -490,6 +629,42 @@ function collectCollision2D(
     });
   }
   return colliders;
+}
+
+/** A `DsInventory`'s own panel fields when a node has no panel configured (STORY.inventory-ui-panel.md): every index -1, every size/spacing 0. Shared by both translators (translateScene3D's own 2D screen included). */
+export const NO_INVENTORY_PANEL: InventoryPanelFields = {
+  panelX: 0,
+  panelY: 0,
+  columns: 0,
+  slotWidth: 0,
+  slotHeight: 0,
+  spacingX: 0,
+  spacingY: 0,
+  backgroundSprite: -1,
+  slotSpriteStart: -1,
+  iconSpriteStart: -1,
+  highlightSprite: -1,
+  labelStart: -1,
+  screen: "top"
+};
+
+/**
+ * Inventory nodes a script can reach (STORY.inventory.md), the same "nothing reaches it, nothing is built" rule
+ * `collectCollision2D` uses -- an Inventory nothing names/attaches a script to is pointless (only a script can ever
+ * add/remove/query it), so it is never in the ROM at all. Which items it can hold is project-wide
+ * (`compileInventoryItems`), not per-node; only the slot count and its own panel (STORY.inventory-ui-panel.md, from
+ * `collectSprites`'s own `inventoryPanels` -- the exact same gate already kept a node out of `nodeIndexOf` kept its
+ * panel out of that map too) are per-node.
+ */
+function collectInventory2D(project: ProjectSnapshot, nodeIndexOf: ReadonlyMap<string, number>, inventoryPanels: ReadonlyMap<string, InventoryPanelFields>): DsInventory[] {
+  const inventories: DsInventory[] = [];
+  for (const node of flattenSceneTreeInOrder(project.scene)) {
+    if (node.kind !== "Inventory") continue;
+    const index = nodeIndexOf.get(node.id);
+    if (index === undefined) continue;
+    inventories.push({ node: index, slots: getInventory(node).slots, ...(inventoryPanels.get(node.id) ?? NO_INVENTORY_PANEL) });
+  }
+  return inventories;
 }
 
 /**

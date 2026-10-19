@@ -10,6 +10,7 @@ import type {
   TouchArea2DData,
   TouchArea3DShape,
   ImportedTexture,
+  InventoryItem,
   SpriteAnimation,
   SpriteAnimationsData,
   MeshCullMode,
@@ -113,7 +114,10 @@ import {
   getTileMap3D,
   paintCell3D,
   eraseCell3D,
-  type TileMap3DPaletteEntry
+  type TileMap3DPaletteEntry,
+  getInventory,
+  clampMaxStack,
+  DEFAULT_INVENTORY_ITEM_MAX_STACK
 } from "@goodstuff/core";
 import { decodeSoundFile } from "../audio/decode-sound";
 import { classifyFocus, resolveShortcut, type ShortcutCommand, type ShortcutContext } from "./keyboard-shortcuts";
@@ -208,6 +212,20 @@ export interface TileMapChange {
   columns?: number;
   rows?: number;
 }
+/** Which of an Inventory's own panel images a choose/import call is about. */
+export type InventoryPanelImageTarget = "background" | "slot" | "highlight";
+
+/** A change to an Inventory's own slot count or on-screen panel (STORY.inventory-ui-panel.md); an image field is `null` to clear it, a string to set it, absent to leave it alone. */
+export interface InventoryChange {
+  slots?: number;
+  columns?: number;
+  slotSpacingX?: number;
+  slotSpacingY?: number;
+  backgroundSpriteId?: string | null;
+  slotSpriteId?: string | null;
+  highlightSpriteId?: string | null;
+}
+
 /** What a mesh is made of: one of the built-in shapes, or a model imported into the project. */
 export type MeshSource = { primitive: MeshPrimitive } | { importedMeshId: string };
 
@@ -423,6 +441,13 @@ export type Action =
   | { type: "SET_SKY_BOX_CURRENT"; id: string; current: boolean }
   | { type: "SET_CAMERA_CURRENT"; id: string; current: boolean }
   | { type: "SET_CAMERA_FAR_PLANE"; id: string; farPlane: number; at: number }
+  | { type: "SET_INVENTORY"; id: string; change: InventoryChange }
+  | { type: "IMPORT_INVENTORY_PANEL_IMAGE"; id: string; target: InventoryPanelImageTarget; sprite: ImportedSprite; warnings: string[] }
+  | { type: "ADD_INVENTORY_ITEM" }
+  | { type: "REMOVE_INVENTORY_ITEM"; itemId: string }
+  | { type: "SET_INVENTORY_ITEM"; itemId: string; change: Partial<Pick<InventoryItem, "name" | "iconFrame" | "maxStack">>; at: number }
+  | { type: "SET_ITEM_ICON_SHEET"; spriteId: string | null }
+  | { type: "IMPORT_ITEM_ICON_SHEET"; sprite: ImportedSprite; warnings: string[] }
   | { type: "RENAME_NODE"; id: string; name: string; at: number }
   | { type: "ANIM_CREATE"; playerId: string; id: string }
   | { type: "ANIM_RENAME"; playerId: string; animationId: string; name: string; at: number }
@@ -903,6 +928,97 @@ function applyAction(state: EditorState, action: Action): EditorState {
       const farPlane = Math.min(CAMERA_FAR_PLANE_MAX, Math.max(CAMERA_FAR_PLANE_MIN, action.farPlane));
       if (farPlane === getCameraFarPlane(target)) return state;
       return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, camera: { ...node.camera, farPlane } })) };
+    }
+    case "SET_INVENTORY": {
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.kind !== "Inventory") return state;
+      const current = getInventory(target);
+      const { change } = action;
+      const next = getInventory({
+        inventory: {
+          slots: change.slots ?? current.slots,
+          columns: change.columns ?? current.columns,
+          slotSpacingX: change.slotSpacingX ?? current.slotSpacingX,
+          slotSpacingY: change.slotSpacingY ?? current.slotSpacingY,
+          backgroundSpriteId: change.backgroundSpriteId !== undefined ? (change.backgroundSpriteId ?? undefined) : current.backgroundSpriteId,
+          slotSpriteId: change.slotSpriteId !== undefined ? (change.slotSpriteId ?? undefined) : current.slotSpriteId,
+          highlightSpriteId: change.highlightSpriteId !== undefined ? (change.highlightSpriteId ?? undefined) : current.highlightSpriteId
+        }
+      });
+      if (
+        next.slots === current.slots &&
+        next.columns === current.columns &&
+        next.slotSpacingX === current.slotSpacingX &&
+        next.slotSpacingY === current.slotSpacingY &&
+        next.backgroundSpriteId === current.backgroundSpriteId &&
+        next.slotSpriteId === current.slotSpriteId &&
+        next.highlightSpriteId === current.highlightSpriteId
+      ) {
+        return state;
+      }
+      return { ...state, sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, inventory: next })) };
+    }
+    case "IMPORT_INVENTORY_PANEL_IMAGE": {
+      if (!state.project) return state;
+      const target = findSceneNode(state.sceneRoot, action.id);
+      if (!target || target.kind !== "Inventory") return state;
+      const { sprite, target: field } = action;
+      const warnings = action.warnings.map((warning) => `Warning: ${warning}`);
+      const current = getInventory(target);
+      const key = field === "background" ? "backgroundSpriteId" : field === "slot" ? "slotSpriteId" : "highlightSpriteId";
+      return {
+        ...state,
+        project: { ...state.project, sprites: [...(state.project.sprites ?? []), sprite] },
+        sceneRoot: updateSceneNode(state.sceneRoot, action.id, (node) => ({ ...node, inventory: { ...current, [key]: sprite.id } })),
+        outputLog: [...state.outputLog, `Imported ${field} image "${sprite.name}" onto "${target.name}".`, ...warnings]
+      };
+    }
+    case "ADD_INVENTORY_ITEM": {
+      if (!state.project) return state;
+      const items = state.project.items ?? [];
+      const item: InventoryItem = { id: crypto.randomUUID(), name: uniqueNodeName("Item", items.map((i) => i.name)), maxStack: DEFAULT_INVENTORY_ITEM_MAX_STACK };
+      return { ...state, project: { ...state.project, items: [...items, item] } };
+    }
+    case "REMOVE_INVENTORY_ITEM": {
+      const items = state.project?.items;
+      const doomed = items?.find((item) => item.id === action.itemId);
+      if (!state.project || !items || !doomed) return state;
+      const remaining = items.filter((item) => item.id !== action.itemId);
+      const { items: _items, ...withoutItems } = state.project;
+      return { ...state, project: remaining.length > 0 ? { ...withoutItems, items: remaining } : withoutItems };
+    }
+    case "SET_INVENTORY_ITEM": {
+      const items = state.project?.items;
+      const current = items?.find((item) => item.id === action.itemId);
+      if (!state.project || !items || !current) return state;
+      const { change } = action;
+      const next: InventoryItem = { ...current };
+      if (change.name !== undefined) {
+        const name = change.name.trim();
+        if (name === "") return state;
+        next.name = name;
+      }
+      if (change.iconFrame !== undefined) next.iconFrame = change.iconFrame;
+      if (change.maxStack !== undefined) next.maxStack = clampMaxStack(change.maxStack);
+      if (next.name === current.name && next.iconFrame === current.iconFrame && next.maxStack === current.maxStack) return state;
+      return { ...state, project: { ...state.project, items: items.map((item) => (item.id === action.itemId ? next : item)) } };
+    }
+    case "SET_ITEM_ICON_SHEET": {
+      if (!state.project) return state;
+      const current = state.project.itemIconsSpriteId ?? null;
+      if (current === action.spriteId) return state;
+      const { itemIconsSpriteId: _cleared, ...withoutSheet } = state.project;
+      return { ...state, project: action.spriteId === null ? withoutSheet : { ...withoutSheet, itemIconsSpriteId: action.spriteId } };
+    }
+    case "IMPORT_ITEM_ICON_SHEET": {
+      if (!state.project) return state;
+      const { sprite } = action;
+      const warnings = action.warnings.map((warning) => `Warning: ${warning}`);
+      return {
+        ...state,
+        project: { ...state.project, sprites: [...(state.project.sprites ?? []), sprite], itemIconsSpriteId: sprite.id },
+        outputLog: [...state.outputLog, `Imported item icon sheet "${sprite.name}" (${getSpriteFrames(sprite).count} frames).`, ...warnings]
+      };
     }
     case "SET_MESH_COLOR": {
       const target = findSceneNode(state.sceneRoot, action.id);
@@ -1773,6 +1889,13 @@ interface EditorStoreValue {
   setCameraCurrent: (id: string, current: boolean) => void;
   /** Sets a Camera3D's own far clip plane, CAMERA_FAR_PLANE_MIN..CAMERA_FAR_PLANE_MAX scene units. Typing in the field is one undo step per pause. No-op for other nodes. */
   setCameraFarPlane: (id: string, farPlane: number) => void;
+  setInventory: (id: string, change: InventoryChange) => void;
+  importInventoryPanelImage: (id: string, target: InventoryPanelImageTarget, frame?: { width: number; height: number }) => Promise<void>;
+  addInventoryItem: () => void;
+  removeInventoryItem: (itemId: string) => void;
+  setInventoryItem: (itemId: string, change: Partial<Pick<InventoryItem, "name" | "iconFrame" | "maxStack">>) => void;
+  setItemIconSheet: (spriteId: string | null) => void;
+  importItemIconSheet: (frame?: { width: number; height: number }) => Promise<void>;
   /** Undoes the last scene edit (Ctrl+Z). Does nothing when there's nothing to undo. */
   undo: () => void;
   /** Redoes the last undone edit (Ctrl+Shift+Z). */
@@ -2012,6 +2135,33 @@ function describeEdit(action: Action, before: EditorState): { label: string; mer
       return { label: action.current ? `Make ${nameOf(action.id)} the active camera` : `Unmark ${nameOf(action.id)} as the active camera` };
     case "SET_CAMERA_FAR_PLANE":
       return { label: `Change far plane of ${nameOf(action.id)}`, mergeKey: `camera-far:${action.id}`, at: action.at };
+    case "SET_INVENTORY": {
+      const { change } = action;
+      const name = nameOf(action.id);
+      if (change.backgroundSpriteId !== undefined) return { label: `Change background image of ${name}` };
+      if (change.slotSpriteId !== undefined) return { label: `Change slot image of ${name}` };
+      if (change.highlightSpriteId !== undefined) return { label: `Change highlight image of ${name}` };
+      if (change.columns !== undefined) return { label: `Change columns of ${name}` };
+      if (change.slotSpacingX !== undefined || change.slotSpacingY !== undefined) return { label: `Change slot spacing of ${name}` };
+      return { label: `Resize ${name}` };
+    }
+    case "IMPORT_INVENTORY_PANEL_IMAGE":
+      return { label: `Import ${action.target} image ${action.sprite.name}` };
+    case "ADD_INVENTORY_ITEM":
+      return { label: "Add an item" };
+    case "REMOVE_INVENTORY_ITEM": {
+      const item = before.project?.items?.find((entry) => entry.id === action.itemId);
+      return { label: `Remove item ${item?.name ?? ""}`.trim() };
+    }
+    case "SET_INVENTORY_ITEM": {
+      const { change } = action;
+      const field = change.name !== undefined ? "name" : change.iconFrame !== undefined ? "icon" : "max stack";
+      return { label: `Change ${field} of an item`, mergeKey: `item:${action.itemId}:${field}`, at: action.at };
+    }
+    case "SET_ITEM_ICON_SHEET":
+      return { label: "Change item icon sheet" };
+    case "IMPORT_ITEM_ICON_SHEET":
+      return { label: `Import item icon sheet ${action.sprite.name}` };
     case "IMPORT_TEXTURE":
       return { label: `Import texture ${action.texture.name}` };
     case "SET_NODE_SCREEN":
@@ -2178,6 +2328,8 @@ function editStateOf(state: EditorState): EditState {
     sounds: state.project?.sounds,
     sprites: state.project?.sprites,
     scripts: state.project?.scripts,
+    items: state.project?.items,
+    itemIconsSpriteId: state.project?.itemIconsSpriteId,
     selectedNodeId: state.selectedNodeId,
     sceneEntries: state.project ? currentSceneEntries(state) : undefined,
     activeSceneId: state.activeSceneId
@@ -2186,15 +2338,26 @@ function editStateOf(state: EditorState): EditState {
 
 function restore(state: EditorState, entry: EditState & { label: string }, history: EditHistory, verb: "Undid" | "Redid"): EditorState {
   let project = state.project;
-  if (project && (project.meshes !== entry.meshes || project.textures !== entry.textures || project.sounds !== entry.sounds || project.sprites !== entry.sprites || project.scripts !== entry.scripts)) {
-    const { meshes: _meshes, textures: _textures, sounds: _sounds, sprites: _sprites, scripts: _scripts, ...rest } = project;
+  if (
+    project &&
+    (project.meshes !== entry.meshes ||
+      project.textures !== entry.textures ||
+      project.sounds !== entry.sounds ||
+      project.sprites !== entry.sprites ||
+      project.scripts !== entry.scripts ||
+      project.items !== entry.items ||
+      project.itemIconsSpriteId !== entry.itemIconsSpriteId)
+  ) {
+    const { meshes: _meshes, textures: _textures, sounds: _sounds, sprites: _sprites, scripts: _scripts, items: _items, itemIconsSpriteId: _itemIconsSpriteId, ...rest } = project;
     project = {
       ...rest,
       ...(entry.meshes ? { meshes: entry.meshes } : {}),
       ...(entry.textures ? { textures: entry.textures } : {}),
       ...(entry.sounds ? { sounds: entry.sounds } : {}),
       ...(entry.sprites ? { sprites: entry.sprites } : {}),
-      ...(entry.scripts ? { scripts: entry.scripts } : {})
+      ...(entry.scripts ? { scripts: entry.scripts } : {}),
+      ...(entry.items ? { items: entry.items } : {}),
+      ...(entry.itemIconsSpriteId !== undefined ? { itemIconsSpriteId: entry.itemIconsSpriteId } : {})
     };
   }
   // The scenes go back as they were, and the one the edit was made in is the one being edited.
@@ -2321,6 +2484,8 @@ function reduceWithHistory(state: EditorState, action: Action): EditorState {
         next.project?.textures !== state.project?.textures ||
         next.project?.sounds !== state.project?.sounds ||
         next.project?.sprites !== state.project?.sprites ||
+        next.project?.items !== state.project?.items ||
+        next.project?.itemIconsSpriteId !== state.project?.itemIconsSpriteId ||
         next.project?.scripts !== state.project?.scripts ||
         next.project?.scenes !== state.project?.scenes ||
         next.project?.sceneName !== state.project?.sceneName ||
@@ -2359,6 +2524,36 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
   const setSkyBoxCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_SKY_BOX_CURRENT", id, current }), []);
   const setCameraCurrent = useCallback((id: string, current: boolean) => dispatch({ type: "SET_CAMERA_CURRENT", id, current }), []);
   const setCameraFarPlane = useCallback((id: string, farPlane: number) => dispatch({ type: "SET_CAMERA_FAR_PLANE", id, farPlane, at: Date.now() }), []);
+  const setInventory = useCallback((id: string, change: InventoryChange) => dispatch({ type: "SET_INVENTORY", id, change }), []);
+  const importInventoryPanelImage = useCallback(async (id: string, target: InventoryPanelImageTarget, frame?: { width: number; height: number }): Promise<void> => {
+    const result = await window.goodstuff.assets.importSprite(frame);
+    if (result.outcome === "canceled") return;
+    if (result.outcome === "ok" && result.sprite) {
+      dispatch({ type: "IMPORT_INVENTORY_PANEL_IMAGE", id, target, sprite: result.sprite, warnings: result.warnings });
+      return;
+    }
+    const file = result.fileName ? ` "${result.fileName}"` : "";
+    dispatch({ type: "LOG", message: `Could not import${file}:` });
+    for (const error of result.errors) dispatch({ type: "LOG", message: `  ${error}` });
+  }, []);
+  const addInventoryItem = useCallback(() => dispatch({ type: "ADD_INVENTORY_ITEM" }), []);
+  const removeInventoryItem = useCallback((itemId: string) => dispatch({ type: "REMOVE_INVENTORY_ITEM", itemId }), []);
+  const setInventoryItem = useCallback(
+    (itemId: string, change: Partial<Pick<InventoryItem, "name" | "iconFrame" | "maxStack">>) => dispatch({ type: "SET_INVENTORY_ITEM", itemId, change, at: Date.now() }),
+    []
+  );
+  const setItemIconSheet = useCallback((spriteId: string | null) => dispatch({ type: "SET_ITEM_ICON_SHEET", spriteId }), []);
+  const importItemIconSheet = useCallback(async (frame?: { width: number; height: number }): Promise<void> => {
+    const result = await window.goodstuff.assets.importSprite(frame);
+    if (result.outcome === "canceled") return;
+    if (result.outcome === "ok" && result.sprite) {
+      dispatch({ type: "IMPORT_ITEM_ICON_SHEET", sprite: result.sprite, warnings: result.warnings });
+      return;
+    }
+    const file = result.fileName ? ` "${result.fileName}"` : "";
+    dispatch({ type: "LOG", message: `Could not import${file}:` });
+    for (const error of result.errors) dispatch({ type: "LOG", message: `  ${error}` });
+  }, []);
   const setActiveTool = useCallback((tool: EditorTool) => dispatch({ type: "SET_TOOL", tool }), []);
   const toggleBoxSelect = useCallback(() => dispatch({ type: "TOGGLE_BOX_SELECT" }), []);
   const moveNode = useCallback((id: string, x: number, y: number) => dispatch({ type: "MOVE_NODE", id, x, y, at: Date.now() }), []);
@@ -2835,6 +3030,13 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setSkyBoxCurrent,
       setCameraCurrent,
       setCameraFarPlane,
+      setInventory,
+      importInventoryPanelImage,
+      addInventoryItem,
+      removeInventoryItem,
+      setInventoryItem,
+      setItemIconSheet,
+      importItemIconSheet,
       undo,
       redo,
       endEditGesture,
@@ -2932,6 +3134,13 @@ export function EditorStoreProvider({ children }: { children: ReactNode }): JSX.
       setSkyBoxCurrent,
       setCameraCurrent,
       setCameraFarPlane,
+      setInventory,
+      importInventoryPanelImage,
+      addInventoryItem,
+      removeInventoryItem,
+      setInventoryItem,
+      setItemIconSheet,
+      importItemIconSheet,
       undo,
       redo,
       endEditGesture,

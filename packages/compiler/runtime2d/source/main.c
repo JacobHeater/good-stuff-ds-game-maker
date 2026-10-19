@@ -22,6 +22,7 @@ void gs_init_nodes2d(void);
 void gs_read_input(void);
 void gs_init_audio2d(void);
 void gs_start_audio2d(void);
+void gs_init_inventory2d(void);
 
 /* The backdrop behind the sprites. Not black, so screenshots can find each screen (the emulator tests read these values). */
 #define TOP_BACKDROP RGB15(3, 5, 10)
@@ -202,6 +203,23 @@ int gs_sprite_is_playing(int node) {
 	return s >= 0 && screens[s].state[i].playing;
 }
 
+/* Directly shows `frame`, stopping any animation playing (STORY.inventory.md: shows an Inventory slot's own icon). */
+void gs_sprite_set_frame(int node, int frame) {
+	int s, i;
+	find_sprite(node, &s, &i);
+	if (s < 0) return;
+	const GsSprite *sprite = &screens[s].screen->sprites[i];
+	const GsSpriteImage *image = &screens[s].screen->images[sprite->image];
+	if (frame < 0 || frame >= image->frameCount) return;
+	GsSpriteAnimState *anim = &screens[s].state[i];
+	anim->playing = 0;
+	anim->frame = frame;
+	anim->shown = frame;
+	if (screens[s].frames[sprite->image] && screens[s].frames[sprite->image][frame]) {
+		oamSetGfx(screens[s].oam, i, size_of(image->width, image->height), SpriteColorFormat_256Color, screens[s].frames[sprite->image][frame]);
+	}
+}
+
 static GsLabelScreen labelScreens[2];
 static GsTileMapState tileMapScreens[2];
 static int haveTileMap[2]; /* whether screens[s]/tileMapScreens[s] above actually has one (STORY.standalone-2d-tilemaps.md) */
@@ -267,6 +285,101 @@ static void update_labels(GsLabelScreen *screen) {
 	gs_labels_update(screen);
 }
 
+/* The same three things gs_sprite_set_frame/follow_sprite already do to a sprite the hardware knows by its own node, for one
+   with no node at all, by its own raw index into `screen`'s own sprites instead (STORY.inventory-ui-panel.md: a panel's own
+   background/slot-frame/icon/highlight sprites are static, positioned once at compile time). Each is a no-op outside the
+   screen's own sprite count, or (the frame one) outside that sprite's own image's own frame count. */
+static void set_sprite_hidden(ScreenState *screen, int index, int hidden) {
+	if (index < 0 || index >= screen->screen->spriteCount) return;
+	oamSetHidden(screen->oam, index, hidden);
+}
+
+static void set_sprite_xy(ScreenState *screen, int index, int x, int y) {
+	if (index < 0 || index >= screen->screen->spriteCount) return;
+	oamSetXY(screen->oam, index, x, y);
+}
+
+static void set_sprite_frame(ScreenState *screen, int index, int frame) {
+	if (index < 0 || index >= screen->screen->spriteCount) return;
+	const GsSprite *sprite = &screen->screen->sprites[index];
+	const GsSpriteImage *image = &screen->screen->images[sprite->image];
+	if (frame < 0 || frame >= image->frameCount) return;
+	if (screen->frames[sprite->image] && screen->frames[sprite->image][frame]) {
+		oamSetGfx(screen->oam, index, size_of(image->width, image->height), SpriteColorFormat_256Color, screen->frames[sprite->image][frame]);
+	}
+}
+
+/* The same for a count label the hardware knows by its own raw index into `screen`'s own labels, instead of the node a panel's own
+   per-slot stack-count label has none of (STORY.inventory-ui-panel.md). A count label's own text is fixed at compile time ("x{}");
+   showing or hiding it (instead of changing its text) is how "hidden for 0 or 1, 'x3' style above that" is drawn. */
+static void set_label_value(GsLabelScreen *screen, int index, int32_t value) {
+	if (index < 0 || index >= screen->count || screen->value[index] == value) return;
+	screen->value[index] = value;
+	screen->dirty = 1;
+}
+
+static void set_label_shown(GsLabelScreen *screen, int index, int shown) {
+	if (index < 0 || index >= screen->count) return;
+	const uint8_t s = shown ? 1 : 0;
+	if (screen->shown[index] == s) return;
+	screen->shown[index] = s;
+	screen->dirty = 1;
+}
+
+/*
+ * Once a frame, after the scripts and before update_screen/update_labels flush their own hardware state (the same point
+ * main's own loop runs everything else from -- see its own comment there). A panel's own sprites/labels are these same
+ * per-screen tables' own entries (STORY.inventory-ui-panel.md), not a set of their own. Nothing here moves the panel
+ * itself: it stays at its node's own starting position even if a script moves that node afterward (this story's own
+ * accepted v1 limit) -- only its live `visible` is tracked.
+ */
+static void update_inventory_panel(void) {
+	for (int i = 0; i < gs_scene2d.inventoryCount; i++) {
+		const GsInventory *inv = &gs_scene2d.inventories[i];
+		const int hasPanel = inv->backgroundSprite >= 0 || inv->slotSpriteStart >= 0 || inv->highlightSprite >= 0;
+		if (!hasPanel) continue;
+		ScreenState *screen = &screens[inv->screen];
+		GsLabelScreen *labels = &labelScreens[inv->screen];
+		const int visible = gs_node_state[inv->node].visible != 0;
+
+		if (inv->backgroundSprite >= 0) set_sprite_hidden(screen, inv->backgroundSprite, !visible);
+		for (int s = 0; s < inv->slots; s++) {
+			if (inv->slotSpriteStart >= 0) set_sprite_hidden(screen, inv->slotSpriteStart - s, !visible);
+			if (inv->iconSpriteStart >= 0) set_sprite_hidden(screen, inv->iconSpriteStart - s, !visible || gs_inventory_slot_icon(i, s) < 0);
+			if (inv->labelStart >= 0) set_label_shown(labels, inv->labelStart + s, visible && gs_inventory_slot_count(i, s) > 1);
+		}
+		if (inv->highlightSprite >= 0) set_sprite_hidden(screen, inv->highlightSprite, !visible || gs_inventory_selected_slot(i) < 0);
+		if (!visible) continue;
+
+		/* A tap inside the panel's own fixed grid selects whichever cell it landed on (STORY.inventory-ui-panel.md's own touch-to-select);
+		   outside it, or no touch at all this frame, leaves the selection exactly as it was. */
+		if (gs_touching) {
+			const int cellW = inv->slotWidth + inv->spacingX, cellH = inv->slotHeight + inv->spacingY;
+			const int dx = gs_touch_x - inv->panelX, dy = gs_touch_y - inv->panelY;
+			if (dx >= 0 && dy >= 0) {
+				const int col = dx / cellW, row = dy / cellH;
+				if (col < inv->columns && dx - col * cellW < inv->slotWidth && dy - row * cellH < inv->slotHeight) {
+					const int slot = row * inv->columns + col;
+					if (slot < inv->slots) gs_inventory_select_slot(i, slot);
+				}
+			}
+		}
+
+		for (int s = 0; s < inv->slots; s++) {
+			if (inv->slotSpriteStart >= 0) set_sprite_frame(screen, inv->slotSpriteStart - s, gs_inventory_slot_count(i, s) > 0 ? 1 : 0);
+			const int frame = inv->iconSpriteStart >= 0 ? gs_inventory_slot_icon(i, s) : -1;
+			if (frame >= 0) set_sprite_frame(screen, inv->iconSpriteStart - s, frame);
+			if (inv->labelStart >= 0) set_label_value(labels, inv->labelStart + s, gs_inventory_slot_count(i, s));
+		}
+
+		const int selected = gs_inventory_selected_slot(i);
+		if (inv->highlightSprite >= 0 && selected >= 0) {
+			const int col = selected % inv->columns, row = selected / inv->columns;
+			set_sprite_xy(screen, inv->highlightSprite, inv->panelX + col * (inv->slotWidth + inv->spacingX), inv->panelY + row * (inv->slotHeight + inv->spacingY));
+		}
+	}
+}
+
 int main(void) {
 	lcdMainOnTop();
 
@@ -319,6 +432,7 @@ int main(void) {
 
 	gs_init_audio2d();
 	gs_start_audio2d();
+	gs_init_inventory2d();
 
 	/* Every script's _ready(), once, before the first frame draws -- whatever it changes already shows in that frame. */
 	for (int i = 0; i < gs_script_instance_count; i++) {
@@ -336,6 +450,9 @@ int main(void) {
 			const GsScriptInstance *script = &gs_script_instances[i];
 			if (script->process) script->process(script->inst, delta);
 		}
+		/* Before update_screen/update_labels, not after: a panel's own sprites/labels are those same two tables' own
+		   entries, and each only flushes its own hardware state once, later in this same frame. */
+		update_inventory_panel();
 		update_screen(&screens[0]);
 		update_screen(&screens[1]);
 		update_labels(&labelScreens[0]);

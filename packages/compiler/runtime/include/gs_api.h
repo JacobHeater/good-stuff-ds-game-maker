@@ -133,6 +133,31 @@ void gs_anim_set_speed(int player, int32_t speed);
 void gs_sprite_play(int node, int animation);
 void gs_sprite_stop(int node);
 int gs_sprite_is_playing(int node);
+/* Directly shows `frame` of a Sprite2D/AnimatedSprite2D's own sheet, stopping any animation playing on it (STORY.inventory.md: shows
+   an Inventory slot's own icon, via slot_icon()'s own frame number, with no animation needed). A node that isn't drawn as a sprite,
+   or a frame its sheet doesn't have, makes this a no-op. */
+void gs_sprite_set_frame(int node, int frame);
+
+/* ---- Inventory (requirements/scene-designer/STORY.inventory.md). `inv` is an Inventory's index, from the node it belongs to (-1
+   when the node has none: every call is then a no-op/0). `item` is a project item's compile-time index (resolved from its id by
+   the checker); `slot` is 0-based within this inventory's own slot count. Slots are anonymous: add() fills the first that fit. */
+int gs_node_inventory(int node);
+/* Fills same-item slots first, then empty ones, respecting the item's own max stack; returns how many did NOT fit (0: all added). */
+int gs_inventory_add(int inv, int item, int count);
+/* Returns how many were actually removed (<= count). */
+int gs_inventory_remove(int inv, int item, int count);
+/* Total of `item` across every slot. */
+int gs_inventory_count(int inv, int item);
+/* 0 when the slot is empty. */
+int gs_inventory_slot_count(int inv, int slot);
+int gs_inventory_slot_item_is(int inv, int slot, int item);
+/* The slot's own item's icon frame, or -1 when the slot is empty or that item has no icon. */
+int gs_inventory_slot_icon(int inv, int slot);
+/* Which slot the player last touched on this Inventory's own on-screen panel (STORY.inventory-ui-panel.md), or -1 for
+   none -- a script's own way to react to a tap (use/drop the selected item) and to clear the selection itself.
+   select_slot's own `slot` out of 0..slots-1 clears it instead, the same as -1 would. */
+int gs_inventory_selected_slot(int inv);
+void gs_inventory_select_slot(int inv, int slot);
 
 /* ---- Global variables and the save file (requirements/scripting/STORY.game-state-and-save.md). `gs_global` holds the project's global variables, one 32-bit number each (a float in 20.12, a bool 0 or 1), in
    the order the generated script_code.c lists them; they keep their values when the scene changes. `gs_global_signature` says which globals the game has (a hash of their names and types), so a save from

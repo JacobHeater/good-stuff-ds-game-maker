@@ -10,9 +10,11 @@ import {
   getAudioPlayer,
   getCameraFarPlane,
   getCollisionShape,
+  getInventory,
   getLightIntensity,
   getSkyBox,
   isCurrentSkyBox,
+  clampMaxStack,
   parseMeshColor,
   getSoundByteSize,
   getSpriteTransform,
@@ -55,9 +57,9 @@ import {
 
 import type { Diagnostic } from "./diagnostics";
 import { hasErrors } from "./diagnostics";
-import { collectSprites } from "./translate-scene-2d";
+import { collectSprites, NO_INVENTORY_PANEL } from "./translate-scene-2d";
 import { compileTileMap3D } from "./translate-tile-map-3d";
-import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioClip, DsAudioPlayer, DsCamera, DsCollider, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
+import type { DsAnimation, DsAnimationKey, DsAnimationPlayer, DsAnimationTrack, DsAudioClip, DsAudioPlayer, DsCamera, DsCollider, DsInventory, DsInventoryItem, DsLight, DsMesh, DsNode, DsPrimitive, DsScene3D, DsSound, DsSpriteAnimation, DsTexture, DsTouchArea } from "./ds-scene";
 import { FixedPointRangeError, packNormal, rgb15, toF32, toT16, toV10, toV16 } from "./fixed-point";
 import { fontSafeText } from "./label-text";
 import { axisDirection, composeTransform, IDENTITY, invertAffine, multiply, splitScale, transformPoint, withoutScale, type Mat4 } from "./matrix";
@@ -65,6 +67,19 @@ import { generateScriptCode, type CompiledScript } from "./script-codegen";
 
 /** The DS's geometry engine has four hardware lights (defined once in core, with the rest of the DS lighting model). */
 export const MAX_DS_LIGHTS = DS_MAX_LIGHTS;
+
+/**
+ * The project's shared item list (STORY.inventory.md), compiled identically into every scene (3D or 2D) --
+ * `DsInventoryItem`'s own comment explains why this is always the full, project-ordered list rather than a
+ * per-scene-used subset. Shared by both translators (mirrors `collectSprites`' own cross-engine reuse, the other
+ * direction).
+ */
+export function compileInventoryItems(project: ProjectSnapshot): DsInventoryItem[] {
+  return (project.items ?? []).map((item) => ({
+    iconFrame: item.iconFrame ?? -1,
+    maxStack: clampMaxStack(item.maxStack)
+  }));
+}
 
 /**
  * How many distinct bones one smooth-skinned mesh instance can blend, mirroring the runtime's own
@@ -381,6 +396,7 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   const shapeNodes: Collected[] = [];
   const animationNodes: Collected[] = [];
   const touchNodes: Collected[] = [];
+  const inventoryNodes: Collected[] = [];
   const kept: KeptNode[] = [];
 
   /** Whether `node` or anything under it is attached to a script or named by one. */
@@ -458,6 +474,9 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       case "TouchArea2D":
       case "TouchArea3D":
         touchNodes.push({ node, world, index });
+        break;
+      case "Inventory":
+        inventoryNodes.push({ node, world, index });
         break;
       default:
         // Node3D groups draw nothing and are ignored by design. A Sprite2D is drawn on the 2D screen (see `collectSprites` below); every other node for the 2D
@@ -566,12 +585,13 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
   // The sprites on the 2D screen (the sub engine). One VRAM bank holds their tiles, so with sprites the textures get 384 KB instead of 512 KB.
   const twoDScreen = otherScreen(getThreeDScreen(project) ?? "top");
   const keptIndexOf = new Map(kept.map((entry) => [entry.node.id, entry.index]));
-  const twoDSprites = collectSprites(project, () => twoDScreen, [twoDScreen], diagnostics, options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget, {
+  const { screens: twoDScreens, inventoryPanels } = collectSprites(project, () => twoDScreen, [twoDScreen], diagnostics, options.fpsTarget ?? DS_HARDWARE_PROFILE.frameRate.defaultFpsTarget, {
     nodeIndexOf: (node) => keptIndexOf.get(node.id),
     reachedByScript: (node) => scripts.touchedIds.has(node.id),
     // Rotation and scale need a rotation matrix: a sprite that starts turned or scaled, or one whose transform a script writes.
     rotatable: (node) => !isUpright(getSpriteTransform(node)) || scripts.dynamicRootIds.has(node.id)
-  })[twoDScreen];
+  });
+  const twoDSprites = twoDScreens[twoDScreen];
   const textureLimit = textureMemoryLimit(twoDSprites.images.length > 0);
   if (textureBytes > textureLimit) {
     diagnostics.push({
@@ -1163,6 +1183,16 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
     }
   }
 
+  // Inventories, in tree order. Which items can go in one is project-wide (compileInventoryItems), not per-node; an
+  // instance only needs its own slot count and, when it has one, its on-screen panel (STORY.inventory-ui-panel.md,
+  // already compiled above into inventoryPanels alongside the 2D screen's own sprites/labels).
+  const inventories: DsInventory[] = [];
+  const inventoryIndexByNode = new Map<string, number>();
+  for (const { node, index } of inventoryNodes) {
+    inventoryIndexByNode.set(node.id, inventories.length);
+    inventories.push({ node: index, slots: getInventory(node).slots, ...(inventoryPanels.get(node.id) ?? NO_INVENTORY_PANEL) });
+  }
+
   const dsNodes: DsNode[] = [];
   for (const entry of kept) {
     const built = guard(entry.node, () => {
@@ -1183,7 +1213,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
         audio: audioIndexByNode.get(entry.node.id) ?? -1,
         collider: colliderIndexByNode.get(entry.node.id) ?? -1,
         animPlayer: animPlayerIndexByNode.get(entry.node.id) ?? -1,
-        touch: touchIndexByNode.get(entry.node.id) ?? -1
+        touch: touchIndexByNode.get(entry.node.id) ?? -1,
+        inventory: inventoryIndexByNode.get(entry.node.id) ?? -1
       };
     });
     if (built) dsNodes.push(built);
@@ -1209,6 +1240,8 @@ export function translateScene3D(project: ProjectSnapshot, options: TranslateOpt
       tileMaps3D: dsTileMaps3D,
       tileMap3DPaletteEntries,
       tileMap3DChunkFiles,
+      items: compileInventoryItems(project),
+      inventories,
       meshes: dsMeshes,
       primitives,
       textures,
@@ -1282,6 +1315,11 @@ export function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagn
     attachments.set(node.scriptId, [...(attachments.get(node.scriptId) ?? []), node]);
   }
 
+  // The project's shared item list (STORY.inventory.md), by name (the same "matched by name" split a named audio
+  // clip already has -- AudioClip.id is likewise never what a script types), in compile order: what an Inventory
+  // call's own item name resolves against (checkInventoryCall in core's checker.ts).
+  const itemNames = (project.items ?? []).map((item) => item.name);
+
   // The project's global variables: the same in every scene, declared by any script and usable by all of them.
   const collected = collectProjectGlobals(project.scripts ?? []);
   plan.globals = collected.globals;
@@ -1303,7 +1341,7 @@ export function checkProjectScripts(project: ProjectSnapshot, diagnostics: Diagn
     // children. Nodes whose checks name the same nodes share one compiled script (one copy of the code, a copy of the variables each); a node that finds
     // different nodes for its $Names is compiled as a script of its own, so in the C a $Name always means one fixed node.
     const groups = new Map<string, { result: ScriptCheckResult; nodes: SceneNode[] }>();
-    const { perNode, diagnostics: problems } = checkScriptOnNodes(script.source, project.scene, attached, sceneNames, plan.globals);
+    const { perNode, diagnostics: problems } = checkScriptOnNodes(script.source, project.scene, attached, sceneNames, plan.globals, undefined, itemNames);
     for (const problem of problems) {
       diagnostics.push({
         severity: problem.severity,

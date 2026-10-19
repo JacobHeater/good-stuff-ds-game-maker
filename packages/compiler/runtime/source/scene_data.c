@@ -69,13 +69,13 @@ static const GsPrimitive primitives[] = {
 
 static const GsNode nodes[] = {
   /* Main */
-  { -1, 0, 1, -1, -1, -1, -1, { 0, 0, 0 }, { 0, 0, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096 } } },
+  { -1, 0, 1, -1, -1, -1, -1, -1, { 0, 0, 0 }, { 0, 0, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096, 0, 0, 0, 0, 4096 } } },
   /* Cube */
-  { 0, 0, 1, -1, -1, -1, -1, { 0, 0, 0 }, { 0, 122880, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3547, 0, -2048, 0, 0, 4096, 0, 0, 2048, 0, 3547, 0, 0, 0, 0, 4096 } } },
+  { 0, 0, 1, -1, -1, -1, -1, -1, { 0, 0, 0 }, { 0, 122880, 0 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3547, 0, -2048, 0, 0, 4096, 0, 0, 2048, 0, 3547, 0, 0, 0, 0, 4096 } } },
   /* Camera */
-  { 0, 0, 1, -1, -1, -1, -1, { 10240, 8192, 14336 }, { -121835, 130278, 68652 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3333, 0, -2381, 0, -1004, 3714, -1405, 0, 2159, 1727, 3022, 0, 10240, 8192, 14336, 4096 } } },
+  { 0, 0, 1, -1, -1, -1, -1, -1, { 10240, 8192, 14336 }, { -121835, 130278, 68652 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3333, 0, -2381, 0, -1004, 3714, -1405, 0, 2159, 1727, 3022, 0, 10240, 8192, 14336, 4096 } } },
   /* Sun */
-  { 0, 0, 1, -1, -1, -1, -1, { -8192, 16384, 12288 }, { -217621, -89299, -107905 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3408, 0, 2272, 0, 1688, 2742, -2531, 0, -1521, 3042, 2282, 0, -8192, 16384, 12288, 4096 } } }
+  { 0, 0, 1, -1, -1, -1, -1, -1, { -8192, 16384, 12288 }, { -217621, -89299, -107905 }, { 4096, 4096, 4096 }, { 4096, 4096, 4096 }, { { 3408, 0, 2272, 0, 1688, 2742, -2531, 0, -1521, 3042, 2282, 0, -8192, 16384, 12288, 4096 } } }
 };
 
 static const uint16_t mesh_frames[] = { 0 };
@@ -98,6 +98,14 @@ static const GsLight lights[] = {
 
 static const GsSkyBox sky_boxes[] = {
   { 0, 0, 0 }
+};
+
+static const GsInventoryItem items[] = {
+  { -1, 0 }
+};
+
+static const GsInventory inventories[] = {
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1 }
 };
 
 static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {
@@ -138,5 +146,6 @@ const GsScene gs_scene_data_0 = {
   0, /* skin joint count */
   0, 0, /* TileMap3D node, palette entry counts */
   0, /* sky box count */
-  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
+  0, 0, /* item, inventory counts */
+  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices
 };

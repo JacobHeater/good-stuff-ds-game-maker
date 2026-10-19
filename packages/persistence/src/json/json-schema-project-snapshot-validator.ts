@@ -197,6 +197,30 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     }
   });
 
+  // Items (STORY.inventory.md): unique ids, unique names (a script's add("Name") resolves by name, the same
+  // "matched by name" split a named audio clip already has -- see InventoryItem's own comment), and every
+  // iconFrame within the icon sheet's own frame count; itemIconsSpriteId must name a sheet in the file.
+  // Project-wide (not per-node, unlike TileMap3D's own palette), since items are shared by every Inventory node
+  // of every scene.
+  const items = project.items ?? [];
+  const itemIconSheet = project.itemIconsSpriteId === undefined ? undefined : sprites.find((sprite) => sprite.id === project.itemIconsSpriteId);
+  if (project.itemIconsSpriteId !== undefined && !itemIconSheet) {
+    issues.push(`itemIconsSpriteId "${project.itemIconsSpriteId}" isn't in the project file`);
+  }
+  const itemIconFrameCount = itemIconSheet ? getSpriteFrames(itemIconSheet).count : undefined;
+  const itemIds = new Set<string>();
+  const itemNames = new Set<string>();
+  items.forEach((item, i) => {
+    const where = `/items/${i}`;
+    if (itemIds.has(item.id)) issues.push(`${where} has the id "${item.id}", which another item already uses`);
+    itemIds.add(item.id);
+    if (itemNames.has(item.name)) issues.push(`${where} is named "${item.name}", which another item already uses`);
+    itemNames.add(item.name);
+    if (item.iconFrame !== undefined && itemIconFrameCount !== undefined && item.iconFrame >= itemIconFrameCount) {
+      issues.push(`${where} shows icon frame ${item.iconFrame}, but the icon sheet has ${itemIconFrameCount} frames`);
+    }
+  });
+
   // Scripts: unique ids and non-empty names; every attachment names a script in the file.
   const scripts: ProjectScript[] = project.scripts ?? [];
   const scriptIds = new Set<string>();
@@ -222,6 +246,16 @@ function checkImportedAssets(project: ProjectSnapshot): string[] {
     }
     if (node.spriteId !== undefined && !spriteIds.has(node.spriteId)) {
       issues.push(`Sprite "${node.name}" uses the image "${node.spriteId}", which isn't in the project file`);
+    }
+    for (const [field, label] of [
+      ["backgroundSpriteId", "background"],
+      ["slotSpriteId", "slot"],
+      ["highlightSpriteId", "highlight"]
+    ] as const) {
+      const panelImage = node.inventory?.[field];
+      if (panelImage !== undefined && !spriteIds.has(panelImage)) {
+        issues.push(`Inventory "${node.name}" uses the ${label} image "${panelImage}", which isn't in the project file`);
+      }
     }
     if (node.spriteAnimations) {
       const sheet = node.spriteId === undefined ? undefined : sprites.find((sprite) => sprite.id === node.spriteId);

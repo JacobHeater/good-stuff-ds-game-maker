@@ -1,6 +1,7 @@
 import type { ImportedMesh } from "./imported-mesh";
 import type { ImportedSound } from "./imported-sound";
 import type { ImportedSprite } from "./imported-sprite";
+import type { InventoryItem } from "./inventory";
 import type { ProjectScript } from "./project-script";
 import type { ImportedTexture } from "./imported-texture";
 import type { ProjectMode } from "./project-mode";
@@ -65,6 +66,15 @@ export interface ProjectSnapshot {
    * See requirements/persistence/TASK.embed-scripts-in-project-file.md.
    */
   scripts?: ProjectScript[];
+  /**
+   * Items an Inventory node can hold, shared project-wide (requirements/scene-designer/STORY.inventory.md) --
+   * unlike every other per-node palette (TileMap3D's among them), an item picked up by one Inventory means the
+   * same thing in any other. Absent when there are none. Never auto-pruned: a script refers to an item by its own
+   * id in source text, not a scannable node field, so (like `scripts`) nothing here is dropped for looking unused.
+   */
+  items?: InventoryItem[];
+  /** The id of the image (in `sprites`) `items`' own `iconFrame`s are frames of; absent for a project with no item icons yet. */
+  itemIconsSpriteId?: string;
 }
 
 /** One of a project's scenes other than the starting one. */
@@ -139,9 +149,27 @@ export function pruneUnusedAssets(snapshot: ProjectSnapshot): ProjectSnapshot {
     if (kept.length > 0) updated.sounds = kept;
   }
   if (sprites && sprites.length > 0) {
-    const used = new Set(nodes.flatMap((node) => (node.spriteId ? [node.spriteId] : [])));
+    // An item icon sheet (STORY.inventory.md) is kept alive by any item actually using a frame of it, the same way
+    // a plain node's own spriteId does (even though no node directly references itemIconsSpriteId itself), or by
+    // any Inventory's own on-screen panel (STORY.inventory-ui-panel.md), which draws from it directly regardless
+    // of whether any item has chosen a frame yet. An Inventory's own background/slot/highlight images (also
+    // STORY.inventory-ui-panel.md) keep themselves alive the same way a plain node's own spriteId does.
+    const itemsUseIcons = (snapshot.items ?? []).some((item) => item.iconFrame !== undefined);
+    const hasPanel = nodes.some((node) => node.inventory?.backgroundSpriteId !== undefined || node.inventory?.slotSpriteId !== undefined || node.inventory?.highlightSpriteId !== undefined);
+    const used = new Set([
+      ...nodes.flatMap((node) => [
+        ...(node.spriteId ? [node.spriteId] : []),
+        ...(node.inventory?.backgroundSpriteId ? [node.inventory.backgroundSpriteId] : []),
+        ...(node.inventory?.slotSpriteId ? [node.inventory.slotSpriteId] : []),
+        ...(node.inventory?.highlightSpriteId ? [node.inventory.highlightSpriteId] : [])
+      ]),
+      ...((itemsUseIcons || hasPanel) && snapshot.itemIconsSpriteId ? [snapshot.itemIconsSpriteId] : [])
+    ]);
     const kept = sprites.filter((sprite) => used.has(sprite.id));
     if (kept.length > 0) updated.sprites = kept;
+    if (!used.has(snapshot.itemIconsSpriteId ?? "")) delete updated.itemIconsSpriteId;
+  } else {
+    delete updated.itemIconsSpriteId;
   }
   return updated;
 }

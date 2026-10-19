@@ -209,6 +209,7 @@ typedef struct {
 	int16_t collider;    /* index into GsScene.colliders, or -1 */
 	int16_t animPlayer;  /* index into GsScene.animationPlayers, or -1 */
 	int16_t touch;       /* index into GsScene.touchAreas, or -1 */
+	int16_t inventory;   /* index into GsScene.inventories, or -1 */
 	int32_t position[3]; /* local, f32 */
 	int32_t rotation[3]; /* local, degrees, f32 */
 	int32_t scale[3];    /* local, f32 */
@@ -278,6 +279,40 @@ typedef struct {
 	const char *chunkPathPrefix; /* e.g. "tile3d/0/0/" -- baked in at compile time, the runtime never reconstructs it */
 } GsTileMap3D;
 
+/* One project-wide item (STORY.inventory.md), compiled the same way into every scene -- see DsInventoryItem's own
+   comment in ds-scene.ts for why. iconFrame is a frame index a script can pass straight to gs_sprite_set_frame
+   (gs_inventory_slot_icon just returns it), or -1 for an item with no icon. */
+typedef struct {
+	int16_t iconFrame;
+	uint16_t maxStack;
+} GsInventoryItem;
+
+/* One Inventory node's own slot count and, when at least one of its own panel images is set, its on-screen panel
+   (STORY.inventory-ui-panel.md) -- drawn entirely by the runtime at this node's own starting position. Which items
+   it can hold is project-wide (GsScene.items), not per-node.
+
+   A panel is configured at all when backgroundSprite, slotSpriteStart or highlightSprite is >= 0 (each
+   independently -1 when that one image isn't set); iconSpriteStart is its own, separate condition, >= 0 only
+   when the project also has an item-icon sheet -- a panel with none still draws its background/slot frames/
+   highlight/labels, just no icons. A *Start field always
+   points at slot 0's own sprite specifically, never the lowest array index of its own run: the compiler's own
+   sprite table is reversed once (collectSprites in translate-scene-2d.ts, its own comment explains why), which
+   reverses the order of every run pushed together along with it -- so slot n's own sprite is at `*Start - n`, not
+   `*Start + n`. (labelStart isn't reversed: the label table never is.) */
+typedef struct {
+	uint16_t node;  /* index into GsScene.nodes */
+	uint16_t slots;
+	int32_t panelX, panelY;    /* the panel's own top-left corner, screen pixels */
+	uint16_t columns;          /* how many slots wide the grid is; rows are however many slots needs at that width */
+	uint16_t slotWidth, slotHeight; /* one slot's own pixel size */
+	uint16_t spacingX, spacingY;    /* pixels between one slot's own corner and the next, on each axis */
+	int16_t backgroundSprite;  /* index into the owning screen's own sprites, or -1 */
+	int16_t slotSpriteStart;   /* slot 0's own slot-frame sprite (a run of `slots`, found by -n), or -1 */
+	int16_t iconSpriteStart;   /* slot 0's own item-icon sprite (a run of `slots`, found by -n), or -1 when there's no panel at all */
+	int16_t highlightSprite;   /* index into the owning screen's own sprites, or -1 */
+	int16_t labelStart;        /* slot 0's own stack-count label (a run of `slots`, found by +n -- labels are never reversed), or -1 */
+} GsInventory;
+
 typedef struct {
 	uint8_t screen; /* 0 = top, 1 = bottom */
 	uint8_t fps;    /* 30 or 60 */
@@ -306,6 +341,8 @@ typedef struct {
 	uint16_t tileMap3DCount;
 	uint16_t tileMap3DPaletteEntryCount;
 	uint16_t skyBoxCount;
+	uint16_t itemCount;
+	uint16_t inventoryCount;
 	const GsNode *nodes;
 	const GsPrimitive *primitives;
 	const GsMesh *meshes;
@@ -313,6 +350,8 @@ typedef struct {
 	const GsTileMap3D *tileMaps3D;
 	const GsTileMap3DPaletteEntry *tileMap3DPaletteEntries;
 	const GsSkyBox *skyBoxes;
+	const GsInventoryItem *items;
+	const GsInventory *inventories;
 	const GsTexture *textures;
 	const GsSound *sounds;
 	const GsAudioPlayer *audioPlayers;

@@ -630,6 +630,7 @@ static void enter_scene(int index, int first) {
 	gs_init_audio();
 	gs_start_audio();
 	gs_init_animation();
+	gs_init_inventory();
 	gs_update_nodes();
 	const GsSceneScripts *scripts = &gs_scene_scripts[index];
 	scripts->reset();
@@ -717,6 +718,10 @@ int main(void) {
 		for (int i = 0; i < framesPerPresent; i++) {
 			swiWaitForVBlank();
 			if (i == 0) {
+				/* Before gs_update_sprites/gs_update_labels, not after: a panel's own sprites/labels are those same two tables' own entries, and each
+				   of those two only flushes its own hardware state (oamUpdate/the console redraw) once, at its own end of this same vertical blank --
+				   anything the panel changes has to land before that happens, or it would wait an extra frame to show. */
+				gs_update_inventory_panel();
 				gs_update_sprites(); /* right after the vertical blank, where the sprite table can be copied */
 				gs_update_labels();
 			}

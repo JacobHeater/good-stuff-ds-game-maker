@@ -34,12 +34,21 @@ void gs_read_input(void);
    sprite table to the hardware once a frame, right after the vertical blank. main.c maps VRAM bank D for sprite tiles (and not for textures) when there are sprites. */
 void gs_init_sprites(void);
 void gs_update_sprites(void);
+/* The same as gs_sprite_set_frame et al., but by a sprite's own raw index into GsScreen2D.sprites instead of the node it has none of
+   (STORY.inventory-ui-panel.md's own panel sprites). See gs_sprites.c's own comment on these. */
+void gs_sprite_set_hidden_at(int index, int hidden);
+void gs_sprite_set_xy_at(int index, int x, int y);
+void gs_sprite_set_frame_at(int index, int frame);
 
 /* Labels (text) on the 2D screen: gs_init_labels draws them as they start (after gs_init_sprites, with VRAM bank H mapped for the sub engine's background); gs_update_labels once a frame
    draws again if a label was hidden, shown or changed; gs_labels_reset forgets them when the scene is left. */
 void gs_init_labels(void);
 void gs_update_labels(void);
 void gs_labels_reset(void);
+/* The same as gs_label_set_value et al., but by a label's own raw index into GsScreen2D.labels instead of the node it has
+   none of (STORY.inventory-ui-panel.md's own per-slot count labels). See gs_labels.c's own comment on these. */
+void gs_label_set_value_at(int index, int32_t value);
+void gs_label_set_shown_at(int index, int shown);
 
 /* Frame animations of animated meshes: gs_init_mesh_anim sets each one up (after gs_init_nodes); gs_update_mesh_anim moves them on once a frame (after the scripts); gs_mesh_primitive says which
    vertex table mesh `i` is drawn with now; gs_mesh_anim_reset gives the memory back when the scene is left. */
@@ -60,5 +69,11 @@ void gs_update_animation(int32_t delta);
 /* Sets up the audio players' state and starts the ones with Autoplay on. */
 void gs_init_audio(void);
 void gs_start_audio(void);
+
+/* Sets up every Inventory's own slot state, all empty (STORY.inventory.md). gs_update_inventory_panel is the per-frame
+   update of each one's own on-screen panel (STORY.inventory-ui-panel.md), once a frame after the scripts, at the
+   same point gs_update_sprites/gs_update_labels run from (it calls straight into both). */
+void gs_init_inventory(void);
+void gs_update_inventory_panel(void);
 
 #endif

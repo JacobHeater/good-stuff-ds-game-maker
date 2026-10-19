@@ -51,8 +51,8 @@ function CommitInput({ label, value, onCommit, testId, error }: { label: string;
   );
 }
 
-/** The sheet drawn with its frames numbered, so the numbers an animation uses can be read off it. */
-function SheetPreview({ sheet }: { sheet: ImportedSprite }): JSX.Element | null {
+/** The sheet drawn with its frames numbered, so the numbers an animation uses can be read off it (also reused by `InventoryField`'s own Slot image, to show its two frames are actually cut apart). */
+export function SheetPreview({ sheet }: { sheet: ImportedSprite }): JSX.Element | null {
   const url = spriteDataUrl(sheet);
   const frames = getSpriteFrames(sheet);
   if (!url) return null;

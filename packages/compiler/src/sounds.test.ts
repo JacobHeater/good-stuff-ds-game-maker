@@ -135,7 +135,7 @@ describe("the generated C for sounds", () => {
     expect(text).toContain("static const GsAudioClip audioClips[] = {\n  { 0, 0, 0, 0 }\n};");
     expect(text).toContain("static const GsAudioPlayer audioPlayers[] = {\n  { 0, 16000, 64, 1, 1, 0, 0 },\n  { 0, 8000, 127, 0, 0, 0, 0 }\n};");
     expect(text).toContain(
-      "  1, 2, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  0, /* skin joint count */\n  0, 0, /* TileMap3D node, palette entry counts */\n  0, /* sky box count */\n  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n};"
+      "  1, 2, 0, 0, 0, /* sound, audio player, audio clip, collider, hull point counts */\n  0, 0, 0, 0, /* animation player, animation, track, key counts */\n  0, /* touch area count */\n  0, /* skin joint count */\n  0, 0, /* TileMap3D node, palette entry counts */\n  0, /* sky box count */\n  0, 0, /* item, inventory counts */\n  nodes, primitives, meshes, lights, tile_maps_3d, tile_map_3d_palette_entries, sky_boxes, items, inventories, textures, sounds, audioPlayers, audioClips, colliders, hull_points, animationPlayers, animations, animTracks, animKeys, touchAreas, { 0, 0, two_d_images, two_d_sprites, 0, two_d_animations, 0, two_d_labels }, 0, mesh_frames, mesh_animations, skin_joints, skin_inverse_bind_matrices\n};"
     );
   });
 

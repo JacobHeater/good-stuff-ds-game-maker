@@ -5,7 +5,7 @@
  *
  * Matrices are 16 `f32` (20.12) values, column-major, as the geometry engine reads them.
  */
-import type { FpsTarget } from "@goodstuff/core";
+import type { FpsTarget, ScreenId } from "@goodstuff/core";
 
 /** One mesh source's vertex data (a built-in primitive or an imported model), shared by every instance that uses it. */
 export interface DsPrimitive {
@@ -112,6 +112,8 @@ export interface DsNode {
   animPlayer: number;
   /** Index into `DsScene3D.touchAreas` when this node is a TouchArea2D or TouchArea3D, otherwise -1. */
   touch: number;
+  /** Index into `DsScene3D.inventories` when this node is an Inventory, otherwise -1. */
+  inventory: number;
 }
 
 /**
@@ -248,6 +250,63 @@ export interface DsSkyBox {
   horizonColor: number;
 }
 
+/**
+ * One project-wide item (STORY.inventory.md), compiled into every scene identically and in the same order as
+ * `ProjectSnapshot.items` -- not deduplicated to what a scene's own Inventory nodes use, unlike meshes/textures,
+ * because `script_code.c` is project-wide (one file, every scene's scripts): a compiled script's own item index must
+ * mean the same project item no matter which scene is running when it executes.
+ */
+export interface DsInventoryItem {
+  /** A frame index a script can pass straight to `gs_sprite_set_frame` (see `DsScene3D.items`'s own note on why this needs no further resolution), or -1 for an item with no icon. */
+  iconFrame: number;
+  maxStack: number;
+}
+
+/**
+ * One Inventory node's own slot count (STORY.inventory.md) and, when at least one of its own panel images is set
+ * (STORY.inventory-ui-panel.md), its on-screen panel -- drawn entirely by the engine at this node's own starting
+ * position. Which items can go in it is project-wide, not per-node.
+ *
+ * The panel fields are only meaningful when `iconSpriteStart >= 0` (a panel is configured at all -- the same rule
+ * `backgroundSprite`/`slotSpriteStart`/`highlightSprite` each independently being `-1` or not follows: every one of
+ * the three images is optional, but *some* panel being on is what turns on the icon sprites and count labels,
+ * which aren't optional once a panel exists at all). A sprite/label "start" is the first of a run of exactly
+ * `slots` entries (one per slot, in slot order) in the owning screen's own `DsScreen2D.sprites`/`labels`.
+ */
+export interface DsInventory {
+  /** Index into `DsScene3D.nodes` (3D) or `DsScene2D.nodes` (2D). */
+  node: number;
+  slots: number;
+  /** The panel's own top-left corner, screen pixels (this node's own starting position) -- meaningless when there's no panel. */
+  panelX: number;
+  panelY: number;
+  /** How many slots wide the grid is; rows are however many `slots` needs at that width (`inventoryRows` in core). */
+  columns: number;
+  /** One slot's own pixel size (`inventorySlotSize` in core: the slot image's own frame size, else the item-icon sheet's, else a 16x16 fallback). */
+  slotWidth: number;
+  slotHeight: number;
+  /** Pixels between one slot's own corner and the next, on each axis. */
+  spacingX: number;
+  spacingY: number;
+  /** Index into the screen's own `DsScreen2D.sprites`, or -1 when no background image is set. */
+  backgroundSprite: number;
+  /** First of a run of `slots` slot-frame sprites (drawn under each slot, empty/filled by its own frame 0/1), or -1 when no slot image is set. */
+  slotSpriteStart: number;
+  /** First of a run of `slots` item-icon sprites (one per slot, its graphic set from `gs_inventory_slot_icon` each frame), or -1 when no panel is configured at all. */
+  iconSpriteStart: number;
+  /** Index into the screen's own `DsScreen2D.sprites`: the sprite shown over whichever slot was last touched, or -1 when no highlight image is set. */
+  highlightSprite: number;
+  /** First of a run of `slots` stack-count labels (one per slot, hidden when that slot holds 0 or 1), or -1 when no panel is configured at all. */
+  labelStart: number;
+  /**
+   * Which of the two screens the panel's own sprites/labels above are indices into -- meaningless when there's no
+   * panel. Only read by the 2D runtime's own GsInventory (scene2d.h): a 3D project's `inventories` only ever has
+   * the one 2D screen (always the sub engine) to begin with, so its own GsInventory (scene.h) has no matching
+   * field and `writeSceneDataC` never writes this one.
+   */
+  screen: ScreenId;
+}
+
 /** One TileMap3D palette entry, compiled exactly like a plain MeshInstance3D's own primitive/texture/color (STORY.tile-map-3d.md). */
 export interface DsTileMap3DPaletteEntry {
   primitive: number;
@@ -304,6 +363,10 @@ export interface DsScene3D {
    * here has to be resident in RAM until the runtime actually opens it (STORY.tile-map-3d.md's Phase 1/2).
    */
   tileMap3DChunkFiles: Record<string, Uint8Array>;
+  /** Every project item (STORY.inventory.md), in `ProjectSnapshot.items`'s own order -- see `DsInventoryItem`'s own comment for why this is the full list, not just what this scene's own Inventory nodes use. */
+  items: DsInventoryItem[];
+  /** Every Inventory node in the scene. */
+  inventories: DsInventory[];
   meshes: DsMesh[];
   primitives: DsPrimitive[];
   textures: DsTexture[];
@@ -523,6 +586,10 @@ export interface DsScene2D {
   audioClips: DsAudioClip[];
   /** Every TileMap with a sheet chosen, one per node (requirements/scene-designer/STORY.standalone-2d-tilemaps.md). */
   tileMaps: DsTileMap[];
+  /** Every project item (STORY.inventory.md), same order and same meaning as `DsScene3D.items`. */
+  items: DsInventoryItem[];
+  /** Every Inventory node in the scene. */
+  inventories: DsInventory[];
   /** Generated C: every script's `_ready`/`_process` functions, its per-node variables, and the instance table the runtime walks each frame. Empty when no script runs. */
   scriptCode: string;
 }
