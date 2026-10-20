@@ -267,6 +267,7 @@ typedef struct {
 	uint16_t primitive;
 	uint16_t texture; /* 0 = none, else 1 + index into GsScene.textures */
 	uint16_t diffuse; /* RGB15 */
+	uint8_t solid; /* gs_tile_solid_3d() */
 } GsTileMap3DPaletteEntry;
 
 /* One TileMap3D node's own metadata -- its painted cells are never compiled in here (STORY.tile-map-3d.md): they

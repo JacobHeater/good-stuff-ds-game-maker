@@ -75,6 +75,8 @@ export type Resolution =
   | { kind: "bodyState"; target: NodeTarget; state: "floor" | "wall" | "ceiling" }
   /** `map.tile_solid(x, y)`: whether the tile under a world-space pixel position is solid ground. */
   | { kind: "tileSolidCall"; target: NodeTarget }
+  /** `map.tile_solid_3d(x, y, z)`: TileMap3D's own equivalent, whether the painted tile at a world position is solid ground. */
+  | { kind: "tileSolid3DCall"; target: NodeTarget }
   /**
    * A call on an Inventory node (STORY.inventory.md). `item`, when the method takes one, is the project item's
    * compile-time index (its own name, a string literal, resolved against the project's shared item list); a `slot`

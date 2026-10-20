@@ -114,7 +114,10 @@ Scenario: A palette-only model survives save
     texture used *only* by a palette entry -- the normal case, since the whole point of painting a grid is not
     needing a separate `MeshInstance3D` for every tile -- was silently dropped from the project file on save,
     leaving the palette with a dangling reference. Fixed in `project-snapshot.ts`'s `pruneUnusedAssets`.
-- **Not built** (explicitly out of scope from the start): per-axis tile rotation beyond Y/yaw; collision for painted
-  tiles (a real, separate follow-up -- likely each palette tile optionally carrying its own `CollisionShape3D`
-  template); and editing the grid from a running script (this story is editor-time authoring only, streamed at play
-  time, not a runtime-mutable world).
+- **Not built** (explicitly out of scope from the start): per-axis tile rotation beyond Y/yaw; and editing the grid
+  from a running script (this story is editor-time authoring only, streamed at play time, not a runtime-mutable
+  world). Collision for painted tiles, once also on this list, shipped as a follow-up: `STORY.tile-map-3d-solid.md`
+  -- an explicit per-tile `solid` checkbox and a script's own `tile_solid_3d(x, y, z)` query, not a `CollisionShape3D`
+  template per palette entry as first sketched here, and not folded into `move_and_collide`/`ray_cast` automatically
+  (that remains a real, separate, larger follow-up, blocked on deciding how collision streaming should relate to
+  the render window's own streaming -- see that story's own notes).

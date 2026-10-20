@@ -20,6 +20,13 @@ export interface TileMap3DPaletteEntry {
   textureId?: string;
   /** "#rrggbb": the tile's diffuse color (see `mesh-color.ts`); absent for the default. */
   color?: string;
+  /** Whether a cell painted with this entry is solid ground for a script's `tile_solid_3d(x, y, z)`. Absent means not solid. */
+  solid?: boolean;
+}
+
+/** Whether a palette entry is solid ground. Absent (or any non-`true` value) means not solid. */
+export function isTileSolid3D(entry: Pick<TileMap3DPaletteEntry, "solid">): boolean {
+  return entry.solid === true;
 }
 
 /** One painted cell: which palette entry, and its yaw (0..3 quarter turns about Y). */

@@ -1,4 +1,4 @@
-import { createSceneNode, type ImportedMesh, type TileMap3DData } from "@goodstuff/core";
+import { createSceneNode, type ImportedMesh, type SceneNode, type TileMap3DData } from "@goodstuff/core";
 import { describe, expect, it } from "vitest";
 
 import { cubeProject } from "./fixtures";
@@ -59,6 +59,34 @@ describe("TileMap3D compiles its cells into per-chunk NitroFS files, not C data"
     expect(bytes[cellIndex * 2 + 1]).toBe(2); // rotationY
     // Every other cell in the chunk stays 0 (empty).
     expect(bytes.filter((b) => b !== 0)).toHaveLength(2);
+  });
+
+  it("compiles each palette entry's own solid flag, with no leak between them", () => {
+    const project = cubeProject();
+    project.meshes = [stoneMesh];
+    project.scene.children.push(
+      grid({
+        palette: [
+          { id: "stone", importedMeshId: "stone-mesh", solid: true },
+          { id: "water", importedMeshId: "stone-mesh" }
+        ],
+        cells: {}
+      })
+    );
+    const scene = translateScene3D(project).scene!;
+    expect(scene.tileMap3DPaletteEntries).toHaveLength(2);
+    expect(scene.tileMap3DPaletteEntries[0].solid).toBe(true);
+    expect(scene.tileMap3DPaletteEntries[1].solid).toBe(false);
+  });
+
+  it("compiles a script's tile_solid_3d(x, y, z) to gs_tile_solid_3d(...)", () => {
+    const project = cubeProject();
+    const script: SceneNode = { ...project.scene.children.find((n) => n.name === "Cube")!, scriptId: "s" };
+    project.scene.children = [...project.scene.children.filter((n) => n.name !== "Cube"), script, grid({ palette: [], cells: {} })];
+    project.scripts = [{ id: "s", name: "S", source: "func _process(delta):\n    if $Grid.tile_solid_3d(position.x, position.y - 1.0, position.z):\n        pass\n" }];
+    const { scene, diagnostics } = translateScene3D(project);
+    expect(diagnostics).toEqual([]);
+    expect(scene!.scriptCode).toContain("gs_tile_solid_3d(");
   });
 
   it("reports a palette entry naming a missing model instead of crashing", () => {

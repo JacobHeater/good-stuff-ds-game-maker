@@ -113,7 +113,7 @@ static const GsSpawnPool spawn_pools[] = {
 };
 
 static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {
-  { 0, 0, 0 }
+  { 0, 0, 0, 0 }
 };
 
 static const GsTileMap3D tile_maps_3d[] = {

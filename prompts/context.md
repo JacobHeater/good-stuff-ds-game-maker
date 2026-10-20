@@ -1811,6 +1811,36 @@ version — this is a summary, not a substitute):
   test). Compiler-level `island-survival.test.ts` and persistence round-trip (`example-projects.test.ts`,
   `examples/island-survival.gsds` written via `GSDS_WRITE_EXAMPLES=1`) also pass. Full monorepo suite (1599 tests)
   and `tsc --noEmit` clean across every package.
+- **TileMap3D solid tiles** (`scene-designer/STORY.tile-map-3d-solid.md`, done). Owner: "tiles should be able to
+  have a solid collision checkbox" — TileMap3D shipped with zero collision at all (a known, deferred gap, hit
+  directly while building island-survival's own floor workaround). Chose (offered the choice) an explicit script
+  query mirroring the 2D TileMap's own already-shipped `solid`/`tile_solid()`, not automatic collision folded into
+  move_and_collide/ray_cast — lower risk, sidesteps "what does a body outside the streamed chunk window collide
+  against at all." `solid?: boolean` lands on `TileMap3DPaletteEntry` itself (the palette entry is already
+  TileMap3D's own "one entry per tile type," unlike 2D's sheet-frame-index scheme), threaded through the compiled
+  wire format into a new `gs_tile_solid_3d(node, x, y, z)` runtime query and a new `tile_solid_3d(x, y, z)` script
+  builtin (its own name, not a mode-varying signature on `tile_solid` — TileMap/TileMap3D are already distinct node
+  kinds). **A real structural prerequisite**: TileMap3D's own chunk-streaming state (`Tm3dSlot`, `tm3d_slots`,
+  `tm3d_init`/`tm3d_load`/`tm3d_refresh`) lived entirely inside `main.c` as file-local statics — the one subsystem
+  never split into its own `gs_*.c`/`.h` pair the way collision/inventory/spawn-pools already are, since nothing
+  outside main.c's own render loop ever needed to reach it before. Extracted into new `gs_tile_map_3d.c`/`.h`
+  (verbatim move; main.c keeps only the GL-specific drawing), confirmed with a real devkitARM build of the split
+  tree (clean, zero new warnings). The query's own two real, documented limitations (inherent to streaming, not
+  bugs): a chunk outside the runtime's streamed 3x3x3 window reads not-solid, not "unknown"; and that window only
+  recenters once a frame, after scripts run, so a query reflects the previous frame's camera position.
+  **A real bug in the hardware-test harness itself, caught while building this story's own permanent test, not a
+  unit test**: `runDump` (`testing/framebuffer-dump.ts`, the CPU-exact harness coin-game/spawn-pools/island-survival
+  all already use) generates its own minimal `main()` that never called `nitroFSInit()` — harmless until now, since
+  nothing tested through it ever needed to read a file. Every chunk load silently failed, so every query read as
+  empty regardless of what was actually painted; isolated by confirming the compiled chunk data was correct on the
+  TypeScript side while the runtime read came back wrong. Fixed by adding `nitroFSInit(NULL)` (same unconditional
+  call the real runtime already makes) to the harness's own generated main — confirmed harmless by rerunning
+  `coin-game.rom.test.ts` (20 cases) afterward. Hardware-verified: new `testing/tile-map-3d-solid.rom.test.ts` (5
+  cases: solid/non-solid/unpainted cells, the far-tile-outside-the-window limitation, and the same tile reading
+  solid once the window recenters near it) plus compiler-level (`tile-map-3d.test.ts`) and script-level
+  (`script-tilemap-3d.test.ts`, 9 tests mirroring `script-tilemap.test.ts`'s own) tests. Editor: a "Solid" checkbox
+  on `TileMap3DField.tsx`'s own palette rows, reusing the field's existing whole-array-replace update path, no new
+  editor-store action. Full monorepo suite (1614 tests) and `tsc --noEmit` clean across every package.
 
 ## Known test-environment failures (not caused by the code; don't chase them)
 - `translate-scene-3d.test.ts` "the runtime's fallback scene": on this Windows checkout (`core.autocrlf=true`) the committed

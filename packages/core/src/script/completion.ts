@@ -130,6 +130,8 @@ interface Capabilities {
   label: boolean;
   /** A TileMap: `tile_solid(x, y)`. */
   tileMap: boolean;
+  /** A TileMap3D: `tile_solid_3d(x, y, z)`. */
+  tileMap3D: boolean;
   /** An Inventory: visible (its own on-screen panel), add/remove/count/slot_count/slot_item_is/slot_icon/selected_slot/select_slot. */
   inventory: boolean;
   /** The animation names to offer in `play("`. */
@@ -175,6 +177,7 @@ function membersFor(c: Capabilities): ScriptCompletion[] {
   }
   if (c.shape || c.shape2D) list.push(method("overlaps", "(other) -> bool", "Whether it touches another collision shape.", "overlaps()", 1, true));
   if (c.tileMap) list.push(method("tile_solid", "(x, y) -> bool", "Whether the tile at that world position (in pixels, like position.x/.y) is solid ground.", "tile_solid(, )", 3));
+  if (c.tileMap3D) list.push(method("tile_solid_3d", "(x, y, z) -> bool", "Whether the painted tile at that world position (like position.x/.y/.z) is solid ground.", "tile_solid_3d(, , )", 4));
   if (c.inventory) {
     list.push(prop("visible", "bool", "Whether its own on-screen panel is shown (STORY.inventory-ui-panel.md)."));
     list.push(method("add", "(item, count) -> int", 'Adds count of the item (in quotes) to the first slots that fit; returns how many didn\'t fit.', 'add("", )', 3));
@@ -211,12 +214,13 @@ function capabilitiesOfKind(kind: SceneNodeKind, hasShape: boolean, animations: 
     touch: kind === "TouchArea2D" || kind === "TouchArea3D",
     label: kind === "Label",
     tileMap: kind === "TileMap",
+    tileMap3D: kind === "TileMap3D",
     inventory: kind === "Inventory",
     animations
   };
 }
 
-const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, shape2D: true, body: true, touch: true, label: false, tileMap: true, inventory: true, animations: [] };
+const EVERYTHING: Capabilities = { transform: true, sprite: false, audio: true, animation: true, speed: true, shape: true, shape2D: true, body: true, touch: true, label: false, tileMap: true, tileMap3D: true, inventory: true, animations: [] };
 
 /** What `self` can do: what every node the script is attached to can do (everything when it is attached to none yet). */
 function selfCapabilities(context: ScriptSceneContext): Capabilities {
@@ -234,6 +238,7 @@ function selfCapabilities(context: ScriptSceneContext): Capabilities {
     touch: each.every((c) => c.touch),
     label: each.every((c) => c.label),
     tileMap: each.every((c) => c.tileMap),
+    tileMap3D: each.every((c) => c.tileMap3D),
     inventory: each.every((c) => c.inventory),
     animations: [...new Set(each.flatMap((c) => c.animations))]
   };

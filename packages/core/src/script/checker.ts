@@ -33,7 +33,7 @@ const PENDING_GLOBAL_NODE_ID_PREFIX = "\u0000pending-global:";
 /** Names that mean something built in, so a script's own variables and functions can't use them. */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set([
   "abs", "min", "max", "clamp", "sqrt", "sin", "cos", "int", "float", "randi", "randf", "atan2", "bool", "void",
-  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "tile_solid", "delta",
+  "Input", "self", "position", "rotation", "scale", "visible", "volume", "pitch", "play", "stop", "is_playing", "speed_scale", "overlaps", "move_and_collide", "is_on_floor", "is_on_wall", "is_on_ceiling", "probe_solid", "ray_cast", "change_scene", "save_game", "load_game", "has_save", "is_touched", "is_touch_pressed", "is_touch_released", "tile_solid", "tile_solid_3d", "delta",
   "add", "remove", "count", "slot_count", "slot_item_is", "slot_icon", "set_frame", "selected_slot", "select_slot",
   "spawn", "despawn", "is_spawned"
 ]);
@@ -951,6 +951,9 @@ class Checker {
         case "tile_solid":
           this.error(expr.nameSpan, "tile_solid must be called: tile_solid(x, y).");
           return "unknown";
+        case "tile_solid_3d":
+          this.error(expr.nameSpan, "tile_solid_3d must be called: tile_solid_3d(x, y, z).");
+          return "unknown";
         case "add":
         case "remove":
           this.error(expr.nameSpan, `${expr.name} must be called: ${expr.name}(item, count).`);
@@ -975,7 +978,7 @@ class Checker {
           this.error(expr.nameSpan, "set_frame must be called: set_frame(frame).");
           return "unknown";
         default:
-          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text, and (tile maps) tile_solid(x, y), and (inventories) add(item, count), remove(item, count), count(item), slot_count(slot), slot_item_is(slot, item), slot_icon(slot), selected_slot() and select_slot(slot), and (sprites) set_frame(frame).`);
+          this.error(expr.nameSpan, `A node has no member "${expr.name}"; it has position, rotation, scale, visible, and (sound players) volume, pitch, play() and stop(), (collision shapes) overlaps(other), and (bodies) move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), and (animation players) play("name"), stop(), is_playing() and speed_scale, and (touch areas) is_touched(), is_touch_pressed() and is_touch_released(), and (labels) value and text, and (tile maps) tile_solid(x, y), and (tile maps 3D) tile_solid_3d(x, y, z), and (inventories) add(item, count), remove(item, count), count(item), slot_count(slot), slot_item_is(slot, item), slot_icon(slot), selected_slot() and select_slot(slot), and (sprites) set_frame(frame).`);
           return "unknown";
       }
     }
@@ -1008,6 +1011,7 @@ class Checker {
           return this.checkBodyCall(expr, callee.name, object.res.target, callee.nameSpan);
         }
         if (callee.name === "tile_solid") return this.checkTileSolid(expr, object.res.target, callee.nameSpan);
+        if (callee.name === "tile_solid_3d") return this.checkTileSolid3D(expr, object.res.target, callee.nameSpan);
         if (
           callee.name === "add" ||
           callee.name === "remove" ||
@@ -1021,7 +1025,7 @@ class Checker {
           return this.checkInventoryCall(expr, callee.name, object.res.target, callee.nameSpan);
         }
         if (callee.name === "set_frame") return this.checkSpriteSetFrame(expr, object.res.target, callee.nameSpan);
-        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), touch areas have is_touched(), is_touch_pressed() and is_touch_released(), tile maps have tile_solid(x, y), inventories have add(item, count), remove(item, count), count(item), slot_count(slot), slot_item_is(slot, item), slot_icon(slot), selected_slot() and select_slot(slot), and sprites have set_frame(frame).`);
+        this.error(callee.nameSpan, `A node has no function "${callee.name}"; sound players have play() and stop(), collision shapes have overlaps(other), bodies have move_and_collide(dx, dy, dz), is_on_floor(), is_on_wall() and is_on_ceiling(), animation players have play("name"), stop() and is_playing(), touch areas have is_touched(), is_touch_pressed() and is_touch_released(), tile maps have tile_solid(x, y), tile maps 3D have tile_solid_3d(x, y, z), inventories have add(item, count), remove(item, count), count(item), slot_count(slot), slot_item_is(slot, item), slot_icon(slot), selected_slot() and select_slot(slot), and sprites have set_frame(frame).`);
         return "unknown";
       }
       this.error(callee, "This can't be called.");
@@ -1194,6 +1198,42 @@ class Checker {
     const kind = this.kindOf(target);
     if (kind === null || kind === "TileMap") return true;
     this.error(at, `tile_solid() works on a TileMap node, but $${target.name} is a ${kind}. Name a TileMap instead.`);
+    return false;
+  }
+
+  /**
+   * `map.tile_solid_3d(x, y, z)` (or `tile_solid_3d(x, y, z)` for `self`): whether the painted tile at a world
+   * position (the same space a node's own `position` is in) is solid ground (STORY.tile-map-3d.md) -- the 3D
+   * TileMap3D's own equivalent of the 2D TileMap's `tile_solid()`, a separate builtin (not a mode-varying signature
+   * on the shared name) since TileMap and TileMap3D are already distinct node kinds.
+   */
+  private checkTileSolid3D(expr: Extract<Expr, { kind: "call" }>, target: NodeTarget, nameSpan: SourceSpan): ExprType {
+    if (expr.args.length !== 3) {
+      this.checkArgCount(expr, 3, "tile_solid_3d()");
+      for (const arg of expr.args) this.typeOfExpr(arg);
+    } else {
+      for (const arg of expr.args) {
+        const value = this.asValue(this.typeOfExpr(arg), arg);
+        if (value !== null && !isNumeric(value)) this.error(arg, "tile_solid_3d() needs numbers: the world position to check, like tile_solid_3d(position.x, position.y - 1.0, position.z).");
+      }
+    }
+    if (this.requireTileMap3D(target, nameSpan)) expr.res = { kind: "tileSolid3DCall", target };
+    return "bool";
+  }
+
+  /** Whether `target` is a TileMap3D (what `tile_solid_3d()` works on); reports what to do when it isn't. */
+  private requireTileMap3D(target: NodeTarget, at: SourceSpan): boolean {
+    if (target.kind === "self") {
+      for (const attached of this.context.attached) {
+        if (attached.kind === "TileMap3D") continue;
+        this.error(at, `tile_solid_3d() works on a TileMap3D node, and this script is attached to ${attached.name} (a ${attached.kind}). Attach it to a TileMap3D, or name one: $MapName.tile_solid_3d(x, y, z).`);
+        return false;
+      }
+      return true;
+    }
+    const kind = this.kindOf(target);
+    if (kind === null || kind === "TileMap3D") return true;
+    this.error(at, `tile_solid_3d() works on a TileMap3D node, but $${target.name} is a ${kind}. Name a TileMap3D instead.`);
     return false;
   }
 
@@ -1700,6 +1740,8 @@ class Checker {
         return this.checkAnimationCall(expr, "is_playing", { kind: "self" }, expr.callee);
       case "tile_solid":
         return this.checkTileSolid(expr, { kind: "self" }, expr.callee);
+      case "tile_solid_3d":
+        return this.checkTileSolid3D(expr, { kind: "self" }, expr.callee);
       case "add":
       case "remove":
       case "count":

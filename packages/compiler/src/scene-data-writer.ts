@@ -285,9 +285,9 @@ export function writeSceneDataC(scene: DsScene3D, index = 0): string {
   out.push("");
 
   out.push("static const GsTileMap3DPaletteEntry tile_map_3d_palette_entries[] = {");
-  if (scene.tileMap3DPaletteEntries.length === 0) out.push("  { 0, 0, 0 }");
+  if (scene.tileMap3DPaletteEntries.length === 0) out.push("  { 0, 0, 0, 0 }");
   scene.tileMap3DPaletteEntries.forEach((p, i) => {
-    out.push(`  { ${p.primitive}, ${p.texture}, ${p.diffuse} }${i < scene.tileMap3DPaletteEntries.length - 1 ? "," : ""}`);
+    out.push(`  { ${p.primitive}, ${p.texture}, ${p.diffuse}, ${p.solid ? 1 : 0} }${i < scene.tileMap3DPaletteEntries.length - 1 ? "," : ""}`);
   });
   out.push("};");
   out.push("");

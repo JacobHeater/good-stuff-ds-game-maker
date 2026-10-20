@@ -109,6 +109,16 @@ export function TileMap3DField({
                   Default
                 </button>
               </div>
+              <label className="flex items-center gap-1 text-[11px] text-editor-text">
+                <input
+                  type="checkbox"
+                  checked={entry.solid === true}
+                  onChange={(event) => updateEntry(entry.id, { solid: event.target.checked })}
+                  aria-label={`Tile ${entry.id} solid`}
+                  title="Solid ground"
+                />
+                Solid
+              </label>
             </div>
           );
         })}

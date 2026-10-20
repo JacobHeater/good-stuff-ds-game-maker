@@ -121,6 +121,18 @@ int gs_probe_solid(int body, int32_t y, int32_t x0, int32_t x1, int32_t x2);
 int32_t gs_ray_cast(int body, int32_t ox, int32_t oy, int32_t oz, int32_t dx, int32_t dy, int32_t dz, int32_t max);
 int gs_body_state(int body, int mask);
 
+/*
+ * TileMap3D (gs_tile_map_3d.c, STORY.tile-map-3d.md). `node` is the TileMap3D's own place in GsScene.nodes; x, y, z
+ * are world units (f32), the same space a node's own position is in. A node that isn't a TileMap3D, or a position
+ * with no painted (or no solid) tile, is never solid -- same policy the 2D TileMap's own tile_solid() uses for "off
+ * the grid." Two real limitations a plain TileMap/CollisionShape3D query never has, both inherent to this grid's
+ * own chunk streaming: (1) a position in a chunk currently outside the runtime's own streamed 3x3x3 window around
+ * the camera reads as not-solid, not "unknown" -- a body far from the camera cannot reliably query solidity there;
+ * (2) that window is only recentred once a frame, after scripts run, so a query reflects the PREVIOUS frame's
+ * camera position, not the one it's about to move to this frame.
+ */
+int gs_tile_solid_3d(int node, int32_t x, int32_t y, int32_t z);
+
 /* ---- Animation (requirements/animation/TASK.compile-and-run-animations.md). `player` is an AnimationPlayer's index, from the node it belongs to (-1 when the node has none: every call is then a no-op); `animation` is an index within that player's animations. */
 int gs_node_anim_player(int node);
 void gs_anim_play(int player, int animation);

@@ -375,6 +375,36 @@ export function tileMap3DStreamProject(): ProjectSnapshot {
   };
 }
 
+/**
+ * A TileMap3D with two palette entries (one solid, one not) and three painted cells: one of each entry near the
+ * grid's own origin (within the runtime's own default-loaded chunk window), and a third, solid one, far enough
+ * away (chunk 12 along X, at chunk size 8) to fall well outside that window regardless of where the camera starts
+ * -- used by the runtime's own gs_tile_solid_3d hardware test to lock in that real, documented limitation (a tile
+ * outside the streamed window reads as not-solid, not "unknown").
+ */
+export function tileMap3DSolidProject(): ProjectSnapshot {
+  const tileMesh: ImportedMesh = {
+    id: "tile-mesh",
+    name: "Tile",
+    positions: [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5],
+    normals: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0],
+    indices: [0, 1, 2, 0, 2, 3]
+  };
+  const grid = createSceneNode({ name: "Grid", kind: "TileMap3D" });
+  grid.tileMap3D = {
+    palette: [
+      { id: "stone", importedMeshId: "tile-mesh", solid: true },
+      { id: "water", importedMeshId: "tile-mesh" }
+    ],
+    cells: {
+      "0,0,0": { paletteId: "stone", rotationY: 0 },
+      "1,0,0": { paletteId: "water", rotationY: 0 },
+      "100,0,0": { paletteId: "stone", rotationY: 0 }
+    }
+  };
+  return { ...project("TileSolid", [camera("Camera", { x: 2.5, y: 2, z: 3.5 }), sun("Sun", { x: -2, y: 4, z: 3 }), grid]), meshes: [tileMesh] };
+}
+
 // ---- 2D sprites ---------------------------------------------------------------------------------------------------------------
 
 /** A picture built from a function of the pixel, as 8-bit RGBA (row 0 on top). */

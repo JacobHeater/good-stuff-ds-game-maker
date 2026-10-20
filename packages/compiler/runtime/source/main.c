@@ -13,6 +13,7 @@
 
 #include "gs_api.h"
 #include "gs_runtime.h"
+#include "gs_tile_map_3d.h"
 #include "scene.h"
 
 /* Material colors shared by every mesh until the scene model has materials. */
@@ -334,132 +335,9 @@ static void draw_sky_box(void) {
 	glEnd();
 }
 
-/* ---- TileMap3D: chunks streamed from the ROM's own NitroFS region, not resident all at once (STORY.tile-map-3d.md's Phase 3) -------- */
-
-/* Must match TILE_MAP_3D_CHUNK_SIZE (packages/core/src/tile-map-3d.ts) and translate-tile-map-3d.ts's own chunk file
-   format: CHUNK_SIZE^3 cells, 2 bytes each (palette index + 1, 0 = empty; then rotationY), indexed lx + ly*8 + lz*64. */
-#define TM3D_CHUNK_SIZE 8
-#define TM3D_CELLS_PER_CHUNK (TM3D_CHUNK_SIZE * TM3D_CHUNK_SIZE * TM3D_CHUNK_SIZE)
-#define TM3D_CHUNK_BYTES (TM3D_CELLS_PER_CHUNK * 2)
-/* A 3x3x3 window of loaded chunks around the camera (24 scene units to a side, at the default chunk size) --
-   proves the point of streaming (a painted world far larger than this is never resident at once) without needing
-   many chunks loaded just to avoid visible pop-in as the camera moves. */
-#define TM3D_WINDOW 3
-#define TM3D_SLOTS (TM3D_WINDOW * TM3D_WINDOW * TM3D_WINDOW)
-
-typedef struct {
-	int valid; /* this slot's (cx, cy, cz) is the most recent load attempt for that position, and `cells` reflects it exactly -- either real chunk data, or all zero (an empty chunk, same as one with no file: translate-tile-map-3d.ts never writes an empty chunk's file at all) */
-	int cx, cy, cz;
-	uint8_t cells[TM3D_CHUNK_BYTES];
-} Tm3dSlot;
-
-/* One fixed pool of TM3D_SLOTS slots per TileMap3D node in the scene, flat (tm3d_slots[tileMapIndex * TM3D_SLOTS + slot]) --
-   allocated in enter_scene alongside every other per-scene table, freed and rebuilt the same way. tm3d_center is the
-   chunk each pool was last centred on; tm3d_has_center says whether that's happened yet (so the very first frame
-   always loads, rather than comparing against a stale all-zero center that might legitimately be (0,0,0)). */
-static Tm3dSlot *tm3d_slots;
-static int *tm3d_center; /* 3 ints (cx, cy, cz) per TileMap3D node, flat */
-static uint8_t *tm3d_has_center;
-/* Reused scratch space for whichever TileMap3D tm3d_refresh is currently recentring (one at a time, never concurrently)
-   -- TM3D_SLOTS Tm3dSlot structures is tens of KB, too large to put on the ARM9's own small stack. */
-static Tm3dSlot *tm3d_scratch;
-
-static void tm3d_free_tables(void) {
-	free(tm3d_slots);
-	free(tm3d_center);
-	free(tm3d_has_center);
-	free(tm3d_scratch);
-	tm3d_slots = 0;
-	tm3d_center = 0;
-	tm3d_has_center = 0;
-	tm3d_scratch = 0;
-}
-
-static void tm3d_init(void) {
-	tm3d_free_tables();
-	if (gs_scene.tileMap3DCount == 0) return;
-	tm3d_slots = malloc(sizeof(Tm3dSlot) * TM3D_SLOTS * gs_scene.tileMap3DCount);
-	tm3d_center = malloc(sizeof(int) * 3 * gs_scene.tileMap3DCount);
-	tm3d_has_center = calloc(gs_scene.tileMap3DCount, 1);
-	tm3d_scratch = malloc(sizeof(Tm3dSlot) * TM3D_SLOTS);
-	for (int i = 0; i < TM3D_SLOTS * gs_scene.tileMap3DCount; i++) tm3d_slots[i].valid = 0;
-}
-
-/* `worldPos` (f32, world space) expressed in TileMap3D node `node`'s own local space: the inverse of compose_node's
-   own rotation + scale + translation (gs_runtime.c) -- the same way gs_compute_view inverts a camera's rotation and
-   translation, with scale (ignored for a camera, but not for a grid: scaling a TileMap3D scales its cell spacing
-   too) divided back out afterward. Used only to decide which chunk is nearest the camera, an occasional calculation,
-   not a per-vertex one. */
-static void tm3d_world_to_local(int node, const int32_t worldPos[3], int32_t out[3]) {
-	const int32_t *w = gs_world_matrix[node].m;
-	int32_t rel[3];
-	for (int row = 0; row < 3; row++) rel[row] = worldPos[row] - w[12 + row];
-	for (int row = 0; row < 3; row++) {
-		int64_t sum = 0;
-		for (int k = 0; k < 3; k++) sum += (int64_t)w[row * 4 + k] * rel[k]; /* row of R^T == row of R read across, not down -- see gs_compute_view's own comment */
-		out[row] = gs_divf((int32_t)(sum >> 12), gs_world_scale[node][row]);
-	}
-}
-
-/* Loads chunk (cx, cy, cz) of `tileMap` into `slot`, or leaves it all zero (an empty chunk) when that chunk has no
-   file at all -- translate-tile-map-3d.ts never writes one for a chunk with no painted cells, so a missing file is
-   the ordinary, expected case for most of a sparse world, not an error. */
-static void tm3d_load(const GsTileMap3D *tileMap, int cx, int cy, int cz, Tm3dSlot *slot) {
-	slot->valid = 1;
-	slot->cx = cx;
-	slot->cy = cy;
-	slot->cz = cz;
-	memset(slot->cells, 0, sizeof(slot->cells));
-	char path[96];
-	snprintf(path, sizeof(path), "nitro:/%s%d_%d_%d.bin", tileMap->chunkPathPrefix, cx, cy, cz);
-	FILE *f = fopen(path, "rb");
-	if (!f) return;
-	fread(slot->cells, 1, TM3D_CHUNK_BYTES, f);
-	fclose(f);
-}
-
-/* Recentres TileMap3D `t`'s own window of loaded chunks on wherever the camera now is, if it has crossed into a
-   different chunk since the last time this ran (the common case, most frames: nothing to do, one integer compare
-   per axis). A slot already holding the right chunk is kept as-is rather than reloaded -- sliding the window by one
-   chunk, the ordinary case of the camera walking through the world, reuses most of it. */
-static void tm3d_refresh(int t, const GsTileMap3D *tileMap, const int32_t cameraWorld[3]) {
-	int32_t local[3];
-	tm3d_world_to_local(tileMap->node, cameraWorld, local);
-	/* Floor to the containing cell (f32 -> int, arithmetic shift so a negative position floors correctly, same
-	   convention this runtime already relies on elsewhere -- see mat4_multiply's own `>> 12`), then floor-divide by
-	   TM3D_CHUNK_SIZE (a power of two: another arithmetic shift) to the chunk it's in -- chunkOf's own math in
-	   packages/core/src/tile-map-3d.ts, just done in fixed point instead of on a stored integer cell coordinate. */
-	int cx = (local[0] >> 12) >> 3, cy = (local[1] >> 12) >> 3, cz = (local[2] >> 12) >> 3;
-
-	int *center = &tm3d_center[t * 3];
-	if (tm3d_has_center[t] && center[0] == cx && center[1] == cy && center[2] == cz) return;
-
-	Tm3dSlot *slots = &tm3d_slots[t * TM3D_SLOTS];
-	const int half = TM3D_WINDOW / 2;
-	int n = 0;
-	for (int dz = -half; dz <= half; dz++) {
-		for (int dy = -half; dy <= half; dy++) {
-			for (int dx = -half; dx <= half; dx++) {
-				int wx = cx + dx, wy = cy + dy, wz = cz + dz;
-				int found = -1;
-				for (int i = 0; i < TM3D_SLOTS; i++) {
-					if (slots[i].valid && slots[i].cx == wx && slots[i].cy == wy && slots[i].cz == wz) {
-						found = i;
-						break;
-					}
-				}
-				if (found >= 0) tm3d_scratch[n] = slots[found];
-				else tm3d_load(tileMap, wx, wy, wz, &tm3d_scratch[n]);
-				n++;
-			}
-		}
-	}
-	memcpy(slots, tm3d_scratch, sizeof(Tm3dSlot) * TM3D_SLOTS);
-	center[0] = cx;
-	center[1] = cy;
-	center[2] = cz;
-	tm3d_has_center[t] = 1;
-}
+/* ---- TileMap3D drawing: the chunk-streaming state itself (tm3d_slots, tm3d_init/tm3d_refresh) lives in
+   gs_tile_map_3d.c now (STORY.tile-map-3d.md, split out so a script's own gs_tile_solid_3d query and the
+   hardware-test harness can reach it too) -- this file keeps only what actually needs GL. -------------------- */
 
 /* Draws every non-empty cell of TileMap3D `t`'s own currently-loaded window: the grid's own world transform once
    (its node's rotation/translation via glMultMatrix4x4, same as draw_mesh's own rigid path, then its scale on the

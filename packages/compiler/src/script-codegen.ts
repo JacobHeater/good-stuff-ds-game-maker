@@ -490,6 +490,11 @@ class ScriptWriter {
           code: `gs_tile_solid(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`,
           ty: "bool" as ScriptType
         };
+      case "tileSolid3DCall":
+        return {
+          code: `gs_tile_solid_3d(${this.nodeIndex(res.target)}, ${expr.args.map((arg) => this.convert(this.expr(arg), "float")).join(", ")})`,
+          ty: "bool" as ScriptType
+        };
       case "inventoryCall": {
         const inv = `gs_node_inventory(${this.nodeIndex(res.target)})`;
         const intArg = (i: number): string => this.convert(this.expr(expr.args[i]), "int");

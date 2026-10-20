@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cellAt3D, chunkKey, chunkOf, DEFAULT_TILE_MAP_3D, eraseCell3D, getTileMap3D, listCells3D, paintCell3D, TILE_MAP_3D_CHUNK_SIZE, type TileMap3DData } from "./tile-map-3d";
+import { cellAt3D, chunkKey, chunkOf, DEFAULT_TILE_MAP_3D, eraseCell3D, getTileMap3D, isTileSolid3D, listCells3D, paintCell3D, TILE_MAP_3D_CHUNK_SIZE, type TileMap3DData } from "./tile-map-3d";
 
 const stone = { paletteId: "stone", rotationY: 0 as const };
 
@@ -62,6 +62,21 @@ describe("chunkOf / chunkKey", () => {
 
   it("names a chunk's own file key from its chunk coordinates", () => {
     expect(chunkKey(1, -2, 3)).toBe("1_-2_3");
+  });
+});
+
+describe("isTileSolid3D", () => {
+  it("is false when solid is absent, true when set, false when explicitly false", () => {
+    expect(isTileSolid3D({})).toBe(false);
+    expect(isTileSolid3D({ solid: true })).toBe(true);
+    expect(isTileSolid3D({ solid: false })).toBe(false);
+  });
+
+  it("round-trips through getTileMap3D's own palette", () => {
+    const node = { tileMap3D: { palette: [{ id: "grass", importedMeshId: "m", solid: true }, { id: "water", importedMeshId: "m2" }] } };
+    const data = getTileMap3D(node);
+    expect(isTileSolid3D(data.palette[0])).toBe(true);
+    expect(isTileSolid3D(data.palette[1])).toBe(false);
   });
 });
 

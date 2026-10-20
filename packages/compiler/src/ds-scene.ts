@@ -335,6 +335,8 @@ export interface DsTileMap3DPaletteEntry {
   texture: number;
   /** RGB15. */
   diffuse: number;
+  /** Solid ground for a script's `tile_solid_3d(x, y, z)` (STORY.tile-map-3d.md). */
+  solid: boolean;
 }
 
 /**

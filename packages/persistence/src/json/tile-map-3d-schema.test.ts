@@ -43,6 +43,13 @@ describe("TileMap3D in the project file", () => {
     expect(validator.validate(projectWithTileMap3D({ palette: [{ id: "a", importedMeshId: "mesh-1", scale: 2 }], cells: {} })).valid).toBe(false);
   });
 
+  it("round-trips a palette entry's own solid flag, and rejects a non-boolean one", () => {
+    const tileMap3D = { palette: [{ id: "stone", importedMeshId: "mesh-1", solid: true }], cells: {} };
+    const reopened = validator.assertValid(serializer.deserialize(JSON.stringify(projectWithTileMap3D(tileMap3D))));
+    expect(reopened.scene.children[0].tileMap3D).toEqual(tileMap3D);
+    expect(validator.validate(projectWithTileMap3D({ palette: [{ id: "a", importedMeshId: "mesh-1", solid: "yes" }], cells: {} })).valid).toBe(false);
+  });
+
   it("rejects two palette entries with the same id", () => {
     const tileMap3D = { palette: [{ id: "stone", importedMeshId: "mesh-1" }, { id: "stone", importedMeshId: "mesh-1" }], cells: {} };
     const issues = [...validator.validate(projectWithTileMap3D(tileMap3D)).issues];

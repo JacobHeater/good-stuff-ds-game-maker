@@ -359,7 +359,8 @@ export const PROJECT_SNAPSHOT_JSON_SCHEMA: Schema = {
         id: { type: "string", minLength: 1 },
         importedMeshId: { type: "string", minLength: 1 },
         textureId: { type: "string", minLength: 1 },
-        color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+        color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+        solid: { type: "boolean" }
       }
     },
     // One painted cell: which palette entry, and its yaw (STORY.tile-map-3d.md).

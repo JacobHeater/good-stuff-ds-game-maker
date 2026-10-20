@@ -1,6 +1,7 @@
 import {
   getMeshDiffuseLevels,
   getTileMap3D,
+  isTileSolid3D,
   listCells3D,
   resolveMeshGeometry,
   resolveMeshTexture,
@@ -70,7 +71,8 @@ export function compileTileMap3D(
       paletteEntries.push({
         primitive: indexOfPrimitive(synthetic),
         texture: texture ? indexOfTexture(texture) : 0,
-        diffuse: rgb15(levels[0], levels[1], levels[2])
+        diffuse: rgb15(levels[0], levels[1], levels[2]),
+        solid: isTileSolid3D(entry)
       });
       localIndexByPaletteId.set(entry.id, paletteEntries.length - 1 - paletteStart);
     });
